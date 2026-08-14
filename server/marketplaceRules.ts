@@ -56,6 +56,10 @@ export function isQuotationOpen(status: string) {
   return status === "requested";
 }
 
+export function assertNotSelfTransaction(actorId: number, sellerId: number) {
+  if (actorId === sellerId) throw new Error("You cannot request a quotation or place an order for your own listing.");
+}
+
 export function transactionStatusFor(paymentReferenceNote?: string) {
   return paymentReferenceNote ? "payment_coordinated" as const : "recorded" as const;
 }

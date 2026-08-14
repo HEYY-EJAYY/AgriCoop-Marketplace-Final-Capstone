@@ -5,7 +5,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { APP_ROLES, canManageSellerOrder, requireOperationalRole } from "./authz";
-import { assertInventorySufficient, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
+import { assertInventorySufficient, assertNotSelfTransaction, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
 import {
   decrementProductStock,
   getAdminOverview,
@@ -108,7 +108,7 @@ export const appRouter = router({
 
   quotations: router({
     buyerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["buyer"]);
+      requireOperationalRole(ctx.user, ["buyer", "seller"]);
       return getBuyerQuotations(ctx.user.id);
     }),
     sellerMine: protectedProcedure.query(({ ctx }) => {
@@ -118,9 +118,10 @@ export const appRouter = router({
     request: protectedProcedure
       .input(z.object({ productId: z.number().int().positive(), requestedQty: z.number().int().positive(), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer"]);
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const product = await getProductById(input.productId);
         if (!product || product.status !== "published") throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
+        try { assertNotSelfTransaction(buyer.id, product.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." }); }
         const db = await dbOrThrow();
         await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId });
         return { success: true };
@@ -141,7 +142,7 @@ export const appRouter = router({
 
   orders: router({
     buyerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["buyer"]);
+      requireOperationalRole(ctx.user, ["buyer", "seller"]);
       return getBuyerOrders(ctx.user.id);
     }),
     sellerMine: protectedProcedure.query(({ ctx }) => {
@@ -151,12 +152,13 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer"]);
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
         const listedProducts = await db.select().from(products).where(inArray(products.id, productIds));
         let prepared;
         try { prepared = prepareOrder(listedProducts, input.items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
+        try { assertNotSelfTransaction(buyer.id, prepared.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
         const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote }).$returningId();
         await db.insert(orderItems).values(input.items.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: prepared.productMap.get(item.productId)!.priceCents })));
         return { success: true, orderId: newOrder.id };

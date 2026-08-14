@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertInventorySufficient, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
+import { assertInventorySufficient, assertNotSelfTransaction, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
 
 const products = [
   { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, priceCents: 5500, status: "published", name: "Fresh Cabbage" },
@@ -36,5 +36,10 @@ describe("quotation workflow rule", () => {
     expect(isQuotationOpen("requested")).toBe(true);
     expect(isQuotationOpen("responded")).toBe(false);
     expect(isQuotationOpen("declined")).toBe(false);
+  });
+
+  it("prevents a farmer from creating a transaction against their own listing", () => {
+    expect(() => assertNotSelfTransaction(12, 12)).toThrow("own listing");
+    expect(() => assertNotSelfTransaction(12, 22)).not.toThrow();
   });
 });

@@ -16,3 +16,11 @@
 - [x] Add and run Vitest coverage for authorization and essential marketplace business rules.
 - [x] Verify public and role-based routes visually and save the final reviewed project checkpoint.
 - [x] Add focused marketplace-rule tests for quotation state, order normalization, inventory sufficiency, transaction status, and fulfillment transitions.
+- [x] Audit the uploaded revised manuscript against current AgriCoop features, roles, payment model, and responsive requirements.
+- [x] Implement any confirmed manuscript compliance gaps in authentication, role controls, transactions, and reporting.
+- [x] Re-test the revised system across desktop, tablet, and mobile breakpoints and save the compliance-reviewed version.
+- [x] Enable approved Seller/Farmer accounts to initiate quotations and purchase orders for seller-to-seller and cooperative-to-cooperative transactions.
+- [x] Extend officer and system-admin reporting to include sales, inventory, quotation, and transaction exports as specified in the revised manuscript.
+- [x] Verify approved Seller/Farmer accounts can request quotations, place orders, and view outgoing activity while self-transactions are blocked.
+- [x] Finish and verify officer and system-admin CSV reports for sales, inventory, quotations, and transactions.
+- [x] Add focused automated coverage for CSV report serialization and verify the officer and administrator report export paths.

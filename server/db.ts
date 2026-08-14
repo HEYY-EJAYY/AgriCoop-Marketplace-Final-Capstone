@@ -156,33 +156,41 @@ export async function getSellerQuotations(sellerId: number) {
 
 export async function getOfficerOverview(cooperativeId: number | null) {
   const db = await getDb();
-  if (!db || !cooperativeId) return { members: [], products: [], orders: [], transactions: [] };
+  if (!db || !cooperativeId) return { members: [], products: [], orders: [], quotations: [], transactions: [] };
   const members = await db.select().from(users).where(eq(users.cooperativeId, cooperativeId));
   const listings = await db.select().from(products).where(eq(products.cooperativeId, cooperativeId));
   const orderRows = await db.select().from(orders).where(eq(orders.cooperativeId, cooperativeId)).orderBy(desc(orders.createdAt));
+  const quotationRows = await db
+    .select({ quotation: quotations, productName: products.name, buyerName: users.name })
+    .from(quotations)
+    .innerJoin(products, eq(quotations.productId, products.id))
+    .innerJoin(users, eq(quotations.buyerId, users.id))
+    .where(eq(products.cooperativeId, cooperativeId))
+    .orderBy(desc(quotations.createdAt));
   const transactionRows = await db
     .select()
     .from(transactions)
     .innerJoin(orders, eq(transactions.orderId, orders.id))
     .where(eq(orders.cooperativeId, cooperativeId));
-  return { members, products: listings, orders: orderRows, transactions: transactionRows };
+  return { members, products: listings, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
 }
 
 export async function getAdminOverview() {
   const db = await getDb();
-  if (!db) return { users: [], cooperatives: [], products: [], orders: [], transactions: [] };
+  if (!db) return { users: [], cooperatives: [], products: [], orders: [], quotations: [], transactions: [] };
   const memberRows = await db
     .select({ user: users, cooperativeName: cooperatives.name })
     .from(users)
     .leftJoin(cooperatives, eq(users.cooperativeId, cooperatives.id))
     .orderBy(desc(users.createdAt));
-  const [cooperativeRows, listingRows, orderRows, transactionRows] = await Promise.all([
+  const [cooperativeRows, listingRows, orderRows, quotationRows, transactionRows] = await Promise.all([
     db.select().from(cooperatives).orderBy(asc(cooperatives.name)),
     db.select().from(products).orderBy(desc(products.createdAt)),
     db.select().from(orders).orderBy(desc(orders.createdAt)),
+    db.select().from(quotations).orderBy(desc(quotations.createdAt)),
     db.select().from(transactions).orderBy(desc(transactions.completedAt)),
   ]);
-  return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, transactions: transactionRows };
+  return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
 }
 
 export async function getProductById(productId: number) {
