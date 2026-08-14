@@ -1,33 +1,13 @@
-import { useAuth } from "@/_core/hooks/useAuth";
-import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { Streamdown } from 'streamdown';
+import { PageFrame } from "@/components/AgriShell";
+import { ArrowRight, BadgeCheck, Handshake, Layers3, ShieldCheck } from "lucide-react";
+import { Link } from "wouter";
 
-/**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
- */
+const heroUrl = "/manus-storage/agricoop-hero_df276c3b.png";
+
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
-
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
-
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
-  );
+  return <PageFrame><main>
+    <section className="relative overflow-hidden bg-[#e5efe0]"><div className="grain absolute inset-0 opacity-30" /><div className="relative mx-auto grid min-h-[570px] max-w-7xl items-stretch px-4 sm:px-6 lg:grid-cols-[.88fr_1.12fr] lg:px-8"><div className="z-10 flex flex-col justify-center py-16 lg:py-20"><div className="rise-in inline-flex w-fit items-center gap-2 rounded-full border border-[#c7dabc] bg-[#f5f9f1] px-3 py-1.5 text-xs font-extrabold tracking-[.08em] text-[#2e6a41]"><span className="h-2 w-2 rounded-full bg-[#71a85a]" /> Cooperative-powered agricultural trade</div><h1 className="rise-in-delay mt-5 max-w-xl font-display text-5xl font-bold leading-[.98] tracking-tight text-[#163b2a] sm:text-6xl">Local harvest. <em className="text-[#6a8940]">Fairer value.</em> Stronger communities.</h1><p className="rise-in-delay mt-6 max-w-lg text-lg leading-8 text-[#4e6a59]">AgriCoop brings buyers, farmers, and cooperative officers together in one clear, community-first marketplace.</p><div className="rise-in-delay mt-8 flex flex-wrap gap-3"><Link href="/marketplace" className="agri-button no-underline">Explore fresh listings <ArrowRight size={18} /></Link><Link href="/about" className="agri-ghost no-underline">See how AgriCoop works</Link></div><p className="mt-6 text-sm font-medium text-[#607865]">Built for selected agricultural cooperatives in Butuan City, Agusan del Norte.</p></div><div className="relative min-h-[350px] lg:min-h-0"><div className="absolute inset-y-0 right-[-12vw] w-[78vw] max-w-[850px] overflow-hidden rounded-bl-[9rem] bg-[#b5ca88] lg:rounded-bl-[12rem]"><img src={heroUrl} alt="Filipino farmers gathering fresh produce in a green field" className="h-full w-full object-cover object-center" /><div className="absolute inset-0 bg-gradient-to-r from-[#e5efe0]/80 via-transparent to-transparent lg:from-[#e5efe0]/68" /></div><div className="absolute bottom-7 left-4 rounded-2xl border border-white/50 bg-[#fffdf8]/92 p-4 shadow-xl backdrop-blur"><p className="text-xs font-extrabold uppercase tracking-[.12em] text-[#6a8940]">Direct & transparent</p><p className="mt-1 font-display text-xl font-bold text-[#1f4f36]">Grow together, sell fairly.</p></div></div></div></section>
+    <section className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8"><div className="grid gap-12 lg:grid-cols-[.78fr_1.22fr]"><div><p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#628940]">Built around the cooperative</p><h2 className="mt-3 font-display text-4xl font-bold tracking-tight text-[#1d4932]">A better market begins with better coordination.</h2></div><div className="grid gap-4 sm:grid-cols-3">{[{icon:Handshake,title:"Connect directly",body:"Bring fresh products and buyers closer without unnecessary layers."},{icon:Layers3,title:"Trade with clarity",body:"Compare prices, request quotations, and manage regular or bulk orders."},{icon:ShieldCheck,title:"Stay accountable",body:"Officer oversight keeps listings, inventory, and transactions organized."}].map(({icon:Icon,title,body})=><article key={title} className="agri-card p-5"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#e4f0df] text-[#2c6a41]"><Icon size={21}/></span><h3 className="mt-5 font-display text-xl font-bold text-[#214b35]">{title}</h3><p className="mt-2 text-sm leading-6 text-[#627266]">{body}</p></article>)}</div></div></section>
+    <section className="border-y border-[#dce6d6] bg-[#eff5eb]"><div className="mx-auto grid max-w-7xl gap-12 px-4 py-18 sm:px-6 lg:grid-cols-2 lg:px-8"><div><p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#628940]">Designed for every participant</p><h2 className="mt-3 font-display text-4xl font-bold text-[#1d4932]">One shared market, each role with the right tools.</h2><p className="mt-4 max-w-xl leading-7 text-[#58705e]">AgriCoop makes it easier to participate in digital trade while keeping cooperative support and face-to-face relationships at the center.</p></div><div className="grid gap-3 sm:grid-cols-2">{[["Buyers","Discover crops, compare prices, arrange orders, and request quotations."],["Farmers","List harvests, maintain stock, respond to quotations, and fulfill orders."],["Cooperative officers","Validate members, monitor activity, and generate a clear operational view."],["System administrators","Manage roles, cooperative assignments, and platform-wide coordination."]].map(([role,body])=><div key={role} className="rounded-2xl border border-[#d9e5d3] bg-[#fffdf8] p-5"><BadgeCheck className="text-[#628940]" size={20}/><h3 className="mt-3 font-bold text-[#28543b]">{role}</h3><p className="mt-2 text-sm leading-6 text-[#627266]">{body}</p></div>)}</div></div></section>
+  </main></PageFrame>;
 }

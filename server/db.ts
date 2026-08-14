@@ -1,11 +1,19 @@
-import { eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  cooperatives,
+  InsertUser,
+  orderItems,
+  orders,
+  products,
+  quotations,
+  transactions,
+  users,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -19,74 +27,176 @@ export async function getDb() {
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
+  if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
+  if (!db) return;
+
+  const values: InsertUser = { openId: user.openId, lastSignedIn: new Date() };
+  const updateSet: Record<string, unknown> = { lastSignedIn: new Date() };
+  (["name", "email", "loginMethod"] as const).forEach(field => {
+    if (user[field] !== undefined) {
+      values[field] = user[field] ?? null;
+      updateSet[field] = user[field] ?? null;
+    }
+  });
+  if (user.openId === ENV.ownerOpenId) {
+    values.role = "admin";
+    values.approvalStatus = "approved";
+    updateSet.role = "admin";
+    updateSet.approvalStatus = "approved";
   }
-
-  try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
-
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
-    throw error;
-  }
+  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
-  return result.length > 0 ? result[0] : undefined;
+  return result[0];
 }
 
-// TODO: add feature queries here as your schema grows.
+export async function getCooperatives() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cooperatives).where(eq(cooperatives.status, "active")).orderBy(asc(cooperatives.name));
+}
+
+export async function getMarketplace(category?: string, sort: "asc" | "desc" = "asc") {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(products.status, "published"), eq(users.approvalStatus, "approved")];
+  if (category && category !== "all") conditions.push(eq(products.category, category));
+  return db
+    .select({
+      product: products,
+      sellerName: users.name,
+      cooperativeName: cooperatives.name,
+    })
+    .from(products)
+    .innerJoin(users, eq(products.sellerId, users.id))
+    .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
+    .where(and(...conditions))
+    .orderBy(sort === "asc" ? asc(products.priceCents) : desc(products.priceCents));
+}
+
+export async function getCategories() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .selectDistinct({ category: products.category })
+    .from(products)
+    .where(eq(products.status, "published"))
+    .orderBy(asc(products.category));
+}
+
+export async function getSellerProducts(sellerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(products).where(eq(products.sellerId, sellerId)).orderBy(desc(products.createdAt));
+}
+
+export async function getBuyerOrders(buyerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ order: orders, sellerName: users.name, cooperativeName: cooperatives.name })
+    .from(orders)
+    .innerJoin(users, eq(orders.sellerId, users.id))
+    .leftJoin(cooperatives, eq(orders.cooperativeId, cooperatives.id))
+    .where(eq(orders.buyerId, buyerId))
+    .orderBy(desc(orders.createdAt));
+  if (!rows.length) return [];
+  const items = await db
+    .select({ item: orderItems, productName: products.name, unit: products.unit })
+    .from(orderItems)
+    .innerJoin(products, eq(orderItems.productId, products.id))
+    .where(inArray(orderItems.orderId, rows.map(row => row.order.id)));
+  return rows.map(row => ({
+    ...row,
+    items: items.filter(item => item.item.orderId === row.order.id),
+  }));
+}
+
+export async function getSellerOrders(sellerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({ order: orders, item: orderItems, productName: products.name, unit: products.unit, buyerName: users.name })
+    .from(orders)
+    .innerJoin(orderItems, eq(orderItems.orderId, orders.id))
+    .innerJoin(products, eq(orderItems.productId, products.id))
+    .innerJoin(users, eq(orders.buyerId, users.id))
+    .where(eq(orders.sellerId, sellerId))
+    .orderBy(desc(orders.createdAt));
+}
+
+export async function getBuyerQuotations(buyerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({ quotation: quotations, productName: products.name, unit: products.unit, sellerName: users.name })
+    .from(quotations)
+    .innerJoin(products, eq(quotations.productId, products.id))
+    .innerJoin(users, eq(quotations.sellerId, users.id))
+    .where(eq(quotations.buyerId, buyerId))
+    .orderBy(desc(quotations.createdAt));
+}
+
+export async function getSellerQuotations(sellerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({ quotation: quotations, productName: products.name, unit: products.unit, buyerName: users.name })
+    .from(quotations)
+    .innerJoin(products, eq(quotations.productId, products.id))
+    .innerJoin(users, eq(quotations.buyerId, users.id))
+    .where(eq(quotations.sellerId, sellerId))
+    .orderBy(desc(quotations.createdAt));
+}
+
+export async function getOfficerOverview(cooperativeId: number | null) {
+  const db = await getDb();
+  if (!db || !cooperativeId) return { members: [], products: [], orders: [], transactions: [] };
+  const members = await db.select().from(users).where(eq(users.cooperativeId, cooperativeId));
+  const listings = await db.select().from(products).where(eq(products.cooperativeId, cooperativeId));
+  const orderRows = await db.select().from(orders).where(eq(orders.cooperativeId, cooperativeId)).orderBy(desc(orders.createdAt));
+  const transactionRows = await db
+    .select()
+    .from(transactions)
+    .innerJoin(orders, eq(transactions.orderId, orders.id))
+    .where(eq(orders.cooperativeId, cooperativeId));
+  return { members, products: listings, orders: orderRows, transactions: transactionRows };
+}
+
+export async function getAdminOverview() {
+  const db = await getDb();
+  if (!db) return { users: [], cooperatives: [], products: [], orders: [], transactions: [] };
+  const memberRows = await db
+    .select({ user: users, cooperativeName: cooperatives.name })
+    .from(users)
+    .leftJoin(cooperatives, eq(users.cooperativeId, cooperatives.id))
+    .orderBy(desc(users.createdAt));
+  const [cooperativeRows, listingRows, orderRows, transactionRows] = await Promise.all([
+    db.select().from(cooperatives).orderBy(asc(cooperatives.name)),
+    db.select().from(products).orderBy(desc(products.createdAt)),
+    db.select().from(orders).orderBy(desc(orders.createdAt)),
+    db.select().from(transactions).orderBy(desc(transactions.completedAt)),
+  ]);
+  return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, transactions: transactionRows };
+}
+
+export async function getProductById(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+  return rows[0];
+}
+
+export async function decrementProductStock(productId: number, quantity: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db
+    .update(products)
+    .set({ stockQty: sql`${products.stockQty} - ${quantity}` })
+    .where(eq(products.id, productId));
+}
