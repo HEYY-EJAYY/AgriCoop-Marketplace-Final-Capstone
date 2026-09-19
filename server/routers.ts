@@ -150,7 +150,7 @@ export const appRouter = router({
       return getSellerOrders(ctx.user.id);
     }),
     create: protectedProcedure
-      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional() }))
+      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional(), paymentMethod: z.enum(["f2f", "gcash", "maya", "gotyme", "qrph"]).default("f2f") }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
@@ -159,8 +159,10 @@ export const appRouter = router({
         let prepared;
         try { prepared = prepareOrder(listedProducts, input.items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
         try { assertNotSelfTransaction(buyer.id, prepared.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
-        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote }).$returningId();
+        const isF2f = input.paymentMethod === "f2f";
+        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote, paymentMethod: input.paymentMethod, paymentStatus: isF2f ? "F2F-pending-confirmation" : "pending" }).$returningId();
         await db.insert(orderItems).values(input.items.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: prepared.productMap.get(item.productId)!.priceCents })));
+        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: prepared.totalCents, paymentMethod: isF2f ? "f2f" : "paymongo", status: isF2f ? "payment_coordinated" : "pending" });
         return { success: true, orderId: newOrder.id };
       }),
     updateStatus: protectedProcedure
@@ -177,7 +179,7 @@ export const appRouter = router({
           try { assertInventorySufficient(currentProducts, items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Insufficient current inventory to complete this order." }); }
           for (const item of items) await decrementProductStock(item.productId, item.quantity);
           await db.update(orders).set({ status: "completed", completedAt: new Date() }).where(eq(orders.id, input.orderId));
-          await db.insert(transactions).values({ orderId: orderRow.id, buyerId: orderRow.buyerId, sellerId: orderRow.sellerId, amountCents: orderRow.totalCents, paymentReferenceNote: input.paymentReferenceNote, status: transactionStatusFor(input.paymentReferenceNote) });
+          await db.update(transactions).set({ paymentReferenceNote: input.paymentReferenceNote, status: transactionStatusFor(input.paymentReferenceNote) }).where(eq(transactions.orderId, orderRow.id));
         } else {
           await db.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
         }

@@ -24,3 +24,12 @@
 - [x] Verify approved Seller/Farmer accounts can request quotations, place orders, and view outgoing activity while self-transactions are blocked.
 - [x] Finish and verify officer and system-admin CSV reports for sales, inventory, quotations, and transactions.
 - [x] Add focused automated coverage for CSV report serialization and verify the officer and administrator report export paths.
+
+- [ ] Implement Philippine payment gateway integration (PayMongo/Xendit) in sandbox mode with GCash, Maya, GoTyme, and QR Ph.
+- [ ] Add payment method selector at checkout and payment status tracking (pending/paid/failed/F2F-pending).
+- [ ] Build webhook handler for payment status updates and transaction synchronization.
+- [ ] Replace Manus OAuth with custom Supabase Auth (login/registration) and role assignment.
+- [ ] Enforce role-based access control (RLS) on the backend for all system operations.
+- [ ] Populate database with realistic demo data: 1 coop, 3-5 sellers, 10+ listings, quotations, and mixed-status orders/transactions.
+- [ ] Ensure role-specific workspaces (Farmer, Buyer activity, Officer monitoring) are fully visible and functional.
+- [ ] Verify independent Next.js/Supabase/Tailwind/Vercel deployment configuration and stack alignment.

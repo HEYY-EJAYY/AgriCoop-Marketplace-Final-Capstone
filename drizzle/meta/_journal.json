@@ -15,6 +15,13 @@
       "when": 1786736269497,
       "tag": "0001_smart_wiccan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1789387367597,
+      "tag": "0002_foamy_random",
+      "breakpoints": true
     }
   ]
 }

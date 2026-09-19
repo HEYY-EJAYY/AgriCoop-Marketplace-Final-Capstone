@@ -80,6 +80,10 @@ export const orders = mysqlTable("orders", {
   status: mysqlEnum("status", ["submitted", "confirmed", "ready", "completed", "cancelled"])
     .default("submitted")
     .notNull(),
+  paymentStatus: mysqlEnum("paymentStatus", ["pending", "paid", "failed", "F2F-pending-confirmation"])
+    .default("pending")
+    .notNull(),
+  paymentMethod: varchar("paymentMethod", { length: 64 }),
   totalCents: int("totalCents").notNull(),
   buyerNote: text("buyerNote"),
   completedAt: timestamp("completedAt"),
@@ -104,9 +108,17 @@ export const transactions = mysqlTable(
     sellerId: int("sellerId").notNull().references(() => users.id),
     amountCents: int("amountCents").notNull(),
     paymentReferenceNote: text("paymentReferenceNote"),
-    status: mysqlEnum("status", ["recorded", "payment_coordinated"])
+    status: mysqlEnum("status", [
+      "recorded",
+      "payment_coordinated",
+      "pending",
+      "paid",
+      "failed"
+    ])
       .default("recorded")
       .notNull(),
+    paymentMethod: varchar("paymentMethod", { length: 64 }),
+    externalId: varchar("externalId", { length: 128 }),
     completedAt: timestamp("completedAt").defaultNow().notNull(),
   },
   table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)],
