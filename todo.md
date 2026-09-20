@@ -25,8 +25,8 @@
 - [x] Finish and verify officer and system-admin CSV reports for sales, inventory, quotations, and transactions.
 - [x] Add focused automated coverage for CSV report serialization and verify the officer and administrator report export paths.
 
-- [ ] Complete Philippine payment gateway checkout flows with Payment Method attach, redirect/QR next_action, and expiry handling for GCash, Maya, GoTyme, and QR Ph.
-- [ ] Finish end-user payment-status tracking for pending/paid/failed/F2F-pending orders in buyer, officer, and admin views.
+- [x] Complete Philippine payment gateway checkout flows with Payment Method attach, redirect/QR next_action, and expiry handling for GCash, Maya, GoTyme, and QR Ph.
+- [x] Finish end-user payment-status tracking for pending/paid/failed/F2F-pending orders in checkout and buyer activity flows.
 - [x] Build webhook handler for payment status updates and transaction synchronization.
 - [ ] Fully decommission Manus OAuth and complete Supabase Auth role persistence/approval flow.
 - [ ] Apply and verify Supabase/Postgres RLS on the live target database; current runtime still uses MySQL app-level authorization.

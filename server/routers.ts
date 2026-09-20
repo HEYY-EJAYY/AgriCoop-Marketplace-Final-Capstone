@@ -165,7 +165,7 @@ export const appRouter = router({
         await db.insert(orderItems).values(input.items.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: prepared.productMap.get(item.productId)!.priceCents })));
         await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: prepared.totalCents, paymentMethod: isF2f ? "f2f" : "paymongo", status: isF2f ? "payment_coordinated" : "pending" });
         const payment = isF2f ? null : await createPaymongoPaymentIntent({ amountCents: prepared.totalCents, orderId: newOrder.id, method: input.paymentMethod as Exclude<typeof input.paymentMethod, "f2f"> });
-        return { success: true, orderId: newOrder.id, paymentIntentId: payment?.paymentIntentId ?? null };
+        return { success: true, orderId: newOrder.id, paymentIntentId: payment?.paymentIntentId ?? null, redirectUrl: payment?.redirectUrl ?? null, qrImageUrl: payment?.qrImageUrl ?? null };
       }),
     updateStatus: protectedProcedure
       .input(z.object({ orderId: z.number().int().positive(), status: orderStatusSchema, paymentReferenceNote: z.string().max(600).optional() }))

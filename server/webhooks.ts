@@ -39,7 +39,7 @@ webhookRouter.post("/paymongo", express.raw({ type: "application/json" }), async
 
     const payment = event.data?.attributes ?? {};
     const orderId = getOrderId(payment);
-    const status = event.type === "payment.paid" ? "paid" : event.type === "payment.failed" ? "failed" : null;
+    const status = event.type === "payment.paid" ? "paid" : event.type === "payment.failed" || event.type === "qrph.expired" ? "failed" : null;
     if (orderId && status) {
       await db.update(orders).set({ paymentStatus: status }).where(eq(orders.id, orderId));
       await db.update(transactions).set({ status, externalId: payment.id ?? null }).where(and(eq(transactions.orderId, orderId), eq(transactions.paymentMethod, "paymongo")));
