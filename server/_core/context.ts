@@ -20,7 +20,8 @@ export async function createContext(
     const { data } = await supabaseAdmin.auth.getUser(bearer);
     if (data.user) {
       const metadata = data.user.user_metadata ?? {};
-      await upsertUser({ openId: data.user.id, email: data.user.email, name: metadata.name ?? data.user.email, loginMethod: "supabase" });
+      const requestedRole = metadata.role === "seller" || metadata.role === "officer" || metadata.role === "buyer" ? metadata.role : "buyer";
+      await upsertUser({ openId: data.user.id, email: data.user.email, name: metadata.name ?? data.user.email, loginMethod: "supabase", role: requestedRole, approvalStatus: "pending" });
       user = (await getUserByOpenId(data.user.id)) ?? null;
     }
   }

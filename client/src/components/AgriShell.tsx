@@ -40,7 +40,7 @@ export function PublicHeader() {
 }
 
 export function PublicFooter() {
-  return <footer className="border-t border-[#dbe4d7] bg-[#eef4ea]"><div className="mx-auto grid max-w-7xl gap-6 px-4 py-9 sm:px-6 md:grid-cols-2 lg:px-8"><div><BrandMark /><p className="mt-3 max-w-md text-sm leading-6 text-[#57705e]">A cooperative-centered marketplace supporting fairer agricultural trade in Butuan City and beyond.</p></div><div className="self-end text-sm text-[#57705e] md:text-right"><p className="font-bold text-[#315640]">Trade fairly. Grow together.</p><p className="mt-1">Payments are coordinated face-to-face between buyers and sellers.</p></div></div></footer>;
+  return <footer className="border-t border-[#dbe4d7] bg-[#eef4ea]"><div className="mx-auto grid max-w-7xl gap-6 px-4 py-9 sm:px-6 md:grid-cols-2 lg:px-8"><div><BrandMark /><p className="mt-3 max-w-md text-sm leading-6 text-[#57705e]">A cooperative-centered marketplace supporting fairer agricultural trade in Butuan City and beyond.</p></div><div className="self-end text-sm text-[#57705e] md:text-right"><p className="font-bold text-[#315640]">Trade fairly. Grow together.</p><p className="mt-1">Payments support F2F fallback and PayMongo sandbox methods, with provider confirmation recorded.</p></div></div></footer>;
 }
 
 export function PageFrame({ children }: { children: ReactNode }) {

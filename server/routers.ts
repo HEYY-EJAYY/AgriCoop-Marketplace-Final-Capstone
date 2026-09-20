@@ -22,6 +22,7 @@ import {
   getSellerQuotations,
 } from "./db";
 import { cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
+import { createPaymongoPaymentIntent } from "./payments";
 
 const roleSchema = z.enum(["buyer", "seller", "officer"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
@@ -163,7 +164,8 @@ export const appRouter = router({
         const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote, paymentMethod: input.paymentMethod, paymentStatus: isF2f ? "F2F-pending-confirmation" : "pending" }).$returningId();
         await db.insert(orderItems).values(input.items.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: prepared.productMap.get(item.productId)!.priceCents })));
         await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: prepared.totalCents, paymentMethod: isF2f ? "f2f" : "paymongo", status: isF2f ? "payment_coordinated" : "pending" });
-        return { success: true, orderId: newOrder.id };
+        const payment = isF2f ? null : await createPaymongoPaymentIntent({ amountCents: prepared.totalCents, orderId: newOrder.id, method: input.paymentMethod as Exclude<typeof input.paymentMethod, "f2f"> });
+        return { success: true, orderId: newOrder.id, paymentIntentId: payment?.paymentIntentId ?? null };
       }),
     updateStatus: protectedProcedure
       .input(z.object({ orderId: z.number().int().positive(), status: orderStatusSchema, paymentReferenceNote: z.string().max(600).optional() }))

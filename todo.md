@@ -25,11 +25,11 @@
 - [x] Finish and verify officer and system-admin CSV reports for sales, inventory, quotations, and transactions.
 - [x] Add focused automated coverage for CSV report serialization and verify the officer and administrator report export paths.
 
-- [ ] Implement Philippine payment gateway integration (PayMongo/Xendit) in sandbox mode with GCash, Maya, GoTyme, and QR Ph.
-- [ ] Add payment method selector at checkout and payment status tracking (pending/paid/failed/F2F-pending).
-- [ ] Build webhook handler for payment status updates and transaction synchronization.
-- [ ] Replace Manus OAuth with custom Supabase Auth (login/registration) and role assignment.
-- [ ] Enforce role-based access control (RLS) on the backend for all system operations.
-- [ ] Populate database with realistic demo data: 1 coop, 3-5 sellers, 10+ listings, quotations, and mixed-status orders/transactions.
-- [ ] Ensure role-specific workspaces (Farmer, Buyer activity, Officer monitoring) are fully visible and functional.
+- [ ] Complete Philippine payment gateway checkout flows with Payment Method attach, redirect/QR next_action, and expiry handling for GCash, Maya, GoTyme, and QR Ph.
+- [ ] Finish end-user payment-status tracking for pending/paid/failed/F2F-pending orders in buyer, officer, and admin views.
+- [x] Build webhook handler for payment status updates and transaction synchronization.
+- [ ] Fully decommission Manus OAuth and complete Supabase Auth role persistence/approval flow.
+- [ ] Apply and verify Supabase/Postgres RLS on the live target database; current runtime still uses MySQL app-level authorization.
+- [x] Populate database with realistic demo data: 1 coop, 3-5 sellers, 10+ listings, quotations, and mixed-status orders/transactions.
+- [ ] Re-verify latest Farmer, Buyer activity, and Officer monitoring screens with concrete walkthrough evidence.
 - [ ] Verify independent Next.js/Supabase/Tailwind/Vercel deployment configuration and stack alignment.
