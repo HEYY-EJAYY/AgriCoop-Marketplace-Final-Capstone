@@ -1,5 +1,5 @@
 import { PageFrame } from "@/components/AgriShell";
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ export default function Auth() {
   const [, navigate] = useLocation();
   const [register, setRegister] = useState(false);
   const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [name, setName] = useState(""); const [role, setRole] = useState("buyer"); const [busy, setBusy] = useState(false);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try {
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); if (!isSupabaseConfigured) { toast.error("Supabase Auth is not configured for this deployment. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."); return; } setBusy(true); try {
     if (register) { const { error } = await supabase.auth.signUp({ email, password, options: { data: { name, role } } }); if (error) throw error; toast.success("Account created. Check your email if confirmation is enabled."); }
     else { const { error } = await supabase.auth.signInWithPassword({ email, password }); if (error) throw error; toast.success("Welcome back to AgriCoop."); navigate("/dashboard"); }
   } catch (error) { toast.error(error instanceof Error ? error.message : "Authentication failed."); } finally { setBusy(false); } };

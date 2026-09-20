@@ -6,13 +6,15 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { startLogin } from "./const";
-import { supabase } from "./lib/supabase";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import "./index.css";
 
 const queryClient = new QueryClient();
 let supabaseAccessToken = "";
-supabase.auth.getSession().then(({ data }) => { supabaseAccessToken = data.session?.access_token ?? ""; });
-supabase.auth.onAuthStateChange((_event, session) => { supabaseAccessToken = session?.access_token ?? ""; });
+if (isSupabaseConfigured) {
+  supabase.auth.getSession().then(({ data }) => { supabaseAccessToken = data.session?.access_token ?? ""; });
+  supabase.auth.onAuthStateChange((_event, session) => { supabaseAccessToken = session?.access_token ?? ""; });
+}
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
