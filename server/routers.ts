@@ -20,9 +20,12 @@ import {
   getSellerOrders,
   getSellerProducts,
   getSellerQuotations,
+  getConversationMessages,
+  getConversationsForUser,
+  upsertUser,
 } from "./db";
-import { cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
-import { createPaymongoPaymentIntent } from "./payments";
+import { conversationMessages, conversations, cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
+import { supabaseAdmin } from "./clients";
 
 const roleSchema = z.enum(["buyer", "seller", "officer"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
@@ -33,13 +36,48 @@ async function dbOrThrow() {
   return db;
 }
 
+async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { buyerId: number; subject: string; body: string; orderId?: number; quotationId?: number }) {
+  const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).$returningId();
+  await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
+  return thread.id;
+}
+
 export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    register: publicProcedure.input(z.object({ email: z.string().email(), password: z.string().min(6).max(128), name: z.string().min(2).max(120), role: roleSchema })).mutation(async ({ input }) => {
+      const { data, error } = await supabaseAdmin.auth.admin.createUser({ email: input.email, password: input.password, email_confirm: true, user_metadata: { name: input.name, role: input.role } });
+      if (error || !data.user) throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Unable to create the account." });
+      await upsertUser({ openId: data.user.id, email: input.email, name: input.name, role: input.role, approvalStatus: input.role === "buyer" ? "approved" : "pending", loginMethod: "supabase" });
+      return { success: true };
+    }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
+    }),
+  }),
+
+  conversations: router({
+    mine: protectedProcedure.query(({ ctx }) => getConversationsForUser(ctx.user.id, ctx.user.role === "admin" || ctx.user.role === "officer")),
+    messages: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const db = await dbOrThrow();
+      const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
+      if (!thread || (thread.buyerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "officer")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
+      return getConversationMessages(input.conversationId);
+    }),
+    create: protectedProcedure.input(z.object({ subject: z.string().min(3).max(180), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
+      const db = await dbOrThrow();
+      const id = await openSupportThread(db, { buyerId: ctx.user.id, subject: input.subject, body: input.body });
+      return { success: true, conversationId: id };
+    }),
+    send: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
+      const db = await dbOrThrow();
+      const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
+      if (!thread || (thread.buyerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "officer")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
+      await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body });
+      await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
+      return { success: true };
     }),
   }),
 
@@ -124,8 +162,9 @@ export const appRouter = router({
         if (!product || product.status !== "published") throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
         try { assertNotSelfTransaction(buyer.id, product.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." }); }
         const db = await dbOrThrow();
-        await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId });
-        return { success: true };
+        const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).$returningId();
+        const conversationId = await openSupportThread(db, { buyerId: buyer.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
+        return { success: true, conversationId };
       }),
     respond: protectedProcedure
       .input(z.object({ quotationId: z.number().int().positive(), quotedPriceCents: z.number().int().positive(), sellerNote: z.string().max(600).optional(), status: z.enum(["responded", "declined"]) }))
@@ -151,7 +190,7 @@ export const appRouter = router({
       return getSellerOrders(ctx.user.id);
     }),
     create: protectedProcedure
-      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional(), paymentMethod: z.enum(["f2f", "gcash", "maya", "gotyme", "qrph"]).default("f2f") }))
+      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
@@ -160,12 +199,11 @@ export const appRouter = router({
         let prepared;
         try { prepared = prepareOrder(listedProducts, input.items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
         try { assertNotSelfTransaction(buyer.id, prepared.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
-        const isF2f = input.paymentMethod === "f2f";
-        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote, paymentMethod: input.paymentMethod, paymentStatus: isF2f ? "F2F-pending-confirmation" : "pending" }).$returningId();
+        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).$returningId();
         await db.insert(orderItems).values(input.items.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: prepared.productMap.get(item.productId)!.priceCents })));
-        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: prepared.totalCents, paymentMethod: isF2f ? "f2f" : "paymongo", status: isF2f ? "payment_coordinated" : "pending" });
-        const payment = isF2f ? null : await createPaymongoPaymentIntent({ amountCents: prepared.totalCents, orderId: newOrder.id, method: input.paymentMethod as Exclude<typeof input.paymentMethod, "f2f"> });
-        return { success: true, orderId: newOrder.id, paymentIntentId: payment?.paymentIntentId ?? null, redirectUrl: payment?.redirectUrl ?? null, qrImageUrl: payment?.qrImageUrl ?? null };
+        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: prepared.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
+        const conversationId = await openSupportThread(db, { buyerId: buyer.id, orderId: newOrder.id, subject: `Order #${newOrder.id} support`, body: "Please confirm availability, F2F payment coordination, and handover details." });
+        return { success: true, orderId: newOrder.id, conversationId };
       }),
     updateStatus: protectedProcedure
       .input(z.object({ orderId: z.number().int().positive(), status: orderStatusSchema, paymentReferenceNote: z.string().max(600).optional() }))

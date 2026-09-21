@@ -124,6 +124,25 @@ export const transactions = mysqlTable(
   table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)],
 );
 
+export const conversations = mysqlTable("conversations", {
+  id: int("id").autoincrement().primaryKey(),
+  subject: varchar("subject", { length: 180 }).notNull(),
+  buyerId: int("buyerId").notNull().references(() => users.id),
+  orderId: int("orderId").references(() => orders.id),
+  quotationId: int("quotationId").references(() => quotations.id),
+  status: mysqlEnum("status", ["open", "closed"]).default("open").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const conversationMessages = mysqlTable("conversationMessages", {
+  id: int("id").autoincrement().primaryKey(),
+  conversationId: int("conversationId").notNull().references(() => conversations.id),
+  senderId: int("senderId").notNull().references(() => users.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Cooperative = typeof cooperatives.$inferSelect;

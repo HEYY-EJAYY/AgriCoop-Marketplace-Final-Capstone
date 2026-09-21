@@ -21,6 +21,7 @@ export function PublicHeader() {
   const nav = [
     { label: "Marketplace", href: "/marketplace" },
     { label: "How it works", href: "/about" },
+    { label: "Support", href: "/support" },
   ];
   return (
     <header className="sticky top-0 z-40 border-b border-[#e4e7da] bg-[#fffdf8]/94 backdrop-blur">
@@ -40,7 +41,7 @@ export function PublicHeader() {
 }
 
 export function PublicFooter() {
-  return <footer className="border-t border-[#dbe4d7] bg-[#eef4ea]"><div className="mx-auto grid max-w-7xl gap-6 px-4 py-9 sm:px-6 md:grid-cols-2 lg:px-8"><div><BrandMark /><p className="mt-3 max-w-md text-sm leading-6 text-[#57705e]">A cooperative-centered marketplace supporting fairer agricultural trade in Butuan City and beyond.</p></div><div className="self-end text-sm text-[#57705e] md:text-right"><p className="font-bold text-[#315640]">Trade fairly. Grow together.</p><p className="mt-1">Payments support F2F fallback and PayMongo sandbox methods, with provider confirmation recorded.</p></div></div></footer>;
+  return <footer className="border-t border-[#dbe4d7] bg-[#eef4ea]"><div className="mx-auto grid max-w-7xl gap-6 px-4 py-9 sm:px-6 md:grid-cols-2 lg:px-8"><div><BrandMark /><p className="mt-3 max-w-md text-sm leading-6 text-[#57705e]">A cooperative-centered marketplace supporting fairer agricultural trade in Butuan City and beyond.</p></div><div className="self-end text-sm text-[#57705e] md:text-right"><p className="font-bold text-[#315640]">Trade fairly. Grow together.</p><p className="mt-1">Payments are coordinated face-to-face through AgriCoop support.</p></div></div></footer>;
 }
 
 export function PageFrame({ children }: { children: ReactNode }) {
@@ -49,5 +50,5 @@ export function PageFrame({ children }: { children: ReactNode }) {
 
 export function WorkspaceHeader({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
   const { user, logout } = useAuth();
-  return <header className="border-b border-[#dde4d9] bg-[#fffdf8]"><div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8"><div className="flex items-start gap-3"><BrandMark compact /><div><p className="font-display text-2xl font-bold text-[#174a31]">{title}</p><p className="mt-1 max-w-xl text-sm text-[#627266]">{description}</p></div></div><div className="flex flex-wrap items-center gap-2"><Link href="/marketplace" className="agri-ghost text-sm no-underline"><Leaf size={16} /> Browse market</Link>{(user?.role === "buyer" || user?.role === "seller") && <Link href="/activity" className="agri-ghost text-sm no-underline">My activity</Link>}{user?.role === "admin" && <Link href="/reports" className="agri-ghost text-sm no-underline">Platform reports</Link>}<span className="hidden rounded-full bg-[#edf3e9] px-3 py-2 text-sm font-bold text-[#315640] sm:inline">{user?.name || "Member"}</span><Button onClick={logout} variant="ghost" size="icon" aria-label="Sign out"><LogOut size={18} /></Button></div></div></header>;
+  return <header className="border-b border-[#dde4d9] bg-[#fffdf8]"><div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8"><div className="flex items-start gap-3"><BrandMark compact /><div><p className="font-display text-2xl font-bold text-[#174a31]">{title}</p><p className="mt-1 max-w-xl text-sm text-[#627266]">{description}</p></div></div><div className="flex flex-wrap items-center gap-2"><Link href="/marketplace" className="agri-ghost text-sm no-underline"><Leaf size={16} /> Browse market</Link><Link href="/support" className="agri-ghost text-sm no-underline">Support</Link>{(user?.role === "buyer" || user?.role === "seller") && <Link href="/activity" className="agri-ghost text-sm no-underline">My activity</Link>}{user?.role === "admin" && <Link href="/reports" className="agri-ghost text-sm no-underline">Platform reports</Link>}<span className="hidden rounded-full bg-[#edf3e9] px-3 py-2 text-sm font-bold text-[#315640] sm:inline">{user?.name || "Member"}</span><Button onClick={logout} variant="ghost" size="icon" aria-label="Sign out"><LogOut size={18} /></Button></div></div></header>;
 }

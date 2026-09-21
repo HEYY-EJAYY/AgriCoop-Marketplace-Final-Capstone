@@ -33,3 +33,5 @@
 - [x] Populate database with realistic demo data: 1 coop, 3-5 sellers, 10+ listings, quotations, and mixed-status orders/transactions.
 - [ ] Re-verify latest Farmer, Buyer activity, and Officer monitoring screens with concrete walkthrough evidence.
 - [ ] Verify independent Next.js/Supabase/Tailwind/Vercel deployment configuration and stack alignment.
+- [x] Simplify checkout and transaction records to F2F-only payment coordination.
+- [x] Add support conversations for direct inquiries and automatically link order and quotation requests to admin-visible threads.

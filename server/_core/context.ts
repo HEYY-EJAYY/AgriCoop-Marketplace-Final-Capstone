@@ -21,7 +21,7 @@ export async function createContext(
     if (data.user) {
       const metadata = data.user.user_metadata ?? {};
       const requestedRole = metadata.role === "seller" || metadata.role === "officer" || metadata.role === "buyer" ? metadata.role : "buyer";
-      await upsertUser({ openId: data.user.id, email: data.user.email, name: metadata.name ?? data.user.email, loginMethod: "supabase", role: requestedRole, approvalStatus: "pending" });
+      await upsertUser({ openId: data.user.id, email: data.user.email, name: metadata.name ?? data.user.email, loginMethod: "supabase", role: requestedRole, approvalStatus: requestedRole === "buyer" ? "approved" : "pending" });
       user = (await getUserByOpenId(data.user.id)) ?? null;
     }
   }

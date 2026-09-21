@@ -169,9 +169,6 @@ importers:
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
-      paymongo-node:
-        specifier: ^10.17.0
-        version: 10.17.0
       react:
         specifier: ^19.2.1
         version: 19.2.1
@@ -3707,10 +3704,6 @@ packages:
   pathval@2.0.1:
     resolution: {integrity: sha512-//nshmD55c46FuFw26xV/xFAaB5HF9Xdap7HJBBnrKdAd6/GxDBaNA1870O79+9ueg61cZLSVc+OaFlfmObYVQ==}
     engines: {node: '>= 14.16'}
-
-  paymongo-node@10.17.0:
-    resolution: {integrity: sha512-efOVUdvoAJOcAnWkoR9LaSh/WMWcZNwn1ViOl4SMwYwNSZiX+rJ7BXRrTXuoVVZakxxLRhxLf+aK4IFyxvAuPQ==}
-    engines: {node: ^8.1 || >=10.*}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -8351,13 +8344,6 @@ snapshots:
   pathe@2.0.3: {}
 
   pathval@2.0.1: {}
-
-  paymongo-node@10.17.0:
-    dependencies:
-      axios: 1.12.2
-      qs: 6.13.0
-    transitivePeerDependencies:
-      - debug
 
   picocolors@1.1.1: {}
 

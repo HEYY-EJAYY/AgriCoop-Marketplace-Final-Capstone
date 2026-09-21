@@ -2,6 +2,8 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   cooperatives,
+  conversationMessages,
+  conversations,
   InsertUser,
   orderItems,
   orders,
@@ -207,4 +209,24 @@ export async function decrementProductStock(productId: number, quantity: number)
     .update(products)
     .set({ stockQty: sql`${products.stockQty} - ${quantity}` })
     .where(eq(products.id, productId));
+}
+
+export async function getConversationsForUser(userId: number, canSeeAll = false) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({ conversation: conversations, ownerName: users.name })
+    .from(conversations)
+    .innerJoin(users, eq(conversations.buyerId, users.id))
+    .where(canSeeAll ? undefined : eq(conversations.buyerId, userId))
+    .orderBy(desc(conversations.updatedAt));
+}
+
+export async function getConversationMessages(conversationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({ message: conversationMessages, senderName: users.name })
+    .from(conversationMessages)
+    .innerJoin(users, eq(conversationMessages.senderId, users.id))
+    .where(eq(conversationMessages.conversationId, conversationId))
+    .orderBy(asc(conversationMessages.createdAt));
 }
