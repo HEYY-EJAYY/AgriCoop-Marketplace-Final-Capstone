@@ -25,13 +25,12 @@
 - [x] Finish and verify officer and system-admin CSV reports for sales, inventory, quotations, and transactions.
 - [x] Add focused automated coverage for CSV report serialization and verify the officer and administrator report export paths.
 
-- [x] Complete Philippine payment gateway checkout flows with Payment Method attach, redirect/QR next_action, and expiry handling for GCash, Maya, GoTyme, and QR Ph.
-- [x] Finish end-user payment-status tracking for pending/paid/failed/F2F-pending orders in checkout and buyer activity flows.
-- [x] Build webhook handler for payment status updates and transaction synchronization.
+- [x] Decommission online payment intents, QR flows, and webhooks in favor of the requested F2F-only coordination model.
 - [ ] Fully decommission Manus OAuth and complete Supabase Auth role persistence/approval flow.
 - [ ] Apply and verify Supabase/Postgres RLS on the live target database; current runtime still uses MySQL app-level authorization.
 - [x] Populate database with realistic demo data: 1 coop, 3-5 sellers, 10+ listings, quotations, and mixed-status orders/transactions.
-- [ ] Re-verify latest Farmer, Buyer activity, and Officer monitoring screens with concrete walkthrough evidence.
+- [ ] Re-verify latest Farmer, Buyer activity, and Admin monitoring screens with concrete walkthrough evidence.
 - [ ] Verify independent Next.js/Supabase/Tailwind/Vercel deployment configuration and stack alignment.
 - [x] Simplify checkout and transaction records to F2F-only payment coordination.
 - [x] Add support conversations for direct inquiries and automatically link order and quotation requests to admin-visible threads.
+- [x] Restore the four-role model, Seller product approval queue, approved/visible marketplace gating, authenticated SSE messaging, and VS Code handoff documentation.

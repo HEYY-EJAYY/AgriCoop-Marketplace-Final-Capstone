@@ -1,11 +1,11 @@
 import { TRPCError } from "@trpc/server";
 
-export const APP_ROLES = ["buyer", "seller", "officer", "admin"] as const;
+export const APP_ROLES = ["buyer", "seller", "admin", "superadmin"] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 type OperationalUser = {
   id: number;
-  role: AppRole | "user";
+  role: AppRole;
   approvalStatus: "approved" | "pending" | "suspended";
   cooperativeId: number | null;
 };
@@ -18,7 +18,7 @@ export function canManageSellerOrder(
   actor: Pick<OperationalUser, "id" | "role">,
   sellerId: number,
 ) {
-  return actor.role === "admin" || (actor.role === "seller" && actor.id === sellerId);
+  return actor.role === "admin" || actor.role === "superadmin" || (actor.role === "seller" && actor.id === sellerId);
 }
 
 export function requireOperationalRole(user: OperationalUser | null, allowed: readonly AppRole[]) {
@@ -28,7 +28,7 @@ export function requireOperationalRole(user: OperationalUser | null, allowed: re
   if (!hasRole(user.role, allowed)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "Your AgriCoop role cannot access this area." });
   }
-  if (user.role !== "admin" && user.approvalStatus !== "approved") {
+  if (user.role !== "admin" && user.role !== "superadmin" && user.approvalStatus !== "approved") {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "Your role registration is pending cooperative approval.",

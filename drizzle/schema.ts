@@ -23,7 +23,7 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "buyer", "seller", "officer", "admin"]).default("buyer").notNull(),
+  role: mysqlEnum("role", ["buyer", "seller", "admin", "superadmin"]).default("buyer").notNull(),
   approvalStatus: mysqlEnum("approvalStatus", ["approved", "pending", "suspended"])
     .default("approved")
     .notNull(),
@@ -53,6 +53,10 @@ export const products = mysqlTable("products", {
     .notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  verificationStatus: mysqlEnum("verificationStatus", ["draft", "pending", "approved", "rejected"]).default("draft").notNull(),
+  visibility: mysqlEnum("visibility", ["hidden", "visible"]).default("hidden").notNull(),
+  rejectionReason: text("rejectionReason"),
+  primaryImageUrl: varchar("primaryImageUrl", { length: 1000 }),
 });
 
 export const quotations = mysqlTable("quotations", {
@@ -128,6 +132,8 @@ export const conversations = mysqlTable("conversations", {
   id: int("id").autoincrement().primaryKey(),
   subject: varchar("subject", { length: 180 }).notNull(),
   buyerId: int("buyerId").notNull().references(() => users.id),
+  sellerId: int("sellerId").references(() => users.id),
+  productId: int("productId").references(() => products.id),
   orderId: int("orderId").references(() => orders.id),
   quotationId: int("quotationId").references(() => quotations.id),
   status: mysqlEnum("status", ["open", "closed"]).default("open").notNull(),

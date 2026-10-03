@@ -29,6 +29,13 @@
       "when": 1789892526310,
       "tag": "0003_slim_otto_octavius",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1791028128221,
+      "tag": "0004_panoramic_archangel",
+      "breakpoints": true
     }
   ]
 }

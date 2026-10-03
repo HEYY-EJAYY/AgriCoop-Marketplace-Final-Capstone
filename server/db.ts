@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   cooperatives,
@@ -66,7 +66,7 @@ export async function getCooperatives() {
 export async function getMarketplace(category?: string, sort: "asc" | "desc" = "asc") {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [eq(products.status, "published"), eq(users.approvalStatus, "approved")];
+  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), eq(users.approvalStatus, "approved")];
   if (category && category !== "all") conditions.push(eq(products.category, category));
   return db
     .select({
@@ -87,7 +87,7 @@ export async function getCategories() {
   return db
     .selectDistinct({ category: products.category })
     .from(products)
-    .where(eq(products.status, "published"))
+    .where(and(eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible")))
     .orderBy(asc(products.category));
 }
 
@@ -217,7 +217,7 @@ export async function getConversationsForUser(userId: number, canSeeAll = false)
   return db.select({ conversation: conversations, ownerName: users.name })
     .from(conversations)
     .innerJoin(users, eq(conversations.buyerId, users.id))
-    .where(canSeeAll ? undefined : eq(conversations.buyerId, userId))
+    .where(canSeeAll ? undefined : or(eq(conversations.buyerId, userId), eq(conversations.sellerId, userId)))
     .orderBy(desc(conversations.updatedAt));
 }
 
