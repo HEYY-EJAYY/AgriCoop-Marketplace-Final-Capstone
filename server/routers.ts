@@ -64,7 +64,7 @@ export const appRouter = router({
     messages: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
-      if (!thread || (thread.buyerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "superadmin")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
+      if (!thread || (thread.buyerId !== ctx.user.id && thread.sellerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "superadmin")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
       return getConversationMessages(input.conversationId);
     }),
     create: protectedProcedure.input(z.object({ subject: z.string().min(3).max(180), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
@@ -75,7 +75,7 @@ export const appRouter = router({
     send: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
-      if (!thread || (thread.buyerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "superadmin")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
+      if (!thread || (thread.buyerId !== ctx.user.id && thread.sellerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "superadmin")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
       const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).$returningId();
       publishConversationMessage({ conversationId: input.conversationId, messageId: message.id, senderId: ctx.user.id });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
@@ -264,7 +264,8 @@ export const appRouter = router({
     updateUser: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), role: z.enum(APP_ROLES), approvalStatus: z.enum(["approved", "pending", "suspended"]), cooperativeId: z.number().int().positive().nullable() }))
       .mutation(async ({ ctx, input }) => {
-        requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        if (actor.role === "admin" && input.role === "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Only a SuperAdmin can assign the SuperAdmin role." });
         const db = await dbOrThrow();
         await db.update(users).set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId }).where(eq(users.id, input.userId));
         return { success: true };

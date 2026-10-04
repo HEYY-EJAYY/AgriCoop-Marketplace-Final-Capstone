@@ -1,7 +1,7 @@
 import { WorkspaceHeader } from "@/components/AgriShell";
 import { buildCsv } from "../../../shared/reportCsv";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { startLogin } from "@/const";
+import { goToAuth } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { AlertCircle, BarChart3, Check, ClipboardList, Download, FileText, Leaf, Loader2, LucideIcon, Package, Plus, Store, Users } from "lucide-react";
 import { FormEvent, ReactNode, useState } from "react";
@@ -25,7 +25,7 @@ function LoadingWorkspace() { return <div className="grid min-h-screen place-ite
 function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <LoadingWorkspace/>;
-  if (!user) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><Leaf className="mx-auto text-[#68924d]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">Your AgriCoop workspace</h1><p className="mt-3 leading-7 text-[#647568]">Sign in to access the tools assigned to your marketplace role.</p><button className="agri-button mt-6" onClick={startLogin}>Sign in to AgriCoop</button></div></div>;
+  if (!user) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><Leaf className="mx-auto text-[#68924d]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">Your AgriCoop workspace</h1><p className="mt-3 leading-7 text-[#647568]">Sign in to access the tools assigned to your marketplace role.</p><button className="agri-button mt-6" onClick={goToAuth}>Sign in to AgriCoop</button></div></div>;
   return <>{children}</>;
 }
 
@@ -94,7 +94,7 @@ function OfficerDashboard() {
 
 function AdminUserRow({ user, cooperativeName, cooperatives, onSave }: { user: any; cooperativeName: string | null; cooperatives: any[]; onSave: (values: any) => void }) {
   const [role, setRole] = useState(user.role === "user" ? "buyer" : user.role); const [approvalStatus, setApprovalStatus] = useState(user.approvalStatus); const [cooperativeId, setCooperativeId] = useState(user.cooperativeId?.toString() || "");
-  return <tr className="border-t border-[#edf0e9]"><td className="p-3"><p className="font-bold text-[#315640]">{user.name || "Unnamed user"}</p><p className="text-xs text-[#718074]">{user.email || "No email"}</p></td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={role} onChange={e => setRole(e.target.value)}><option value="buyer">Buyer</option><option value="seller">Seller</option><option value="officer">Officer</option><option value="admin">Admin</option></select></td><td className="p-3"><select className="max-w-40 rounded border border-[#d5e0d1] bg-white p-1.5" value={cooperativeId} onChange={e => setCooperativeId(e.target.value)}><option value="">None</option>{cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}</select>{cooperativeName && <p className="mt-1 text-xs text-[#718074]">Current: {cooperativeName}</p>}</td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={approvalStatus} onChange={e => setApprovalStatus(e.target.value)}><option value="approved">Approved</option><option value="pending">Pending</option><option value="suspended">Suspended</option></select></td><td className="p-3"><button onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost px-3 py-2 text-xs">Save</button></td></tr>;
+  return <tr className="border-t border-[#edf0e9]"><td className="p-3"><p className="font-bold text-[#315640]">{user.name || "Unnamed user"}</p><p className="text-xs text-[#718074]">{user.email || "No email"}</p></td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={role} onChange={e => setRole(e.target.value)}><option value="buyer">Buyer</option><option value="seller">Seller</option><option value="superadmin">SuperAdmin</option><option value="admin">Admin</option></select></td><td className="p-3"><select className="max-w-40 rounded border border-[#d5e0d1] bg-white p-1.5" value={cooperativeId} onChange={e => setCooperativeId(e.target.value)}><option value="">None</option>{cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}</select>{cooperativeName && <p className="mt-1 text-xs text-[#718074]">Current: {cooperativeName}</p>}</td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={approvalStatus} onChange={e => setApprovalStatus(e.target.value)}><option value="approved">Approved</option><option value="pending">Pending</option><option value="suspended">Suspended</option></select></td><td className="p-3"><button onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost px-3 py-2 text-xs">Save</button></td></tr>;
 }
 
 function AdminDashboard() {

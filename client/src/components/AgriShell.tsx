@@ -1,5 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { startLogin } from "@/const";
+import { goToAuth } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Leaf, LogOut, Menu, Sprout, UserRound } from "lucide-react";
 import { ReactNode, useState } from "react";
@@ -31,11 +31,11 @@ export function PublicHeader() {
           {nav.map(item => <Link key={item.href} href={item.href} className={`nav-link text-sm font-bold no-underline transition-colors ${location === item.href ? "text-[#1f5a3c]" : "text-[#647365] hover:text-[#1f5a3c]"}`}>{item.label}</Link>)}
         </nav>
         <div className="hidden items-center gap-2 md:flex">
-          {!loading && (user ? <><Link href="/dashboard" className="agri-ghost text-sm no-underline"><UserRound size={16} /> My workspace</Link><button onClick={logout} className="agri-ghost text-sm" aria-label="Sign out"><LogOut size={16} /></button></> : <button className="agri-button text-sm" onClick={() => startLogin()}>Join AgriCoop</button>)}
+          {!loading && (user ? <><Link href="/dashboard" className="agri-ghost text-sm no-underline"><UserRound size={16} /> My workspace</Link><button onClick={logout} className="agri-ghost text-sm" aria-label="Sign out"><LogOut size={16} /></button></> : <button className="agri-button text-sm" onClick={() => goToAuth()}>Join AgriCoop</button>)}
         </div>
         <button className="grid h-10 w-10 place-items-center rounded-xl text-[#1f5a3c] hover:bg-[#edf3e9] md:hidden" onClick={() => setOpen(!open)} aria-label="Toggle menu"><Menu /></button>
       </div>
-      {open && <div className="border-t border-[#e4e7da] bg-[#fffdf8] px-5 py-4 md:hidden"><div className="mx-auto flex max-w-7xl flex-col gap-3">{nav.map(item => <Link onClick={() => setOpen(false)} key={item.href} href={item.href} className="py-2 font-bold text-[#315640] no-underline">{item.label}</Link>)}{user ? <Link href="/dashboard" className="agri-button mt-1 text-sm no-underline">My workspace</Link> : <button className="agri-button mt-1 text-sm" onClick={() => startLogin()}>Join AgriCoop</button>}</div></div>}
+      {open && <div className="border-t border-[#e4e7da] bg-[#fffdf8] px-5 py-4 md:hidden"><div className="mx-auto flex max-w-7xl flex-col gap-3">{nav.map(item => <Link onClick={() => setOpen(false)} key={item.href} href={item.href} className="py-2 font-bold text-[#315640] no-underline">{item.label}</Link>)}{user ? <Link href="/dashboard" className="agri-button mt-1 text-sm no-underline">My workspace</Link> : <button className="agri-button mt-1 text-sm" onClick={() => goToAuth()}>Join AgriCoop</button>}</div></div>}
     </header>
   );
 }
