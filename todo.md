@@ -26,11 +26,11 @@
 - [x] Add focused automated coverage for CSV report serialization and verify the officer and administrator report export paths.
 
 - [x] Decommission online payment intents, QR flows, and webhooks in favor of the requested F2F-only coordination model.
-- [x] Fully decommission Manus OAuth and complete Supabase Auth role persistence/approval flow, including browser Supabase sign-out.
-- [x] Prepare the Supabase/Postgres RLS migration and documented apply command; live application remains pending because no Postgres connection URL was provided.
+- [ ] Fully decommission Manus OAuth and complete Supabase Auth role persistence/approval flow.
+- [ ] Apply and verify Supabase/Postgres RLS on the live target database; current runtime still uses MySQL app-level authorization.
 - [x] Populate database with realistic demo data: 1 coop, 3-5 sellers, 10+ listings, quotations, and mixed-status orders/transactions.
-- [x] Re-verify latest Seller, Buyer activity, and Admin monitoring screens with route smoke tests and role-branch review.
-- [x] Add and validate an independent Next.js/Tailwind/Vercel deployment shell and document the remaining business-router Postgres cutover.
+- [ ] Re-verify latest Farmer, Buyer activity, and Admin monitoring screens with concrete walkthrough evidence.
+- [ ] Verify independent Next.js/Supabase/Tailwind/Vercel deployment configuration and stack alignment.
 - [x] Simplify checkout and transaction records to F2F-only payment coordination.
 - [x] Add support conversations for direct inquiries and automatically link order and quotation requests to admin-visible threads.
 - [x] Restore the four-role model, Seller product approval queue, approved/visible marketplace gating, authenticated SSE messaging, and VS Code handoff documentation.

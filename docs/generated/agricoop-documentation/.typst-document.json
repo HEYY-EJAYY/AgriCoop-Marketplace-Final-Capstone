@@ -1,0 +1,10 @@
+{
+  "entry": "main.typ",
+  "metadata": {
+    "author": "AgriCoop Development Team",
+    "subtitle": "Complete development, architecture, workflows, and operations documentation",
+    "title": "AgriCoop Marketplace"
+  },
+  "mode": "report",
+  "theme": "report-theme.typ"
+}

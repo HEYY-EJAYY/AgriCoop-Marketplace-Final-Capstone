@@ -1,0 +1,13 @@
+{
+  "task_kind": "new-document",
+  "output": "pdf",
+  "signals": ["technical-report"],
+  "hard_constraints": ["complete project documentation", "PDF deliverable"],
+  "content_features": {
+    "code_blocks": 8,
+    "defined_terms": 30,
+    "portrait_images": 0,
+    "tables": 12,
+    "diagrams": 4
+  }
+}
