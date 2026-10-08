@@ -1,0 +1,48 @@
+VERIFY PASS pass=6 warn=0 fail=0 unknown=0 report=/home/ubuntu/agricoop-marketplace/docs/generated/agricoop-complete-manual/main.verify.json
+cument",
+  "overall": "PASS",
+  "checks": [
+    {
+      "name": "signature",
+      "status": "PASS",
+      "message": "PDF header is valid",
+      "evidence": {
+        "header": "%PDF-"
+      }
+    },
+    {
+      "name": "pdfinfo",
+      "status": "PASS",
+      "message": "PDF is parseable by pdfinfo",
+      "evidence": {}
+    },
+    {
+      "name": "page-count",
+      "status": "PASS",
+      "message": "pages=29",
+      "evidence": {
+        "pages": 29
+      }
+    },
+    {
+      "name": "text-presence",
+      "status": "PASS",
+      "message": "characters=73939",
+      "evidence": {}
+    },
+    {
+      "name": "placeholders",
+      "status": "PASS",
+      "message": "No placeholder markers found",
+      "evidence": {
+        "matches": []
+      }
+    },
+    {
+      "name": "fonts",
+      "status": "PASS",
+      "message": "font_records=4",
+      "evidence": {}
+    }
+  ]
+}

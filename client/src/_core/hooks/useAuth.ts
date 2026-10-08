@@ -1,4 +1,5 @@
 import { goToAuth } from "@/const";
+import { clearSupabaseAuthState } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
@@ -13,7 +14,12 @@ export function useAuth(options?: UseAuthOptions) {
   const logout = useCallback(async () => {
     try { await logoutMutation.mutateAsync(); }
     catch (error: unknown) { if (!(error instanceof TRPCClientError) || error.data?.code !== "UNAUTHORIZED") throw error; }
-    finally { utils.auth.me.setData(undefined, null); await utils.auth.me.invalidate(); }
+    finally {
+      await clearSupabaseAuthState();
+      utils.auth.me.setData(undefined, null);
+      await utils.invalidate();
+      if (typeof window !== "undefined") window.location.replace("/auth");
+    }
   }, [logoutMutation, utils]);
   const state = useMemo(() => ({ user: meQuery.data ?? null, loading: meQuery.isLoading || logoutMutation.isPending, error: meQuery.error ?? logoutMutation.error ?? null, isAuthenticated: Boolean(meQuery.data) }), [meQuery.data, meQuery.error, meQuery.isLoading, logoutMutation.error, logoutMutation.isPending]);
   useEffect(() => {

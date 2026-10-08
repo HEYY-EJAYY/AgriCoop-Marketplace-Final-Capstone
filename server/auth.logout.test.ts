@@ -10,8 +10,9 @@ type CookieCall = {
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
-function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] } {
+function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[]; responseHeaders: Record<string, string> } {
   const clearedCookies: CookieCall[] = [];
+  const responseHeaders: Record<string, string> = {};
 
   const user: AuthenticatedUser = {
     id: 1,
@@ -39,15 +40,18 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
       clearCookie: (name: string, options: Record<string, unknown>) => {
         clearedCookies.push({ name, options });
       },
+      setHeader: (name: string, value: string) => {
+        responseHeaders[name] = value;
+      },
     } as TrpcContext["res"],
   };
 
-  return { ctx, clearedCookies };
+  return { ctx, clearedCookies, responseHeaders };
 }
 
 describe("auth.logout", () => {
   it("clears the session cookie and reports success", async () => {
-    const { ctx, clearedCookies } = createAuthContext();
+    const { ctx, clearedCookies, responseHeaders } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
 
     const result = await caller.auth.logout();
@@ -62,5 +66,6 @@ describe("auth.logout", () => {
       httpOnly: true,
       path: "/",
     });
+    expect(responseHeaders["Cache-Control"]).toBe("no-store");
   });
 });
