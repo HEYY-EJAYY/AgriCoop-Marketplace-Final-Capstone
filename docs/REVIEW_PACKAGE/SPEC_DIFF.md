@@ -111,7 +111,23 @@ This document records gaps only. Slice 0 did not modify application code.
 - `client/src/pages/Support.tsx`: SSE listener and support UI.
 - `supabase/rls.sql`: target policies cover Buyer/Seller/admin roles but do not yet model an explicit three-party Admin Officer membership.
 
-## 8. Product quality grade
+## 8. Order quantity and bulk-order rules
+
+**Specification:** Each product enforces `min_order_qty` and `max_order_qty`; a bulk order may contain multiple products only when every product belongs to exactly one seller.
+
+**Current baseline:** The active MySQL schema has no product-level minimum or maximum quantity columns. Bulk-order validation is represented in UI/business-rule code but is not yet proven as a server-side/database invariant, and the current order model stores one seller on the order without a verified multi-item single-seller constraint.
+
+**Paths:** `drizzle/schema.ts`, `server/routers.ts`, `server/marketplaceRules.ts`, `client/src/pages/Marketplace.tsx`, `scripts/seed-demo.ts`.
+
+## 9. Role approval rules
+
+**Specification:** Public sign-up creates only Buyer or Seller accounts. Sellers and Admin Officers require approval. Admin Officers approve Buyers and Sellers within their own cooperative. SuperAdmin approves Admin Officers, manages the platform, and can never be created through public sign-up.
+
+**Current baseline:** The prototype has approval fields and role gates, but the active role value is `admin` rather than `admin_officer`; the cooperative-scoped approval workflow and the prohibition on public SuperAdmin creation are not yet proven against the target Postgres/RLS model.
+
+**Paths:** `drizzle/schema.ts`, `server/authz.ts`, `server/routers.ts`, `client/src/pages/Auth.tsx`, `client/src/pages/Dashboard.tsx`, `supabase/rls.sql`, `scripts/seed-demo.ts`.
+
+## 10. Product quality grade
 
 **Specification:** Quality grade A/B lets farmers list produce that fails strict market standards.
 
@@ -119,7 +135,7 @@ This document records gaps only. Slice 0 did not modify application code.
 
 **Paths:** `drizzle/schema.ts`, `scripts/seed-demo.ts`, `client/src/pages/Dashboard.tsx`, `client/src/pages/Marketplace.tsx`, `server/routers.ts`.
 
-## 9. Reports
+## 11. Reports
 
 **Specification:** Admin Officer and SuperAdmin reports limited to sales, inventory, quotations, and transactions in CSV.
 
@@ -127,7 +143,7 @@ This document records gaps only. Slice 0 did not modify application code.
 
 **Paths:** `server/routers.ts`, `server/reportCsv.test.ts`, `shared/reportCsv.ts`, `client/src/pages/Reports.tsx`, `client/src/pages/Dashboard.tsx`.
 
-## 10. Required quality evidence not present at baseline
+## 12. Required quality evidence not present at baseline
 
 - No configured lint script: `package.json`.
 - No Playwright suite or evidence: repository inventory contains Vitest tests only.
@@ -141,6 +157,6 @@ This document records gaps only. Slice 0 did not modify application code.
 - No clean-clone final verification.
 - No Vercel preview deployment backed by the fully migrated business runtime.
 
-## 11. Baseline conclusion
+## 13. Baseline conclusion
 
 The current project is a functional thesis prototype with a documented migration path, not yet the final target stack defined by the supplied specification. These gaps are the input to Slice 1 and later slices. They are intentionally not hidden or marked as complete.

@@ -108,3 +108,66 @@ The following were not run and are therefore **NOT DONE**, not passes:
 - slow-3G/load-time test;
 - clean-clone install/build/test run;
 - Vercel preview validation against the fully migrated business runtime.
+
+## Part A re-verification — 2026-10-08
+
+The following output was captured after the Part A documentation updates. Application behavior was not changed.
+
+```text
+===== pnpm check =====
+$ pnpm check
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.patchedDependencies", "pnpm.overrides". See https://pnpm.io/settings for the new home of each setting.
+> agricoop-marketplace@1.0.0 check /home/ubuntu/agricoop-marketplace
+> tsc --noEmit
+EXIT_CODE=0
+===== pnpm test =====
+$ pnpm test
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.patchedDependencies", "pnpm.overrides". See https://pnpm.io/settings for the new home of each setting.
+> agricoop-marketplace@1.0.0 test /home/ubuntu/agricoop-marketplace
+> vitest run
+ RUN  v2.1.9 /home/ubuntu/agricoop-marketplace
+ ✓ server/auth.logout.test.ts (1)
+ ✓ server/authz.test.ts (2)
+ ✓ server/credentials.test.ts (1)
+ ✓ server/marketplaceRules.test.ts (5)
+ ✓ server/reportCsv.test.ts (2)
+ ✓ server/serverCredentials.test.ts (1)
+ Test Files  6 passed (6)
+      Tests  12 passed (12)
+EXIT_CODE=0
+===== pnpm build =====
+$ pnpm build
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.patchedDependencies", "pnpm.overrides". See https://pnpm.io/settings for the new home of each setting.
+> agricoop-marketplace@1.0.0 build /home/ubuntu/agricoop-marketplace
+> vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist
+vite v7.1.9 building for production...
+✓ 1760 modules transformed.
+../dist/public/index.html                 368.25 kB │ gzip: 105.74 kB
+../dist/public/assets/index-lKLmot9O.css   99.58 kB │ gzip:  17.49 kB
+../dist/public/assets/index-Cq8ZCWVe.js   752.20 kB │ gzip: 208.04 kB
+(!) Some chunks are larger than 500 kB after minification.
+✓ built in 4.54s
+  dist/index.js  50.2kb
+⚡ Done in 6ms
+EXIT_CODE=0
+===== pnpm lint availability =====
+lint_script=MISSING
+===== Docker and Supabase CLI availability =====
+docker=NOT_INSTALLED
+supabase=NOT_INSTALLED
+===== tracked metadata =====
+$ git ls-files .project-config.json .manus-logs
+(no output)
+EXIT_CODE=0
+```
+
+**Results:** TypeScript PASS; Vitest PASS with 6 files and 12 tests; production build PASS with the existing 752.20 kB chunk warning; lint NOT DONE because no script exists; Docker and Supabase CLI are unavailable, so local Supabase Slice 1 execution is blocked.
+
+## `pnpm audit --json`
+
+The complete raw output is saved in `DEPENDENCY_AUDIT.md`.
+
+- Exit code: 1
+- Audited dependencies: 868
+- Vulnerabilities: 13 low, 86 moderate, 59 high, 6 critical
+- Advisory records: 163
