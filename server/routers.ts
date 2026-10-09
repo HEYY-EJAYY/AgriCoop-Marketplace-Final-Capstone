@@ -29,6 +29,7 @@ import { supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
 
 const roleSchema = z.enum(["buyer", "seller"]);
+const registrationRoleSchema = z.enum(["buyer", "seller", "admin"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
 
 async function dbOrThrow() {
@@ -46,7 +47,7 @@ async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, inpu
 export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
-    register: publicProcedure.input(z.object({ email: z.string().email(), password: z.string().min(6).max(128), name: z.string().min(2).max(120), role: roleSchema })).mutation(async ({ input }) => {
+    register: publicProcedure.input(z.object({ email: z.string().email(), password: z.string().min(6).max(128), name: z.string().min(2).max(120), role: registrationRoleSchema })).mutation(async ({ input }) => {
       const { data, error } = await supabaseAdmin.auth.admin.createUser({ email: input.email, password: input.password, email_confirm: true, user_metadata: { name: input.name, role: input.role } });
       if (error || !data.user) throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Unable to create the account." });
       await upsertUser({ openId: data.user.id, email: input.email, name: input.name, role: input.role, approvalStatus: input.role === "buyer" ? "approved" : "pending", loginMethod: "supabase" });

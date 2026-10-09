@@ -28,7 +28,7 @@ export function requireOperationalRole(user: OperationalUser | null, allowed: re
   if (!hasRole(user.role, allowed)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "Your AgriCoop role cannot access this area." });
   }
-  if (user.role !== "admin" && user.role !== "superadmin" && user.approvalStatus !== "approved") {
+  if (user.role !== "superadmin" && user.approvalStatus !== "approved") {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "Your role registration is pending cooperative approval.",

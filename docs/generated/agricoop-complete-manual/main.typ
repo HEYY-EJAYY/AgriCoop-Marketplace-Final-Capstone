@@ -840,6 +840,46 @@ The remaining requested items require a larger migration slice and, for sensitiv
 
 No plaintext passwords, service-role keys, SMS secrets, government IDs, or authentication tokens are stored in the application source or this PDF. Initial privileged accounts must be created through a secure, server-only seed configuration with temporary credentials and forced password change; the credentials themselves are intentionally excluded from documentation. The existing project credentials supplied through chat are not repeated here.
 
+= Role registration and SuperAdmin provisioning update — 2026-10-09
+
+== Public registration roles
+
+The public registration form now offers three safe choices:
+
+- *Buyer / Consumer* — approved for ordinary marketplace participation after registration.
+- *Seller / Farmer* — registered pending approval and subject to the existing seller controls.
+- *Cooperative Admin Officer* — publicly registerable, but always created with `approvalStatus = pending`.
+
+*SuperAdmin is not a public registration option.* This prevents an unauthenticated visitor from selecting the highest-privilege role.
+
+A pending Cooperative Admin Officer may authenticate, but server-side operational authorization rejects admin procedures until a SuperAdmin changes the record to `approved`. This rule is enforced in `requireOperationalRole`, not only in navigation or visual route guards. Existing approved Admin Officer records continue to work. A profile update cannot be used by a Buyer or Seller to self-promote into Admin Officer; the public registration role and profile-edit role schemas are intentionally separate.
+
+== Initial SuperAdmin provisioning
+
+The project now includes `scripts/seed-superadmins.ts` and the `pnpm seed:superadmins` command. The script provisions the two owner-specified SuperAdmin identities through Supabase Auth and synchronizes approved `superadmin` rows into the application database.
+
+Passwords are *not hard-coded*, committed, printed, returned by an API, or included in this manual. The script reads them only from these server-only environment variables:
+
+- `SUPERADMIN_JOAN_PASSWORD`
+- `SUPERADMIN_EROL_PASSWORD`
+
+The command also requires `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the application `DATABASE_URL`. It creates or updates the matching Auth account, sets the role metadata to `superadmin`, confirms the email for the initial seed, and writes only non-secret provisioning status to the terminal. Run it only from a trusted server environment, then rotate the temporary credentials and enable the organization’s normal password policy.
+
+== Verification evidence
+
+#table(
+  columns: (2fr, 1fr, 2.8fr),
+  stroke: none,
+  inset: 6pt,
+  fill: (_, y) => if y > 0 and calc.even(y) { rgb("#f3f7f0") } else { none },
+  table.header[*Check*][*Result*][*Evidence*],
+  [TypeScript], [PASS], [`pnpm check` exit code 0.],
+  [Authorization regression], [PASS], [`server/authz.test.ts`: 3 tests pass, including pending Admin Officer rejection.],
+  [Full deterministic suite], [PASS], [6 test files; 13 tests passed; 0 failed; 0 skipped.],
+  [Production build], [PASS with warning], [`pnpm build` exit code 0; existing large-chunk warning remains.],
+  [Live SuperAdmin provisioning], [NOT RUN], [Requires the server-only Supabase and database environment; no password was written to the repository or command line.],
+)
+
 = Glossary
 
 #table(

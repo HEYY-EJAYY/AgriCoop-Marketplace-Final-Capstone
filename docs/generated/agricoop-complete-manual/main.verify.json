@@ -19,15 +19,15 @@ cument",
     {
       "name": "page-count",
       "status": "PASS",
-      "message": "pages=29",
+      "message": "pages=30",
       "evidence": {
-        "pages": 29
+        "pages": 30
       }
     },
     {
       "name": "text-presence",
       "status": "PASS",
-      "message": "characters=73939",
+      "message": "characters=77341",
       "evidence": {}
     },
     {
