@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../server/db";
 import { conversationMessages, conversations, cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
 
@@ -23,16 +23,22 @@ for (const person of people) {
 }
 const farmerIds = [ids["demo-farmer-001"], ids["demo-farmer-002"], ids["demo-farmer-003"]];
 const catalog = [
-  ["Carabao Mango", "Fruits", "kg", 12500, 80, "Premium golden mangoes, harvested at proper maturity."], ["Lakatan Banana", "Fruits", "kg", 6800, 120, "Naturally sweet local lakatan bananas."], ["Pineapple", "Fruits", "piece", 8500, 60, "Sweet and fragrant Queen pineapples."], ["Calamansi", "Fruits", "kg", 7200, 90, "Bright, juicy calamansi for drinks and cooking."],
-  ["Red Rice", "Grains", "kg", 9800, 200, "Nutty, stone-milled red rice from cooperative farms."], ["Premium Brown Rice", "Grains", "kg", 11200, 180, "Wholesome brown rice, cleaned and packed."], ["Fresh Ginger", "Root Crops", "kg", 14500, 55, "Aromatic fresh ginger roots."], ["Sweet Potato", "Root Crops", "kg", 5500, 100, "Fresh orange-fleshed sweet potatoes."],
-  ["Tomato", "Vegetables", "kg", 9500, 75, "Firm red tomatoes for household and food-service use."], ["Eggplant", "Vegetables", "kg", 7600, 70, "Tender purple eggplant."], ["String Beans", "Vegetables", "kg", 8400, 65, "Crisp string beans harvested this week."], ["Peanut", "Legumes", "kg", 13800, 45, "Roasted-ready local peanuts."],
+  ["Carabao Mango", "Fruits", "kg", 12500, 80, "Premium golden mangoes, harvested at proper maturity.", "mango.jpg"], ["Lakatan Banana", "Fruits", "kg", 6800, 120, "Naturally sweet local lakatan bananas.", "banana.jpg"], ["Pineapple", "Fruits", "piece", 8500, 60, "Sweet and fragrant Queen pineapples.", "pineapple.jpg"], ["Calamansi", "Fruits", "kg", 7200, 90, "Bright, juicy calamansi for drinks and cooking.", "calamansi.jpg"],
+  ["Red Rice", "Grains", "kg", 9800, 200, "Nutty, stone-milled red rice from cooperative farms.", "rice.jpg"], ["Premium Brown Rice", "Grains", "kg", 11200, 180, "Wholesome brown rice, cleaned and packed.", "rice.jpg"], ["Fresh Ginger", "Root Crops", "kg", 14500, 55, "Aromatic fresh ginger roots.", "ginger.jpg"], ["Sweet Potato", "Root Crops", "kg", 5500, 100, "Fresh orange-fleshed sweet potatoes.", "sweet-potato.jpg"],
+  ["Tomato", "Vegetables", "kg", 9500, 75, "Firm red tomatoes for household and food-service use.", "tomato.jpg"], ["Eggplant", "Vegetables", "kg", 7600, 70, "Tender purple eggplant.", "eggplant.jpg"], ["String Beans", "Vegetables", "kg", 8400, 65, "Crisp string beans harvested this week.", "product-default.jpg"], ["Peanut", "Legumes", "kg", 13800, 45, "Roasted-ready local peanuts.", "product-default.jpg"],
 ] as const;
 const productIds: number[] = [];
 for (let i = 0; i < catalog.length; i++) {
-  const [name, category, unit, priceCents, stockQty, description] = catalog[i];
+  const [name, category, unit, priceCents, stockQty, description, imageFile] = catalog[i];
   const sellerId = farmerIds[i % farmerIds.length];
+  const primaryImageUrl = `/images/${imageFile}`;
   const found = (await db.select().from(products).where(and(eq(products.name, name), eq(products.sellerId, sellerId))).limit(1))[0];
-  productIds.push(found?.id ?? (await db.insert(products).values({ sellerId, cooperativeId: coopId, name, category, unit, priceCents, stockQty, description, qualityGrade: i % 4 === 0 ? "premium" : "standard", status: "published", verificationStatus: "approved", visibility: "visible" }).$returningId())[0].id);
+  if (found) {
+    if (!found.primaryImageUrl) await db.update(products).set({ primaryImageUrl }).where(and(eq(products.id, found.id), isNull(products.primaryImageUrl)));
+    productIds.push(found.id);
+  } else {
+    productIds.push((await db.insert(products).values({ sellerId, cooperativeId: coopId, name, category, unit, priceCents, stockQty, description, primaryImageUrl, qualityGrade: i % 4 === 0 ? "premium" : "standard", status: "published", verificationStatus: "approved", visibility: "visible" }).$returningId())[0].id);
+  }
 }
 const buyerId = ids["demo-buyer-001"];
 const farmer1 = farmerIds[0];
