@@ -36,6 +36,20 @@
       "when": 1791028128221,
       "tag": "0004_panoramic_archangel",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1792334067690,
+      "tag": "0005_chief_toad_men",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1792334395425,
+      "tag": "0006_same_inertia",
+      "breakpoints": true
     }
   ]
 }

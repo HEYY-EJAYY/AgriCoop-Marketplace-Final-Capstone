@@ -11,11 +11,12 @@ import {
 export const cooperatives = mysqlTable("cooperatives", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 180 }).notNull(),
+  normalizedName: varchar("normalizedName", { length: 180 }).notNull(),
   description: text("description"),
   location: varchar("location", { length: 180 }).notNull(),
   status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, table => [uniqueIndex("cooperatives_normalized_name_idx").on(table.normalizedName)]);
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -41,10 +42,12 @@ export const products = mysqlTable("products", {
   cooperativeId: int("cooperativeId").references(() => cooperatives.id),
   name: varchar("name", { length: 160 }).notNull(),
   category: varchar("category", { length: 80 }).notNull(),
+  variety: varchar("variety", { length: 180 }).notNull(),
   description: text("description"),
   unit: varchar("unit", { length: 40 }).notNull(),
   priceCents: int("priceCents").notNull(),
   stockQty: int("stockQty").notNull().default(0),
+  minOrderQty: int("minOrderQty").notNull().default(1),
   qualityGrade: mysqlEnum("qualityGrade", ["premium", "standard", "imperfect"])
     .default("standard")
     .notNull(),

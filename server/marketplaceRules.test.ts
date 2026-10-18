@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { assertInventorySufficient, assertNotSelfTransaction, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
 
 const products = [
-  { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, priceCents: 5500, status: "published", name: "Fresh Cabbage" },
-  { id: 2, sellerId: 12, cooperativeId: 3, stockQty: 12, priceCents: 4000, status: "published", name: "Sweet Corn" },
+  { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, minOrderQty: 2, priceCents: 5500, unit: "kg", status: "published", name: "Fresh Cabbage" },
+  { id: 2, sellerId: 12, cooperativeId: 3, stockQty: 12, minOrderQty: 1, priceCents: 4000, unit: "kg", status: "published", name: "Sweet Corn" },
 ];
 
 describe("marketplace order rules", () => {
@@ -17,7 +17,8 @@ describe("marketplace order rules", () => {
 
   it("rejects cross-farm and unavailable orders before records are created", () => {
     expect(() => prepareOrder([products[0], { ...products[1], id: 3, sellerId: 22 }], [{ productId: 1, quantity: 1 }, { productId: 3, quantity: 1 }])).toThrow("one seller");
-    expect(() => prepareOrder([products[0]], [{ productId: 1, quantity: 21 }])).toThrow("enough stock");
+    expect(() => prepareOrder([products[0]], [{ productId: 1, quantity: 1 }])).toThrow("minimum order of 2 kg");
+    expect(() => prepareOrder([products[0]], [{ productId: 1, quantity: 21 }])).toThrow("only 20 kg available");
     expect(() => prepareOrder([{ ...products[0], status: "archived" }], [{ productId: 1, quantity: 1 }])).toThrow("no longer available");
   });
 

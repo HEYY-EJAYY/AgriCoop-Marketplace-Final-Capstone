@@ -1,4 +1,4 @@
-CREATE TABLE `cooperatives` (
+CREATE TABLE IF NOT EXISTS `cooperatives` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`name` varchar(180) NOT NULL,
 	`description` text,
@@ -8,7 +8,7 @@ CREATE TABLE `cooperatives` (
 	CONSTRAINT `cooperatives_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `orderItems` (
+CREATE TABLE IF NOT EXISTS `orderItems` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`orderId` int NOT NULL,
 	`productId` int NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE `orderItems` (
 	CONSTRAINT `orderItems_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `orders` (
+CREATE TABLE IF NOT EXISTS `orders` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`buyerId` int NOT NULL,
 	`sellerId` int NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE `orders` (
 	CONSTRAINT `orders_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `products` (
+CREATE TABLE IF NOT EXISTS `products` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`sellerId` int NOT NULL,
 	`cooperativeId` int,
@@ -49,7 +49,7 @@ CREATE TABLE `products` (
 	CONSTRAINT `products_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `quotations` (
+CREATE TABLE IF NOT EXISTS `quotations` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`productId` int NOT NULL,
 	`buyerId` int NOT NULL,
@@ -60,11 +60,11 @@ CREATE TABLE `quotations` (
 	`sellerNote` text,
 	`status` enum('requested','responded','accepted','declined') NOT NULL DEFAULT 'requested',
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
-	`respondedAt` timestamp,
+	`respondedAt` timestamp NULL DEFAULT NULL,
 	CONSTRAINT `quotations_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE TABLE `transactions` (
+CREATE TABLE IF NOT EXISTS `transactions` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`orderId` int NOT NULL,
 	`buyerId` int NOT NULL,

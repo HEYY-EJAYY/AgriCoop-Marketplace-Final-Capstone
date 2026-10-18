@@ -15,6 +15,7 @@ import {
   getCooperatives,
   getDb,
   getMarketplace,
+  getMarketplaceProduct,
   getOfficerOverview,
   getProductById,
   getSellerOrders,
@@ -27,10 +28,46 @@ import {
 import { conversationMessages, conversations, cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
 import { supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
+import { normalizeCooperativeName } from "./cooperativeNames";
+import { PRODUCT_UNITS } from "../shared/productOptions";
+import { storagePut } from "./storage";
 
 const roleSchema = z.enum(["buyer", "seller"]);
 const registrationRoleSchema = z.enum(["buyer", "seller", "admin"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
+const productFields = {
+  name: z.string().trim().min(2).max(160),
+  category: z.string().trim().min(2).max(80),
+  variety: z.string().trim().min(1, "Enter or choose a product variety.").max(180),
+  description: z.string().trim().min(1, "Enter a product description.").max(1200),
+  unit: z.enum(PRODUCT_UNITS),
+  priceCents: z.number().int().positive("Enter a price greater than zero."),
+  stockQty: z.number().int().positive("Available stock must be greater than zero."),
+  minOrderQty: z.number().int().positive("Minimum order quantity must be greater than zero."),
+};
+
+function validateProductQuantities(
+  input: { stockQty: number; minOrderQty: number },
+  context: z.RefinementCtx,
+) {
+  if (input.minOrderQty > input.stockQty) {
+    context.addIssue({
+      code: "custom",
+      path: ["minOrderQty"],
+      message: "Minimum order quantity cannot exceed available stock.",
+    });
+  }
+}
+
+const newProductSchema = z.object({
+  ...productFields,
+  qualityGrade: z.enum(["premium", "standard", "imperfect"]).default("standard"),
+  imageUrls: z.array(z.string().max(1000).refine(
+    imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
+    "Image must be a valid URL or local image path.",
+  )).max(10).default([]),
+  submitForVerification: z.boolean().default(true),
+}).superRefine(validateProductQuantities);
 
 async function dbOrThrow() {
   const db = await getDb();
@@ -47,12 +84,94 @@ async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, inpu
 export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
-    register: publicProcedure.input(z.object({ email: z.string().email(), password: z.string().min(6).max(128), name: z.string().min(2).max(120), role: registrationRoleSchema })).mutation(async ({ input }) => {
-      const { data, error } = await supabaseAdmin.auth.admin.createUser({ email: input.email, password: input.password, email_confirm: true, user_metadata: { name: input.name, role: input.role } });
-      if (error || !data.user) throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Unable to create the account." });
-      await upsertUser({ openId: data.user.id, email: input.email, name: input.name, role: input.role, approvalStatus: input.role === "buyer" ? "approved" : "pending", loginMethod: "supabase" });
-      return { success: true };
-    }),
+    register: publicProcedure
+      .input(z.object({
+        email: z.string().email(),
+        password: z.string().min(6).max(128),
+        name: z.string().min(2).max(120),
+        role: registrationRoleSchema,
+        sellerType: z.enum(["individual", "cooperative"]).optional(),
+        cooperativeId: z.number().int().positive().optional(),
+        cooperativeName: z.string().max(180).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        let cooperativeId: number | null = null;
+        let joinedExistingCooperative: string | null = null;
+        let cooperativeName: string | null = null;
+
+        if (input.role === "seller") {
+          if (!input.sellerType) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether you are an individual seller or a cooperative member." });
+          }
+          if (input.sellerType === "cooperative") {
+            const db = await dbOrThrow();
+            if (input.cooperativeId !== undefined) {
+              const existing = (await db.select().from(cooperatives).where(eq(cooperatives.id, input.cooperativeId)).limit(1))[0];
+              if (!existing || existing.status !== "active") {
+                throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an active cooperative from the list." });
+              }
+              cooperativeId = existing.id;
+              cooperativeName = existing.name;
+            } else if (input.cooperativeName !== undefined) {
+              let normalized: ReturnType<typeof normalizeCooperativeName>;
+              try {
+                normalized = normalizeCooperativeName(input.cooperativeName);
+              } catch (error) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Enter a valid cooperative name." });
+              }
+              if (normalized.displayName.length > 180) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: "Cooperative name must be 180 characters or fewer." });
+              }
+              const existing = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
+              if (existing) {
+                cooperativeId = existing.id;
+                cooperativeName = existing.name;
+                joinedExistingCooperative = existing.name;
+              } else {
+                try {
+                  const [created] = await db.insert(cooperatives).values({
+                    name: normalized.displayName,
+                    normalizedName: normalized.normalizedName,
+                    location: "Not specified",
+                  }).$returningId();
+                  cooperativeId = created.id;
+                  cooperativeName = normalized.displayName;
+                } catch (error) {
+                  const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
+                  const errorCode = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+                  const errorNumber = typeof cause === "object" && cause !== null && "errno" in cause ? cause.errno : undefined;
+                  if (errorCode !== "ER_DUP_ENTRY" && errorNumber !== 1062) throw error;
+                  const racedExisting = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
+                  if (!racedExisting) throw error;
+                  cooperativeId = racedExisting.id;
+                  cooperativeName = racedExisting.name;
+                  joinedExistingCooperative = racedExisting.name;
+                }
+              }
+            } else {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an existing cooperative or enter a new cooperative name." });
+            }
+          }
+        }
+
+        const { data, error } = await supabaseAdmin.auth.admin.createUser({
+          email: input.email,
+          password: input.password,
+          email_confirm: true,
+          user_metadata: { name: input.name, role: input.role },
+        });
+        if (error || !data.user) throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Unable to create the account." });
+        await upsertUser({
+          openId: data.user.id,
+          email: input.email,
+          name: input.name,
+          role: input.role,
+          approvalStatus: input.role === "buyer" ? "approved" : "pending",
+          cooperativeId,
+          loginMethod: "supabase",
+        });
+        return { success: true, cooperativeName, joinedExistingCooperative };
+      }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -104,12 +223,24 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
-        await db.insert(cooperatives).values(input);
+        const normalized = normalizeCooperativeName(input.name);
+        await db.insert(cooperatives).values({
+          ...input,
+          name: normalized.displayName,
+          normalizedName: normalized.normalizedName,
+        });
         return { success: true };
       }),
   }),
 
   marketplace: router({
+    byId: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .query(async ({ input }) => {
+        const listing = await getMarketplaceProduct(input.id);
+        if (!listing) throw new TRPCError({ code: "NOT_FOUND", message: "This product is not currently available." });
+        return listing;
+      }),
     list: publicProcedure
       .input(z.object({ category: z.string().optional(), sort: z.enum(["asc", "desc"]).default("asc") }).optional())
       .query(({ input }) => getMarketplace(input?.category, input?.sort ?? "asc")),
@@ -118,30 +249,58 @@ export const appRouter = router({
 
   products: router({
     mine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["seller"]);
+      requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
       return getSellerProducts(ctx.user.id);
     }),
     create: protectedProcedure
-      .input(z.object({ name: z.string().min(2).max(160), category: z.string().min(2).max(80), description: z.string().max(1200).optional(), unit: z.string().min(1).max(40), priceCents: z.number().int().positive(), stockQty: z.number().int().min(0), qualityGrade: z.enum(["premium", "standard", "imperfect"]).default("standard"), imageUrls: z.array(z.string().url()).max(10).default([]), submitForVerification: z.boolean().default(true) }))
+      .input(newProductSchema)
       .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         const { imageUrls, submitForVerification, ...productValues } = input; await db.insert(products).values({ ...productValues, sellerId: seller.id, cooperativeId: seller.cooperativeId, verificationStatus: submitForVerification ? "pending" : "draft", visibility: "hidden", primaryImageUrl: imageUrls[0] ?? null });
         return { success: true };
       }),
+    uploadImage: protectedProcedure
+      .input(z.object({
+        fileName: z.string().min(1).max(255),
+        contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+        base64: z.string().min(1).max(12_000_000),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected image file is invalid." });
+        }
+        const bytes = Buffer.from(input.base64, "base64");
+        if (bytes.length === 0 || bytes.length > 8 * 1024 * 1024) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be smaller than 8 MB." });
+        }
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "product-image";
+        const uploaded = await storagePut(`products/${seller.id}/${Date.now()}-${safeName}`, bytes, input.contentType);
+        return { url: uploaded.url };
+      }),
     submit: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         const result = await db.update(products).set({ verificationStatus: "pending", visibility: "hidden", rejectionReason: null }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id)));
         if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another Seller." });
         return { success: true };
       }),
     update: protectedProcedure
-      .input(z.object({ id: z.number().int().positive(), name: z.string().min(2).max(160), category: z.string().min(2).max(80), description: z.string().max(1200).optional(), unit: z.string().min(1).max(40), priceCents: z.number().int().positive(), stockQty: z.number().int().min(0), qualityGrade: z.enum(["premium", "standard", "imperfect"]), status: z.enum(["published", "archived"]) }))
+      .input(z.object({
+        id: z.number().int().positive(),
+        ...productFields,
+        qualityGrade: z.enum(["premium", "standard", "imperfect"]),
+        status: z.enum(["published", "archived"]),
+        primaryImageUrl: z.string().max(1000).refine(
+          imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
+          "Image must be a valid URL or local image path.",
+        ).nullable().optional(),
+      }).superRefine(validateProductQuantities))
       .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         const { id, ...values } = input;
         const result = await db.update(products).set(values).where(and(eq(products.id, id), eq(products.sellerId, seller.id)));
@@ -151,7 +310,7 @@ export const appRouter = router({
     archive: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         await db.update(products).set({ status: "archived" }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id)));
         return { success: true };
@@ -174,6 +333,12 @@ export const appRouter = router({
         const product = await getProductById(input.productId);
         if (!product || product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible") throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
         try { assertNotSelfTransaction(buyer.id, product.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." }); }
+        if (input.requestedQty < product.minOrderQty) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum order is ${product.minOrderQty} ${product.unit}.` });
+        }
+        if (input.requestedQty > product.stockQty) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${product.stockQty} ${product.unit} are currently available.` });
+        }
         const db = await dbOrThrow();
         const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).$returningId();
         const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
