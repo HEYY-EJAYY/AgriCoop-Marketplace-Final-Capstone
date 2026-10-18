@@ -5,6 +5,7 @@ import {
   conversationMessages,
   conversations,
   InsertUser,
+  orderEvents,
   orderItems,
   orders,
   products,
@@ -149,6 +150,39 @@ export async function getSellerOrders(sellerId: number) {
     .innerJoin(users, eq(orders.buyerId, users.id))
     .where(eq(orders.sellerId, sellerId))
     .orderBy(desc(orders.createdAt));
+}
+
+export async function getOrderDetail(orderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [orderRow] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!orderRow) return undefined;
+
+  const [buyer, seller] = await Promise.all([
+    db.select().from(users).where(eq(users.id, orderRow.buyerId)).limit(1),
+    db.select().from(users).where(eq(users.id, orderRow.sellerId)).limit(1),
+  ]);
+
+  const items = await db
+    .select({ item: orderItems, productName: products.name, unit: products.unit, priceCents: products.priceCents })
+    .from(orderItems)
+    .innerJoin(products, eq(orderItems.productId, products.id))
+    .where(eq(orderItems.orderId, orderId));
+
+  const events = await db
+    .select({ event: orderEvents, actorName: users.name })
+    .from(orderEvents)
+    .leftJoin(users, eq(orderEvents.actorUserId, users.id))
+    .where(eq(orderEvents.orderId, orderId))
+    .orderBy(desc(orderEvents.createdAt));
+
+  return {
+    order: orderRow,
+    buyer: buyer[0],
+    seller: seller[0],
+    items,
+    events,
+  };
 }
 
 export async function getBuyerQuotations(buyerId: number) {

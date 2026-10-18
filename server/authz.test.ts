@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canManageSellerOrder, hasRole, requireOperationalRole } from "./authz";
+import { canAccessOrderForCooperative, canManageSellerOrder, hasRole, requireOperationalRole } from "./authz";
 
 describe("AgriCoop role authorization", () => {
   it("admits only explicitly allowed marketplace roles", () => {
@@ -22,5 +22,11 @@ describe("AgriCoop role authorization", () => {
     expect(() => requireOperationalRole(pendingAdmin, ["admin"])).toThrow("pending cooperative approval");
     expect(requireOperationalRole({ ...pendingAdmin, approvalStatus: "approved" }, ["admin"]).role).toBe("admin");
     expect(requireOperationalRole({ ...pendingAdmin, role: "superadmin" as const }, ["superadmin"]).role).toBe("superadmin");
+  });
+
+  it("limits officer order access to their own cooperative while letting SuperAdmin see everything", () => {
+    expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 2)).toBe(true);
+    expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 3)).toBe(false);
+    expect(canAccessOrderForCooperative({ role: "superadmin", cooperativeId: null }, 3)).toBe(true);
   });
 });

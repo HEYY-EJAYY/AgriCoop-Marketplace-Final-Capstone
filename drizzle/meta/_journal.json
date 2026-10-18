@@ -57,6 +57,13 @@
       "when": 1792343450829,
       "tag": "0007_gray_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1792343582637,
+      "tag": "0008_cute_pandemic",
+      "breakpoints": true
     }
   ]
 }

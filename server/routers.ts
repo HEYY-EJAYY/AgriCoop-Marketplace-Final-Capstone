@@ -4,7 +4,7 @@ import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { APP_ROLES, canManageSellerOrder, requireOperationalRole } from "./authz";
+import { APP_ROLES, canAccessOrderForCooperative, canManageSellerOrder, requireOperationalRole } from "./authz";
 import { assertInventorySufficient, assertNotSelfTransaction, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
 import {
   decrementProductStock,
@@ -17,6 +17,7 @@ import {
   getMarketplace,
   getMarketplaceProduct,
   getOfficerOverview,
+  getOrderDetail,
   getProductById,
   getSellerOrders,
   getSellerProducts,
@@ -25,7 +26,7 @@ import {
   getConversationsForUser,
   upsertUser,
 } from "./db";
-import { conversationMessages, conversations, cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
+import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
 import { supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
 import { normalizeCooperativeName } from "./cooperativeNames";
@@ -79,6 +80,17 @@ async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, inpu
   const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).$returningId();
   await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
   return thread.id;
+}
+
+async function recordOrderEvent(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { orderId: number; actorUserId: number; action: string; fromStatus?: string | null; toStatus?: string | null; note?: string | null }) {
+  await db.insert(orderEvents).values({
+    orderId: input.orderId,
+    actorUserId: input.actorUserId,
+    action: input.action,
+    fromStatus: input.fromStatus ?? null,
+    toStatus: input.toStatus ?? null,
+    note: input.note ?? null,
+  });
 }
 
 export const appRouter = router({
@@ -392,6 +404,7 @@ export const appRouter = router({
         const orderRow = (await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1))[0];
         if (!orderRow || !canManageSellerOrder(actor, orderRow.sellerId)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot update this order." });
         if (!canTransitionOrder(orderRow.status, input.status)) throw new TRPCError({ code: "BAD_REQUEST", message: "This fulfillment update is not valid for the order's current status." });
+        const previousStatus = orderRow.status;
         if (input.status === "completed") {
           const items = await db.select().from(orderItems).where(eq(orderItems.orderId, input.orderId));
           const currentProducts = await db.select().from(products).where(inArray(products.id, items.map(item => item.productId)));
@@ -402,6 +415,7 @@ export const appRouter = router({
         } else {
           await db.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
         }
+        await recordOrderEvent(db, { orderId: input.orderId, actorUserId: actor.id, action: "status_change", fromStatus: previousStatus, toStatus: input.status, note: input.paymentReferenceNote ?? null });
         return { success: true };
       }),
   }),
@@ -411,6 +425,26 @@ export const appRouter = router({
       const cooperativeAdmin = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       return getOfficerOverview(cooperativeAdmin.cooperativeId);
     }),
+    orderDetails: protectedProcedure
+      .input(z.object({ orderId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const orderDetail = await getOrderDetail(input.orderId);
+        if (!orderDetail) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+        if (!canAccessOrderForCooperative(actor, orderDetail.order.cooperativeId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only view orders in their cooperative." });
+        }
+        const seller = await db.select().from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);
+        const buyer = await db.select().from(users).where(eq(users.id, orderDetail.order.buyerId)).limit(1);
+        return {
+          order: orderDetail.order,
+          buyer: buyer[0],
+          seller: seller[0],
+          items: orderDetail.items,
+          events: orderDetail.events,
+        };
+      }),
     updateMemberStatus: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), approvalStatus: z.enum(["approved", "suspended"]) }))
       .mutation(async ({ ctx, input }) => {

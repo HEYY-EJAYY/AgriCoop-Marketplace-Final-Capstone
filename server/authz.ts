@@ -21,6 +21,15 @@ export function canManageSellerOrder(
   return actor.role === "admin" || actor.role === "superadmin" || (actor.role === "seller" && actor.id === sellerId);
 }
 
+export function canAccessOrderForCooperative(
+  actor: Pick<OperationalUser, "role" | "cooperativeId">,
+  orderCooperativeId: number | null,
+) {
+  if (actor.role === "superadmin") return true;
+  if (actor.role !== "admin") return false;
+  return actor.cooperativeId !== null && orderCooperativeId !== null && actor.cooperativeId === orderCooperativeId;
+}
+
 export function requireOperationalRole(user: OperationalUser | null, allowed: readonly AppRole[]) {
   if (!user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in to continue." });
