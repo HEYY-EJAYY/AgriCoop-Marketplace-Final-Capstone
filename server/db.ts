@@ -35,7 +35,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 
   const values: any = { openId: user.openId, lastSignedIn: new Date() };
   const updateSet: Record<string, unknown> = { lastSignedIn: new Date() };
-  (["name", "email", "loginMethod", "role", "approvalStatus"] as const).forEach(field => {
+  (["name", "email", "loginMethod", "role", "approvalStatus", "cooperativeId"] as const).forEach(field => {
     if (user[field] !== undefined) {
       values[field] = user[field] ?? null;
       updateSet[field] = user[field] ?? null;
@@ -79,6 +79,25 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
     .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
     .where(and(...conditions))
     .orderBy(sort === "asc" ? asc(products.priceCents) : desc(products.priceCents));
+}
+
+export async function getMarketplaceProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select({ product: products, sellerName: users.name, cooperativeName: cooperatives.name })
+    .from(products)
+    .innerJoin(users, eq(products.sellerId, users.id))
+    .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
+    .where(and(
+      eq(products.id, productId),
+      eq(products.status, "published"),
+      eq(products.verificationStatus, "approved"),
+      eq(products.visibility, "visible"),
+      eq(users.approvalStatus, "approved"),
+    ))
+    .limit(1);
+  return rows[0];
 }
 
 export async function getCategories() {
@@ -163,7 +182,7 @@ export async function getOfficerOverview(cooperativeId: number | null) {
   const listings = await db.select().from(products).where(eq(products.cooperativeId, cooperativeId));
   const orderRows = await db.select().from(orders).where(eq(orders.cooperativeId, cooperativeId)).orderBy(desc(orders.createdAt));
   const quotationRows = await db
-    .select({ quotation: quotations, productName: products.name, buyerName: users.name })
+    .select({ quotation: quotations, productName: products.name, unit: products.unit, buyerName: users.name })
     .from(quotations)
     .innerJoin(products, eq(quotations.productId, products.id))
     .innerJoin(users, eq(quotations.buyerId, users.id))
@@ -189,7 +208,7 @@ export async function getAdminOverview() {
     db.select().from(cooperatives).orderBy(asc(cooperatives.name)),
     db.select().from(products).orderBy(desc(products.createdAt)),
     db.select().from(orders).orderBy(desc(orders.createdAt)),
-    db.select().from(quotations).orderBy(desc(quotations.createdAt)),
+    db.select({ quotation: quotations, unit: products.unit }).from(quotations).innerJoin(products, eq(quotations.productId, products.id)).orderBy(desc(quotations.createdAt)),
     db.select().from(transactions).orderBy(desc(transactions.completedAt)),
   ]);
   return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
@@ -214,9 +233,11 @@ export async function decrementProductStock(productId: number, quantity: number)
 export async function getConversationsForUser(userId: number, canSeeAll = false) {
   const db = await getDb();
   if (!db) return [];
-  return db.select({ conversation: conversations, ownerName: users.name })
+  return db.select({ conversation: conversations, ownerName: users.name, productName: products.name, productUnit: products.unit, requestedQty: quotations.requestedQty })
     .from(conversations)
     .innerJoin(users, eq(conversations.buyerId, users.id))
+    .leftJoin(products, eq(conversations.productId, products.id))
+    .leftJoin(quotations, eq(conversations.quotationId, quotations.id))
     .where(canSeeAll ? undefined : or(eq(conversations.buyerId, userId), eq(conversations.sellerId, userId)))
     .orderBy(desc(conversations.updatedAt));
 }

@@ -4,7 +4,9 @@ export type AvailableProduct = {
   sellerId: number;
   cooperativeId: number | null;
   stockQty: number;
+  minOrderQty: number;
   priceCents: number;
+  unit: string;
   status: string;
   name: string;
 };
@@ -21,7 +23,13 @@ export function prepareOrder(products: AvailableProduct[], items: OrderItemReque
   const productMap = new Map(products.map(product => [product.id, product]));
   for (const item of items) {
     const product = productMap.get(item.productId);
-    if (!product || item.quantity > product.stockQty) throw new Error(`${product?.name || "Selected product"} does not have enough stock for that quantity.`);
+    if (!product) throw new Error("One or more selected items are no longer available.");
+    if (item.quantity < product.minOrderQty) {
+      throw new Error(`${product.name} has a minimum order of ${product.minOrderQty} ${product.unit}.`);
+    }
+    if (item.quantity > product.stockQty) {
+      throw new Error(`${product.name} has only ${product.stockQty} ${product.unit} available.`);
+    }
   }
   return {
     sellerId: products[0].sellerId,

@@ -2,7 +2,7 @@ import { PageFrame } from "@/components/AgriShell";
 import { ArrowRight, BadgeCheck, Handshake, Layers3, ShieldCheck } from "lucide-react";
 import { Link } from "wouter";
 
-const heroUrl = "/manus-storage/agricoop-hero_df276c3b.png";
+const heroUrl = "/images/hero-banner.webp";
 
 export default function Home() {
   return <PageFrame><main>

@@ -26,31 +26,37 @@ Seller listings are hidden until submitted and approved. Rejected listings retai
 
 ## Local setup
 
-```bash
-pnpm install
-# configure DATABASE_URL, Supabase Auth variables, and JWT_SECRET in a local .env
-pnpm dev
+Start a local MySQL/MariaDB server first and create the database named by `DATABASE_URL`. Copy the required local configuration into `.env.local` (see [docs/ENVIRONMENT.md](./docs/ENVIRONMENT.md)); keep database and Supabase service-role credentials private.
+
+```powershell
+corepack pnpm install
+if (-not (Test-Path .env.local)) { New-Item -ItemType File .env.local }
+notepad .env.local
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS agricoop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+corepack pnpm db:push
+corepack pnpm seed:defaults
+corepack pnpm dev
 ```
 
-Useful commands:
+The development server prints its URL when ready (normally `http://localhost:3000/`; it selects the next available port if that port is occupied). `seed:defaults` creates or updates only the five configured default accounts and the ten requested visible crop listings. It requires valid Supabase Auth admin settings and all `SEED_*` values in `.env.local`.
+
+Useful validation commands:
 
 ```bash
-pnpm check
-pnpm test
-pnpm build
-pnpm db:push
-pnpm seed:demo
+corepack pnpm check
+corepack pnpm test
+corepack pnpm build
 ```
 
-Use `pnpm seed:demo` only against a demo database. It creates one cooperative, three Sellers, one Buyer, an Admin, 12 approved listings, quotations, mixed orders, F2F transactions, and a linked support thread.
+`pnpm seed:demo` is a separate legacy demo-data seeder that creates additional users and marketplace activity; do not run it when using the five-account default dataset. For a production server, run `corepack pnpm build` followed by `corepack pnpm start`.
 
 ## Database changes
 
 1. Edit `drizzle/schema.ts`.
-2. Run `pnpm drizzle-kit generate`.
+2. Run `corepack pnpm exec drizzle-kit generate`.
 3. Review the SQL migration, especially enum changes.
-4. Apply it with the project migration workflow.
-5. Run `pnpm check`, `pnpm test`, and `pnpm build`.
+4. Apply it with `corepack pnpm exec drizzle-kit migrate`.
+5. Run `corepack pnpm check`, `corepack pnpm test`, and `corepack pnpm build`.
 
 The current role/product migration normalizes legacy `user` and `officer` records before narrowing the role enum.
 
