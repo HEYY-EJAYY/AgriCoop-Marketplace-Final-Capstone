@@ -2,6 +2,7 @@ import { WorkspaceHeader } from "@/components/AgriShell";
 import { buildCsv } from "../../../shared/reportCsv";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { goToAuth } from "@/const";
+import { formatDateManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
 import { getProductImageUrl } from "@/lib/productImages";
 import { getProductVarieties, PRODUCT_UNITS } from "../../../shared/productOptions";
@@ -11,7 +12,7 @@ import { toast } from "sonner";
 import { Link } from "wouter";
 
 const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
-const when = (value: Date | string | null) => value ? new Date(value).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "—";
+const when = (value: Date | string | null) => formatDateManila(value);
 const Status = ({ value }: { value: string }) => <span className={`status-pill status-${value}`}>{value.replaceAll("_", " ")}</span>;
 
 function readImageAsBase64(file: File) {

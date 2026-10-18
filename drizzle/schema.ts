@@ -75,6 +75,7 @@ export const quotations = mysqlTable("quotations", {
     .default("requested")
     .notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   respondedAt: timestamp("respondedAt"),
 });
 
@@ -104,6 +105,8 @@ export const orderItems = mysqlTable("orderItems", {
   productId: int("productId").notNull().references(() => products.id),
   quantity: int("quantity").notNull(),
   unitPriceCents: int("unitPriceCents").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const transactions = mysqlTable(
@@ -126,6 +129,8 @@ export const transactions = mysqlTable(
       .notNull(),
     paymentMethod: varchar("paymentMethod", { length: 64 }),
     externalId: varchar("externalId", { length: 128 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
     completedAt: timestamp("completedAt").defaultNow().notNull(),
   },
   table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)],
@@ -150,6 +155,7 @@ export const conversationMessages = mysqlTable("conversationMessages", {
   senderId: int("senderId").notNull().references(() => users.id),
   body: text("body").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;
