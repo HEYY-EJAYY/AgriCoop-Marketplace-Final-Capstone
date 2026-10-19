@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canAccessOrderForCooperative, canManageSellerOrder, hasRole, requireOperationalRole } from "./authz";
+import { canAccessOrderForCooperative, canManageSellerOrder, canSubmitProfileVerification, hasRole, requireOperationalRole } from "./authz";
 
 describe("AgriCoop role authorization", () => {
   it("admits only explicitly allowed marketplace roles", () => {
@@ -17,9 +17,10 @@ describe("AgriCoop role authorization", () => {
     expect(canManageSellerOrder({ id: 1, role: "superadmin" }, 10)).toBe(true);
   });
 
-  it("keeps public Admin Officer registrations pending until approval", () => {
+  it("keeps public Admin Officer registrations pending until approval and blocks suspended accounts", () => {
     const pendingAdmin = { id: 7, role: "admin" as const, approvalStatus: "pending" as const, cooperativeId: 2 };
     expect(() => requireOperationalRole(pendingAdmin, ["admin"])).toThrow("pending cooperative approval");
+    expect(() => requireOperationalRole({ ...pendingAdmin, approvalStatus: "suspended" }, ["admin"])).toThrow("suspended");
     expect(requireOperationalRole({ ...pendingAdmin, approvalStatus: "approved" }, ["admin"]).role).toBe("admin");
     expect(requireOperationalRole({ ...pendingAdmin, role: "superadmin" as const }, ["superadmin"]).role).toBe("superadmin");
   });
@@ -28,5 +29,12 @@ describe("AgriCoop role authorization", () => {
     expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 2)).toBe(true);
     expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 3)).toBe(false);
     expect(canAccessOrderForCooperative({ role: "superadmin", cooperativeId: null }, 3)).toBe(true);
+  });
+
+  it("allows profile verification to be submitted until it is approved", () => {
+    expect(canSubmitProfileVerification({ role: "buyer", verificationStatus: "unverified" })).toBe(true);
+    expect(canSubmitProfileVerification({ role: "seller", verificationStatus: "pending" })).toBe(true);
+    expect(canSubmitProfileVerification({ role: "seller", verificationStatus: "approved" })).toBe(false);
+    expect(canSubmitProfileVerification({ role: "superadmin", verificationStatus: "unverified" })).toBe(false);
   });
 });

@@ -28,9 +28,18 @@ export const users = mysqlTable("users", {
   approvalStatus: mysqlEnum("approvalStatus", ["approved", "pending", "suspended"])
     .default("approved")
     .notNull(),
+  verificationStatus: mysqlEnum("verificationStatus", ["unverified", "pending", "approved", "rejected"])
+    .default("unverified")
+    .notNull(),
+  verificationNote: text("verificationNote"),
+  verifiedBy: int("verifiedBy").references((): any => users.id),
+  verifiedAt: timestamp("verifiedAt"),
+  profileImageUrl: varchar("profileImageUrl", { length: 1000 }),
+  birthdate: timestamp("birthdate"),
+  phone: varchar("phone", { length: 40 }),
+  address: text("address"),
   cooperativeId: int("cooperativeId").references(() => cooperatives.id),
   contactNumber: varchar("contactNumber", { length: 40 }),
-  address: text("address"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { APP_ROLES, canAccessOrderForCooperative, canManageSellerOrder, requireOperationalRole } from "./authz";
+import { APP_ROLES, canAccessOrderForCooperative, canManageSellerOrder, canSubmitProfileVerification, requireOperationalRole } from "./authz";
 import { assertInventorySufficient, assertNotSelfTransaction, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
 import {
   decrementProductStock,
@@ -225,6 +225,57 @@ export const appRouter = router({
         const approvalStatus = input.role === "buyer" ? "approved" : "pending";
         await db.update(users).set({ ...input, approvalStatus }).where(eq(users.id, ctx.user.id));
         return { success: true, approvalStatus };
+      }),
+    submitVerification: protectedProcedure
+      .input(z.object({
+        birthdate: z.string().trim().min(1).max(40).optional(),
+        phone: z.string().trim().max(40).optional(),
+        address: z.string().trim().max(500).optional(),
+        idNumber: z.string().trim().min(4).max(80).optional(),
+        selfieUrl: z.string().trim().max(1000).optional(),
+        note: z.string().trim().max(600).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!canSubmitProfileVerification({ role: ctx.user.role, verificationStatus: ctx.user.verificationStatus })) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This profile is already verified or cannot be verified with the current role." });
+        }
+        const db = await dbOrThrow();
+        const birthdateValue = input.birthdate ? new Date(input.birthdate) : undefined;
+        if (input.birthdate && Number.isNaN(birthdateValue?.getTime() ?? NaN)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The birthdate is not a valid date." });
+        }
+        await db.update(users)
+          .set({
+            birthdate: birthdateValue ?? null,
+            phone: input.phone?.trim() || null,
+            address: input.address?.trim() || null,
+            profileImageUrl: input.selfieUrl?.trim() || null,
+            verificationStatus: "pending",
+            verificationNote: input.note?.trim() || null,
+            verifiedAt: null,
+          })
+          .where(eq(users.id, ctx.user.id));
+        return { success: true, verificationStatus: "pending" };
+      }),
+    reviewVerification: protectedProcedure
+      .input(z.object({ userId: z.number().int().positive(), decision: z.enum(["approved", "rejected"]), note: z.string().trim().max(600).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const target = (await db.select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
+        if (!target) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "The requested user record was not found." });
+        }
+        if (ctx.user.role === "admin" && target.cooperativeId !== ctx.user.cooperativeId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You can only review members from your own cooperative." });
+        }
+        await db.update(users).set({
+          verificationStatus: input.decision,
+          verificationNote: input.note?.trim() || null,
+          verifiedBy: ctx.user.id,
+          verifiedAt: new Date(),
+        }).where(eq(users.id, input.userId));
+        return { success: true, verificationStatus: input.decision };
       }),
   }),
 
