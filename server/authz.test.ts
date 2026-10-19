@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canAccessOrderForCooperative, canManageSellerOrder, canSubmitProfileVerification, hasRole, requireOperationalRole } from "./authz";
+import { adminOverviewCooperativeScope, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canManageSellerOrder, canSubmitProfileVerification, canUpdateCooperativeUser, hasRole, isSellerApproved, requireOperationalRole } from "./authz";
 
 describe("AgriCoop role authorization", () => {
   it("admits only explicitly allowed marketplace roles", () => {
@@ -29,6 +29,44 @@ describe("AgriCoop role authorization", () => {
     expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 2)).toBe(true);
     expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 3)).toBe(false);
     expect(canAccessOrderForCooperative({ role: "superadmin", cooperativeId: null }, 3)).toBe(true);
+  });
+
+  it("limits Officer product, user, and order operations to their cooperative", () => {
+    const officer = { id: 4, role: "admin" as const, cooperativeId: 2 };
+    const superAdmin = { id: 1, role: "superadmin" as const, cooperativeId: null };
+    expect(canManageCooperativeResource(officer, 2)).toBe(true);
+    expect(canManageCooperativeResource(officer, 3)).toBe(false);
+    expect(canAccessOrderForCooperative(officer, 3)).toBe(false);
+    expect(canManageCooperativeResource(superAdmin, 3)).toBe(true);
+    expect(canAccessOrderForCooperative(superAdmin, 3)).toBe(true);
+    expect(adminOverviewCooperativeScope(officer)).toBe(2);
+    expect(adminOverviewCooperativeScope(superAdmin)).toBeUndefined();
+  });
+
+  it("prevents Officers from moving users or assigning SuperAdmin", () => {
+    const officer = { role: "admin" as const, cooperativeId: 2 };
+    expect(canUpdateCooperativeUser(officer, 2, 2, "seller")).toBe(true);
+    expect(canUpdateCooperativeUser(officer, 3, 2, "seller")).toBe(false);
+    expect(canUpdateCooperativeUser(officer, 2, 3, "seller")).toBe(false);
+    expect(canUpdateCooperativeUser(officer, 2, 2, "superadmin")).toBe(false);
+    expect(canUpdateCooperativeUser({ role: "superadmin", cooperativeId: null }, 3, 2, "superadmin")).toBe(true);
+  });
+
+  it("requires the Seller's current approval to be approved for sales", () => {
+    expect(isSellerApproved("approved")).toBe(true);
+    expect(isSellerApproved("pending")).toBe(false);
+    expect(isSellerApproved("suspended")).toBe(false);
+    expect(isSellerApproved(undefined)).toBe(false);
+  });
+
+  it("limits conversation access to participants and the seller's cooperative officer", () => {
+    const thread = { buyerId: 10, sellerId: 20 };
+    expect(canAccessConversation({ id: 10, role: "buyer", cooperativeId: null }, thread, 2)).toBe(true);
+    expect(canAccessConversation({ id: 20, role: "seller", cooperativeId: 2 }, thread, 2)).toBe(true);
+    expect(canAccessConversation({ id: 30, role: "admin", cooperativeId: 2 }, thread, 2)).toBe(true);
+    expect(canAccessConversation({ id: 40, role: "superadmin", cooperativeId: null }, thread, 2)).toBe(true);
+    expect(canAccessConversation({ id: 50, role: "buyer", cooperativeId: null }, thread, 2)).toBe(false);
+    expect(canAccessConversation({ id: 60, role: "admin", cooperativeId: 3 }, thread, 2)).toBe(false);
   });
 
   it("allows profile verification to be submitted until it is approved", () => {

@@ -1,8 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
+import { readSupabaseConfig } from "./supabaseConfig";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://localhost:54321";
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "local-anon-key";
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const { url: supabaseUrl, anonKey: supabaseKey, serviceRoleKey: supabaseServiceKey } = readSupabaseConfig(process.env);
 
 const clientOptions = {
   auth: {

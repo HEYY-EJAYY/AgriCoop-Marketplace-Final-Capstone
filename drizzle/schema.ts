@@ -151,7 +151,7 @@ export const transactions = mysqlTable(
     externalId: varchar("externalId", { length: 128 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-    completedAt: timestamp("completedAt").defaultNow().notNull(),
+    completedAt: timestamp("completedAt"),
   },
   table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)],
 );

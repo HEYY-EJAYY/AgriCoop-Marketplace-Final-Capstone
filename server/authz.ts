@@ -33,6 +33,44 @@ export function canAccessOrderForCooperative(
   return actor.cooperativeId !== null && orderCooperativeId !== null && actor.cooperativeId === orderCooperativeId;
 }
 
+export function canManageCooperativeResource(
+  actor: Pick<OperationalUser, "role" | "cooperativeId">,
+  resourceCooperativeId: number | null,
+) {
+  return canAccessOrderForCooperative(actor, resourceCooperativeId);
+}
+
+export function adminOverviewCooperativeScope(actor: Pick<OperationalUser, "role" | "cooperativeId">) {
+  return actor.role === "superadmin" ? undefined : actor.cooperativeId;
+}
+
+export function canUpdateCooperativeUser(
+  actor: Pick<OperationalUser, "role" | "cooperativeId">,
+  targetCooperativeId: number | null,
+  requestedCooperativeId: number | null,
+  requestedRole: AppRole,
+) {
+  if (actor.role === "superadmin") return true;
+  return actor.role === "admin"
+    && actor.cooperativeId !== null
+    && actor.cooperativeId === targetCooperativeId
+    && actor.cooperativeId === requestedCooperativeId
+    && requestedRole !== "superadmin";
+}
+
+export function isSellerApproved(approvalStatus: OperationalUser["approvalStatus"] | undefined) {
+  return approvalStatus === "approved";
+}
+
+export function canAccessConversation(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  conversation: { buyerId: number; sellerId: number | null },
+  sellerCooperativeId: number | null,
+) {
+  if (actor.role === "superadmin" || actor.id === conversation.buyerId || actor.id === conversation.sellerId) return true;
+  return actor.role === "admin" && actor.cooperativeId !== null && actor.cooperativeId === sellerCooperativeId;
+}
+
 export function canSubmitProfileVerification(user: Pick<OperationalUser, "role" | "verificationStatus">) {
   if (!hasRole(user.role, ["buyer", "seller", "admin"])) return false;
   return user.verificationStatus !== "approved";

@@ -1,3 +1,7 @@
+import { assertSupabaseEnvironment } from "../supabaseConfig";
+
+assertSupabaseEnvironment(process.env);
+
 export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
