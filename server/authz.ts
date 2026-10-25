@@ -24,6 +24,20 @@ export function canManageSellerOrder(
   return actor.role === "admin" || actor.role === "superadmin" || (actor.role === "seller" && actor.id === sellerId);
 }
 
+export function canUpdateOrderStatus(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  order: { sellerId: number; cooperativeId: number | null },
+  nextStatus: "confirmed" | "ready" | "completed" | "cancelled",
+) {
+  if (actor.role === "superadmin") return true;
+  if (actor.role === "admin") {
+    return canAccessOrderForCooperative(actor, order.cooperativeId);
+  }
+  return actor.role === "seller"
+    && actor.id === order.sellerId
+    && (nextStatus === "confirmed" || nextStatus === "ready");
+}
+
 export function canAccessOrderForCooperative(
   actor: Pick<OperationalUser, "role" | "cooperativeId">,
   orderCooperativeId: number | null,

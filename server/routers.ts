@@ -1,11 +1,11 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canManageSellerOrder, canSubmitProfileVerification, canUpdateCooperativeUser, isSellerApproved, requireOperationalRole } from "./authz";
-import { applyInventoryDeductions, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
+import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
 import {
   getAdminOverview,
   getBuyerOrders,
@@ -501,29 +501,70 @@ export const appRouter = router({
         return { success: true, orderId: newOrder.id, conversationId };
       }),
     updateStatus: protectedProcedure
-      .input(z.object({ orderId: z.number().int().positive(), status: orderStatusSchema, paymentReferenceNote: z.string().max(600).optional() }))
+      .input(z.object({
+        orderId: z.number().int().positive(),
+        status: orderStatusSchema,
+        paymentReferenceNote: z.string().max(600).optional(),
+        finalItems: z.array(z.object({
+          orderItemId: z.number().int().positive(),
+          quantity: z.number().int().min(0, "Final delivered quantity cannot be negative."),
+        })).optional(),
+      }).superRefine((input, context) => {
+        if (input.status === "completed" && !input.finalItems) {
+          context.addIssue({ code: "custom", path: ["finalItems"], message: "Final delivered quantities are required to complete this order." });
+        }
+        if (input.status === "completed" && input.finalItems && !input.finalItems.some(item => item.quantity > 0)) {
+          context.addIssue({ code: "custom", path: ["finalItems"], message: "At least one final delivered quantity must be greater than zero." });
+        }
+      }))
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        const orderRow = (await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1))[0];
-        const canUpdate = orderRow && (actor.role === "seller"
-          ? canManageSellerOrder(actor, orderRow.sellerId)
-          : canAccessOrderForCooperative(actor, orderRow.cooperativeId));
-        if (!canUpdate) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot update this order." });
-        if (!canTransitionOrder(orderRow.status, input.status)) throw new TRPCError({ code: "BAD_REQUEST", message: "This fulfillment update is not valid for the order's current status." });
-        const previousStatus = orderRow.status;
-        if (input.status === "completed") {
-          const items = await db.select().from(orderItems).where(eq(orderItems.orderId, input.orderId));
-          const completedAt = new Date();
-          try {
-            await db.transaction(async tx => {
-              const orderUpdate = await tx.update(orders)
-                .set({ status: "completed", completedAt })
-                .where(and(eq(orders.id, input.orderId), eq(orders.status, previousStatus)));
-              if (!orderUpdate[0].affectedRows) {
-                throw new TRPCError({ code: "CONFLICT", message: "This order was already updated. Refresh and try again." });
+        try {
+          await db.transaction(async tx => {
+            const [orderRow] = await tx.select().from(orders)
+              .where(eq(orders.id, input.orderId))
+              .for("update");
+            if (!orderRow) throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
+            if (!canUpdateOrderStatus(actor, orderRow, input.status)) {
+              throw new TRPCError({ code: "FORBIDDEN", message: "Only the seller's cooperative Admin Officer or a SuperAdmin can complete or cancel this order. Sellers may only confirm orders or mark them ready." });
+            }
+            if (!canTransitionOrder(orderRow.status, input.status)) {
+              const message = orderRow.status === "completed" || orderRow.status === "cancelled"
+                ? "This order is already completed or cancelled and cannot be changed."
+                : "This fulfillment update is not valid for the order's current status.";
+              throw new TRPCError({ code: "BAD_REQUEST", message });
+            }
+
+            const previousStatus = orderRow.status;
+            if (input.status === "completed") {
+              const orderedItems = await tx.select().from(orderItems)
+                .where(eq(orderItems.orderId, input.orderId))
+                .for("update");
+              let completion: ReturnType<typeof prepareOrderCompletion>;
+              try {
+                completion = prepareOrderCompletion(orderedItems, input.finalItems ?? []);
+              } catch (error) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Final delivered quantities are invalid." });
               }
-              await applyInventoryDeductions(items, async applyDeduction => {
+
+              const productIds = Array.from(new Set(orderedItems.map(item => item.productId)));
+              const lockedProducts = productIds.length
+                ? await tx.select().from(products).where(inArray(products.id, productIds)).orderBy(asc(products.id)).for("update")
+                : [];
+              if (lockedProducts.length !== productIds.length) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: "A product in this order could not be found." });
+              }
+              try {
+                assertInventorySufficient(
+                  lockedProducts,
+                  completion.items.map(item => ({ productId: item.productId, quantity: item.quantity })),
+                );
+              } catch (error) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Insufficient current inventory to complete this order." });
+              }
+
+              await applyInventoryDeductions(completion.items, async applyDeduction => {
                 await applyDeduction(async item => {
                   const result = await tx.update(products)
                     .set({ stockQty: sql`${products.stockQty} - ${item.quantity}` })
@@ -531,10 +572,46 @@ export const appRouter = router({
                   return result[0].affectedRows > 0;
                 });
               });
+              const completedAt = new Date();
+              for (const item of completion.items) {
+                await tx.update(orderItems)
+                  .set({ quantity: item.quantity })
+                  .where(and(eq(orderItems.id, item.id), eq(orderItems.orderId, input.orderId)));
+              }
+              await tx.update(orders)
+                .set({ status: "completed", totalCents: completion.totalCents, completedAt })
+                .where(eq(orders.id, input.orderId));
+              await tx.insert(transactions).values({
+                orderId: orderRow.id,
+                buyerId: orderRow.buyerId,
+                sellerId: orderRow.sellerId,
+                amountCents: completion.totalCents,
+                paymentReferenceNote: input.paymentReferenceNote,
+                status: transactionStatusFor(input.paymentReferenceNote),
+                paymentMethod: "f2f",
+                completedAt,
+              }).onDuplicateKeyUpdate({
+                set: {
+                  amountCents: completion.totalCents,
+                  paymentReferenceNote: input.paymentReferenceNote,
+                  status: transactionStatusFor(input.paymentReferenceNote),
+                  paymentMethod: "f2f",
+                  completedAt,
+                },
+              });
+              await tx.insert(orderEvents).values({
+                orderId: input.orderId,
+                actorUserId: actor.id,
+                action: "status_change",
+                fromStatus: previousStatus,
+                toStatus: input.status,
+                note: input.paymentReferenceNote ?? null,
+              });
+            } else {
+              await tx.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
               await tx.update(transactions).set({
                 paymentReferenceNote: input.paymentReferenceNote,
                 status: transactionStatusFor(input.paymentReferenceNote),
-                completedAt,
               }).where(eq(transactions.orderId, orderRow.id));
               await tx.insert(orderEvents).values({
                 orderId: input.orderId,
@@ -544,18 +621,14 @@ export const appRouter = router({
                 toStatus: input.status,
                 note: input.paymentReferenceNote ?? null,
               });
-            });
-          } catch (error) {
-            if (error instanceof TRPCError) throw error;
-            if (error instanceof Error && error.message === "Insufficient current inventory to complete this order.") {
-              throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
             }
-            throw error;
+          });
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          if (error instanceof Error && error.message === "Insufficient current inventory to complete this order.") {
+            throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
           }
-        } else {
-          await db.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
-          await db.update(transactions).set({ paymentReferenceNote: input.paymentReferenceNote, status: transactionStatusFor(input.paymentReferenceNote) }).where(eq(transactions.orderId, orderRow.id));
-          await recordOrderEvent(db, { orderId: input.orderId, actorUserId: actor.id, action: "status_change", fromStatus: previousStatus, toStatus: input.status, note: input.paymentReferenceNote ?? null });
+          throw error;
         }
         return { success: true };
       }),

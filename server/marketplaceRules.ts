@@ -1,4 +1,11 @@
 export type OrderItemRequest = { productId: number; quantity: number };
+export type OrderItemCompletion = {
+  id: number;
+  productId: number;
+  quantity: number;
+  unitPriceCents: number;
+};
+export type FinalOrderItemQuantity = { orderItemId: number; quantity: number };
 export type BuyerQuotation = {
   buyerId: number;
   productId: number;
@@ -32,6 +39,7 @@ export async function applyInventoryDeductions(
 ) {
   await runInTransaction(async deduct => {
     for (const item of aggregateOrderItems(items)) {
+      if (item.quantity === 0) continue;
       if (!(await deduct(item))) {
         throw new Error("Insufficient current inventory to complete this order.");
       }
@@ -113,8 +121,46 @@ export function assertInventorySufficient(products: AvailableProduct[], items: O
   const productMap = new Map(products.map(product => [product.id, product]));
   for (const item of aggregateOrderItems(items)) {
     const product = productMap.get(item.productId);
-    if (!product || product.stockQty < item.quantity) throw new Error("Insufficient current inventory to complete this order.");
+    if (!product) throw new Error("A product in this order could not be found.");
+    if (product.stockQty < item.quantity) {
+      throw new Error(`Insufficient current inventory: ${product.name} has ${product.stockQty} ${product.unit}, but ${item.quantity} ${product.unit} are required.`);
+    }
   }
+}
+
+export function prepareOrderCompletion(
+  items: OrderItemCompletion[],
+  finalQuantities: FinalOrderItemQuantity[],
+) {
+  if (items.length !== finalQuantities.length) {
+    throw new Error("Enter a final delivered quantity for every order item.");
+  }
+
+  const quantitiesByItemId = new Map<number, number>();
+  for (const finalItem of finalQuantities) {
+    if (quantitiesByItemId.has(finalItem.orderItemId)) {
+      throw new Error("Each order item must have exactly one final delivered quantity.");
+    }
+    if (!Number.isSafeInteger(finalItem.quantity) || finalItem.quantity < 0) {
+      throw new Error("Final delivered quantities must be non-negative whole numbers.");
+    }
+    quantitiesByItemId.set(finalItem.orderItemId, finalItem.quantity);
+  }
+
+  const completedItems = items.map(item => {
+    if (!quantitiesByItemId.has(item.id)) {
+      throw new Error("Enter a final delivered quantity for every order item.");
+    }
+    return { ...item, quantity: quantitiesByItemId.get(item.id)! };
+  });
+  if (!completedItems.some(item => item.quantity > 0)) {
+    throw new Error("At least one final delivered quantity must be greater than zero.");
+  }
+
+  return {
+    items: completedItems,
+    totalCents: completedItems.reduce((total, item) => total + item.quantity * item.unitPriceCents, 0),
+  };
 }
 
 export function isQuotationOpen(status: string) {

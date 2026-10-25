@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
+import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
 
 const products = [
   { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, minOrderQty: 2, priceCents: 5500, unit: "kg", status: "published", name: "Fresh Cabbage" },
@@ -74,7 +74,7 @@ describe("marketplace order rules", () => {
     const stocks = new Map([[1, 10]]);
     let orderStatus = "ready";
     const complete = async () => {
-      if (!canTransitionOrder(orderStatus, "completed")) return false;
+      if (!canTransitionOrder(orderStatus, "completed")) throw new Error("This order is already completed or cancelled.");
       await applyInventoryDeductions([{ productId: 1, quantity: 3 }], async applyDeduction => {
         const stagedStocks = new Map(stocks);
         await applyDeduction(async item => {
@@ -90,9 +90,71 @@ describe("marketplace order rules", () => {
       return true;
     };
 
-    expect(await complete()).toBe(true);
-    expect(await complete()).toBe(false);
+    await expect(complete()).resolves.toBe(true);
+    await expect(complete()).rejects.toThrow("already completed or cancelled");
     expect(stocks.get(1)).toBe(7);
+  });
+
+  it("uses edited delivered quantities to calculate the final amount and stock deduction", async () => {
+    const completed = prepareOrderCompletion(
+      [{ id: 101, productId: 1, quantity: 5, unitPriceCents: 5500 }],
+      [{ orderItemId: 101, quantity: 3 }],
+    );
+    const stocks = new Map([[1, 20]]);
+
+    await applyInventoryDeductions(completed.items, async applyDeduction => {
+      await applyDeduction(async deduction => {
+        const stock = stocks.get(deduction.productId) ?? 0;
+        if (stock < deduction.quantity) return false;
+        stocks.set(deduction.productId, stock - deduction.quantity);
+        return true;
+      });
+    });
+
+    expect(completed.totalCents).toBe(16500);
+    expect(stocks.get(1)).toBe(17);
+  });
+
+  it("rejects insufficient current stock without deducting any item", async () => {
+    const completed = prepareOrderCompletion(
+      [
+        { id: 101, productId: 1, quantity: 5, unitPriceCents: 5500 },
+        { id: 102, productId: 2, quantity: 4, unitPriceCents: 4000 },
+      ],
+      [
+        { orderItemId: 101, quantity: 3 },
+        { orderItemId: 102, quantity: 4 },
+      ],
+    );
+    const stocks = new Map([[1, 10], [2, 2]]);
+
+    await expect(applyInventoryDeductions(completed.items, async applyDeduction => {
+      const stagedStocks = new Map(stocks);
+      await applyDeduction(async deduction => {
+        const stock = stagedStocks.get(deduction.productId) ?? 0;
+        if (stock < deduction.quantity) return false;
+        stagedStocks.set(deduction.productId, stock - deduction.quantity);
+        return true;
+      });
+      stocks.clear();
+      for (const [productId, stock] of stagedStocks) stocks.set(productId, stock);
+    })).rejects.toThrow("Insufficient current inventory");
+
+    expect(stocks).toEqual(new Map([[1, 10], [2, 2]]));
+  });
+
+  it("rejects a completion when every delivered quantity is zero", () => {
+    expect(() => prepareOrderCompletion(
+      [{ id: 101, productId: 1, quantity: 5, unitPriceCents: 5500 }],
+      [{ orderItemId: 101, quantity: 0 }],
+    )).toThrow("At least one final delivered quantity");
+  });
+
+  it("does not deduct stock when an order is cancelled", () => {
+    const stocks = new Map([[1, 20]]);
+    expect(canTransitionOrder("ready", "cancelled")).toBe(true);
+    expect(canTransitionOrder("cancelled", "completed")).toBe(false);
+    expect(stocks.get(1)).toBe(20);
   });
 
   it("protects the fulfillment workflow and transaction traceability", () => {

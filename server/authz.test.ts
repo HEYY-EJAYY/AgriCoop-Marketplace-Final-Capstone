@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminOverviewCooperativeScope, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canManageSellerOrder, canSubmitProfileVerification, canUpdateCooperativeUser, hasRole, isSellerApproved, requireOperationalRole } from "./authz";
+import { adminOverviewCooperativeScope, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canManageSellerOrder, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, hasRole, isSellerApproved, requireOperationalRole } from "./authz";
 
 describe("AgriCoop role authorization", () => {
   it("admits only explicitly allowed marketplace roles", () => {
@@ -29,6 +29,22 @@ describe("AgriCoop role authorization", () => {
     expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 2)).toBe(true);
     expect(canAccessOrderForCooperative({ role: "admin", cooperativeId: 2 }, 3)).toBe(false);
     expect(canAccessOrderForCooperative({ role: "superadmin", cooperativeId: null }, 3)).toBe(true);
+  });
+
+  it("limits completion and cancellation to the seller's cooperative Admin Officer or SuperAdmin", () => {
+    const order = { sellerId: 20, cooperativeId: 2 };
+    const seller = { id: 20, role: "seller" as const, cooperativeId: 2 };
+    const officer = { id: 30, role: "admin" as const, cooperativeId: 2 };
+    const otherOfficer = { id: 31, role: "admin" as const, cooperativeId: 3 };
+    const superAdmin = { id: 1, role: "superadmin" as const, cooperativeId: null };
+
+    expect(canUpdateOrderStatus(seller, order, "confirmed")).toBe(true);
+    expect(canUpdateOrderStatus(seller, order, "ready")).toBe(true);
+    expect(canUpdateOrderStatus(seller, order, "completed")).toBe(false);
+    expect(canUpdateOrderStatus(seller, order, "cancelled")).toBe(false);
+    expect(canUpdateOrderStatus(officer, order, "completed")).toBe(true);
+    expect(canUpdateOrderStatus(otherOfficer, order, "completed")).toBe(false);
+    expect(canUpdateOrderStatus(superAdmin, order, "completed")).toBe(true);
   });
 
   it("limits Officer product, user, and order operations to their cooperative", () => {

@@ -157,6 +157,145 @@ function AdminUserRow({ user, cooperativeName, cooperatives, canAssignSuperAdmin
   return <tr className="border-t border-[#edf0e9]"><td className="p-3"><p className="font-bold text-[#315640]">{user.name || "Unnamed user"}</p><p className="text-xs text-[#718074]">{user.email || "No email"}</p></td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={role} onChange={e => setRole(e.target.value)}><option value="buyer">Buyer</option><option value="seller">Seller</option><option value="admin">Officer</option>{canAssignSuperAdmin && <option value="superadmin">SuperAdmin</option>}</select></td><td className="p-3"><select className="max-w-40 rounded border border-[#d5e0d1] bg-white p-1.5" value={cooperativeId} onChange={e => setCooperativeId(e.target.value)}><option value="">None</option>{cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}</select>{cooperativeName && <p className="mt-1 text-xs text-[#718074]">Current: {cooperativeName}</p>}</td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={approvalStatus} onChange={e => setApprovalStatus(e.target.value)}><option value="approved">Approved</option><option value="pending">Pending</option><option value="suspended">Suspended</option></select></td><td className="p-3"><button onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost px-3 py-2 text-xs">Save</button></td></tr>;
 }
 
+function AdminOrderCard({ orderId }: { orderId: number }) {
+  const utils = trpc.useUtils();
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [finalQuantities, setFinalQuantities] = useState<Record<number, string>>({});
+  const [completionError, setCompletionError] = useState("");
+  const { data, isLoading, error } = trpc.cooperativeAdmin.orderDetails.useQuery({ orderId });
+  const updateStatus = trpc.orders.updateStatus.useMutation({
+    onSuccess: async () => {
+      toast.success("Order updated.");
+      setCompletionOpen(false);
+      setCompletionError("");
+      await Promise.all([
+        utils.admin.overview.invalidate(),
+        utils.cooperativeAdmin.orderDetails.invalidate({ orderId }),
+        utils.cooperativeAdmin.overview.invalidate(),
+      ]);
+    },
+    onError: problem => {
+      setCompletionError(problem.message);
+      toast.error(problem.message);
+    },
+  });
+  const items = data?.items ?? [];
+  const quantityError = (value: string, stockQty: number) => {
+    if (!/^\d+$/.test(value)) return "Enter a whole number of zero or more.";
+    const quantity = Number(value);
+    if (!Number.isSafeInteger(quantity)) return "Enter a valid whole number.";
+    if (quantity > stockQty) return `Only ${stockQty} units are currently in stock.`;
+    return "";
+  };
+  const validQuantities = items.map(({ item, stockQty }) => ({
+    item,
+    value: finalQuantities[item.id] ?? String(item.quantity),
+    error: quantityError(finalQuantities[item.id] ?? String(item.quantity), stockQty),
+  }));
+  const allQuantitiesValid = validQuantities.every(item => !item.error);
+  const hasDeliveredQuantity = validQuantities.some(item => Number(item.value) > 0);
+  const finalTotalCents = allQuantitiesValid
+    ? items.reduce((total, { item }) => total + Number(finalQuantities[item.id] ?? item.quantity) * item.unitPriceCents, 0)
+    : null;
+  const startCompletion = () => {
+    setFinalQuantities(Object.fromEntries(items.map(({ item }) => [item.id, String(item.quantity)])));
+    setCompletionError("");
+    setCompletionOpen(true);
+  };
+  const confirmCompletion = (event: FormEvent) => {
+    event.preventDefault();
+    const invalid = validQuantities.find(item => item.error);
+    if (invalid) {
+      setCompletionError(invalid.error);
+      return;
+    }
+    if (!hasDeliveredQuantity) {
+      setCompletionError("At least one final delivered quantity must be greater than zero.");
+      return;
+    }
+    updateStatus.mutate({
+      orderId,
+      status: "completed",
+      finalItems: validQuantities.map(({ item, value }) => ({ orderItemId: item.id, quantity: Number(value) })),
+    });
+  };
+  const cancelOrder = () => {
+    if (window.confirm("Cancel this order? No stock will be deducted.")) {
+      updateStatus.mutate({ orderId, status: "cancelled" });
+    }
+  };
+
+  if (isLoading) return <div className="rounded-xl bg-[#f2f6ef] p-4 text-sm text-[#6c7c70]">Loading order #{orderId}…</div>;
+  if (error || !data) return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Could not load order #{orderId}: {error?.message ?? "Order details are unavailable."}</div>;
+
+  return <article className="rounded-xl border border-[#e2e9dd] bg-[#f8faf6] p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="font-bold text-[#315640]">Order #{orderId} · {data.buyer?.name || "Buyer"}</p>
+        <p className="mt-1 text-sm text-[#6c7c70]">{peso(data.order.totalCents)} · {when(data.order.createdAt)}</p>
+      </div>
+      <Status value={data.order.status}/>
+    </div>
+    <div className="mt-3 space-y-1 text-sm text-[#586d5d]">
+      {items.map(({ item, productName, unit }) => <p key={item.id}>{productName} × {item.quantity} {unit} · {peso(item.unitPriceCents * item.quantity)}</p>)}
+    </div>
+    <div className="mt-4 flex flex-wrap gap-2">
+      {data.order.status === "ready" && <button type="button" className="agri-button px-3 py-2 text-xs" onClick={startCompletion}>Complete</button>}
+      {data.order.status !== "completed" && data.order.status !== "cancelled" && <button type="button" className="px-3 py-2 text-xs font-bold text-[#a34838]" onClick={cancelOrder}>Cancel</button>}
+    </div>
+    {completionOpen && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/50 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setCompletionOpen(false); }}>
+      <form role="dialog" aria-modal="true" aria-labelledby={`complete-order-title-${orderId}`} onSubmit={confirmCompletion} className="my-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-7">
+        <h3 id={`complete-order-title-${orderId}`} className="font-display text-2xl font-bold text-[#264f37]">Complete order #{orderId}</h3>
+        <p className="mt-1 text-sm text-[#6c7c70]">Enter the final delivered quantity for each item. Values cannot exceed current stock.</p>
+        <div className="mt-5 space-y-4">
+          {validQuantities.map(({ item, value, error: itemError }) => {
+            const productItem = items.find(row => row.item.id === item.id)!;
+            return <div key={item.id} className="rounded-xl border border-[#e2e9dd] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-bold text-[#315640]">{productItem.productName}</p>
+                  <p className="mt-1 text-xs text-[#6c7c70]">Ordered: {item.quantity} {productItem.unit} · Price: {peso(item.unitPriceCents)} per {productItem.unit}</p>
+                </div>
+                <p className="text-xs text-[#6c7c70]">Stock: {productItem.stockQty} {productItem.unit}</p>
+              </div>
+              <label className="field-label mt-3">Final delivered quantity
+                <div className="flex items-center gap-2">
+                  <input
+                    aria-label={`Final delivered quantity for ${productItem.productName}`}
+                    aria-invalid={Boolean(itemError)}
+                    className="field-control"
+                    type="number"
+                    min="0"
+                    max={productItem.stockQty}
+                    step="1"
+                    inputMode="numeric"
+                    value={value}
+                    onChange={event => {
+                      setFinalQuantities(current => ({ ...current, [item.id]: event.target.value }));
+                      setCompletionError("");
+                    }}
+                  />
+                  <span className="shrink-0 text-sm font-semibold text-[#586d5d]">{productItem.unit}</span>
+                </div>
+                {itemError && <span role="alert" className="mt-1 block text-xs text-[#a34838]">{itemError}</span>}
+              </label>
+            </div>;
+          })}
+        </div>
+        <div className="mt-5 flex items-center justify-between border-t border-[#e2e9dd] pt-4">
+          <span className="font-bold text-[#315640]">Final order total</span>
+          <span aria-live="polite" className="font-display text-xl font-bold text-[#1d5639]">{finalTotalCents === null ? "Enter valid quantities" : peso(finalTotalCents)}</span>
+        </div>
+        {completionError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{completionError}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="agri-ghost text-sm" disabled={updateStatus.isPending} onClick={() => setCompletionOpen(false)}>Back</button>
+          <button type="submit" className="agri-button text-sm" disabled={updateStatus.isPending || !allQuantitiesValid}>Confirm completion</button>
+        </div>
+      </form>
+    </div>}
+  </article>;
+}
+
 function AdminDashboard() {
   const [sellerMode, setSellerMode] = useState(false);
   const { user } = useAuth();
@@ -164,7 +303,7 @@ function AdminDashboard() {
   const createCooperative = trpc.cooperatives.create.useMutation({ onSuccess: () => { toast.success("Cooperative added."); setName(""); setLocation(""); utils.admin.overview.invalidate(); utils.cooperatives.list.invalidate(); }, onError: error => toast.error(error.message) });
   const updateUser = trpc.admin.updateUser.useMutation({ onSuccess: () => { toast.success("User settings saved."); utils.admin.overview.invalidate(); }, onError: error => toast.error(error.message) }); const reviewProduct = trpc.admin.reviewProduct.useMutation({ onSuccess: () => { toast.success("Product review saved."); utils.admin.overview.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
   if (sellerMode) return <SellerDashboard onExitSellerMode={() => setSellerMode(false)}/>; if (isLoading) return <LoadingWorkspace/>;
-  return <><WorkspaceHeader title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"} description={user?.role === "superadmin" ? "Coordinate roles, cooperative assignments, and platform-wide marketplace oversight." : "Manage listings and accounts within your assigned cooperative."}/><div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><button className="agri-ghost text-sm" onClick={() => setSellerMode(true)}>Act as seller</button></div><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-4"><Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users}/><Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store}/><Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package}/><Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList}/></div><section className="mt-8 agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2><p className="mt-1 text-sm text-[#6a796e]">Approve Seller submissions before buyer visibility is enabled.</p></div><div className="grid gap-3 border-t border-[#e3e9de] p-5 sm:grid-cols-2 lg:grid-cols-3">{overview?.products.filter(product => product.verificationStatus === "pending").map(product => <div key={product.id} className="rounded-2xl border border-[#e2e9dd] p-4"><p className="font-display text-xl font-bold text-[#28523a]">{product.name}</p><p className="mt-1 text-xs text-[#6d7d70]">{product.category} · {peso(product.priceCents)} / {product.unit}</p><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" onClick={() => reviewProduct.mutate({ productId: product.id, decision: "approved" })}>Approve</button><button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => { const reason = window.prompt("Rejection reason:"); if (reason?.trim()) reviewProduct.mutate({ productId: product.id, decision: "rejected", rejectionReason: reason.trim() }); }}>Reject</button></div></div>)}{!overview?.products.some(product => product.verificationStatus === "pending") && <p className="col-span-full py-6 text-center text-sm text-[#6d7d70]">No products are waiting for review.</p>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-[1.3fr_.7fr]"><div className="agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2><p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p></div><div className="overflow-x-auto border-t border-[#e3e9de]"><table className="w-full min-w-[860px] text-left text-sm"><thead className="bg-[#f1f6ee] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="p-3">User</th><th className="p-3">Role</th><th className="p-3">Cooperative</th><th className="p-3">Approval</th><th className="p-3"></th></tr></thead><tbody>{overview?.users.map(row => <AdminUserRow key={row.user.id} user={row.user} cooperativeName={row.cooperativeName} cooperatives={overview.cooperatives} canAssignSuperAdmin={user?.role === "superadmin"} onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}/>)}</tbody></table>{!overview?.users.length && <p className="p-8 text-center text-sm text-[#6d7d70]">No user accounts are available yet.</p>}</div></div><div className="space-y-8"><form onSubmit={event => { event.preventDefault(); createCooperative.mutate({ name, location }); }} className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2><label className="field-label mt-4">Cooperative name<input required className="field-control" value={name} onChange={e => setName(e.target.value)}/></label><label className="field-label mt-4">Location<input required className="field-control" value={location} onChange={e => setLocation(e.target.value)} placeholder="City, Province"/></label><button className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16}/> Create cooperative</button></form><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Platform activity</h2><div className="mt-4 space-y-3">{overview?.orders.slice(0, 5).map(order => <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}><div><p className="font-bold text-[#315640]">Order #{order.id}</p><p className="text-xs text-[#6c7c70]">{peso(order.totalCents)} · {when(order.createdAt)}</p></div><Status value={order.status}/></div>)}{!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}</div></div></div></section></main></>;
+  return <><WorkspaceHeader title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"} description={user?.role === "superadmin" ? "Coordinate roles, cooperative assignments, and platform-wide marketplace oversight." : "Manage listings and accounts within your assigned cooperative."}/><div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><button className="agri-ghost text-sm" onClick={() => setSellerMode(true)}>Act as seller</button></div><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-4"><Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users}/><Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store}/><Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package}/><Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList}/></div><section className="mt-8 agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Order fulfillment</h2><p className="mt-1 text-sm text-[#6a796e]">Complete ready orders with actual delivered quantities, or cancel without deducting stock.</p><div className="mt-5 space-y-3">{overview?.orders.filter(order => order.status !== "completed" && order.status !== "cancelled").map(order => <AdminOrderCard key={order.id} orderId={order.id}/>)}{!overview?.orders.some(order => order.status !== "completed" && order.status !== "cancelled") && <p className="py-5 text-center text-sm text-[#6d7d70]">No orders are waiting for fulfillment.</p>}</div></section><section className="mt-8 agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2><p className="mt-1 text-sm text-[#6a796e]">Approve Seller submissions before buyer visibility is enabled.</p></div><div className="grid gap-3 border-t border-[#e3e9de] p-5 sm:grid-cols-2 lg:grid-cols-3">{overview?.products.filter(product => product.verificationStatus === "pending").map(product => <div key={product.id} className="rounded-2xl border border-[#e2e9dd] p-4"><p className="font-display text-xl font-bold text-[#28523a]">{product.name}</p><p className="mt-1 text-xs text-[#6d7d70]">{product.category} · {peso(product.priceCents)} / {product.unit}</p><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" onClick={() => reviewProduct.mutate({ productId: product.id, decision: "approved" })}>Approve</button><button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => { const reason = window.prompt("Rejection reason:"); if (reason?.trim()) reviewProduct.mutate({ productId: product.id, decision: "rejected", rejectionReason: reason.trim() }); }}>Reject</button></div></div>)}{!overview?.products.some(product => product.verificationStatus === "pending") && <p className="col-span-full py-6 text-center text-sm text-[#6d7d70]">No products are waiting for review.</p>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-[1.3fr_.7fr]"><div className="agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2><p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p></div><div className="overflow-x-auto border-t border-[#e3e9de]"><table className="w-full min-w-[860px] text-left text-sm"><thead className="bg-[#f1f6ee] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="p-3">User</th><th className="p-3">Role</th><th className="p-3">Cooperative</th><th className="p-3">Approval</th><th className="p-3"></th></tr></thead><tbody>{overview?.users.map(row => <AdminUserRow key={row.user.id} user={row.user} cooperativeName={row.cooperativeName} cooperatives={overview.cooperatives} canAssignSuperAdmin={user?.role === "superadmin"} onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}/>)}</tbody></table>{!overview?.users.length && <p className="p-8 text-center text-sm text-[#6d7d70]">No user accounts are available yet.</p>}</div></div><div className="space-y-8"><form onSubmit={event => { event.preventDefault(); createCooperative.mutate({ name, location }); }} className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2><label className="field-label mt-4">Cooperative name<input required className="field-control" value={name} onChange={e => setName(e.target.value)}/></label><label className="field-label mt-4">Location<input required className="field-control" value={location} onChange={e => setLocation(e.target.value)} placeholder="City, Province"/></label><button className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16}/> Create cooperative</button></form><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Platform activity</h2><div className="mt-4 space-y-3">{overview?.orders.slice(0, 5).map(order => <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}><div><p className="font-bold text-[#315640]">Order #{order.id}</p><p className="text-xs text-[#6c7c70]">{peso(order.totalCents)} · {when(order.createdAt)}</p></div><Status value={order.status}/></div>)}{!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}</div></div></div></section></main></>;
 }
 
 export default function Dashboard() {

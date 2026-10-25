@@ -164,7 +164,7 @@ export async function getOrderDetail(orderId: number) {
   ]);
 
   const items = await db
-    .select({ item: orderItems, productName: products.name, unit: products.unit, priceCents: products.priceCents })
+    .select({ item: orderItems, productName: products.name, unit: products.unit, priceCents: products.priceCents, stockQty: products.stockQty })
     .from(orderItems)
     .innerJoin(products, eq(orderItems.productId, products.id))
     .where(eq(orderItems.orderId, orderId));
