@@ -28,6 +28,9 @@ export type AvailableProduct = {
 export function aggregateOrderItems(items: OrderItemRequest[]) {
   const quantities = new Map<number, number>();
   for (const item of items) {
+    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+      throw new Error("Order quantities must be positive whole numbers.");
+    }
     quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
   }
   return Array.from(quantities, ([productId, quantity]) => ({ productId, quantity }));
@@ -52,10 +55,20 @@ export function priceOrderItems(
   products: Map<number, AvailableProduct>,
   quotedUnitPriceCents?: number,
 ) {
-  const lines = items.map(item => ({
-    ...item,
-    unitPriceCents: quotedUnitPriceCents ?? products.get(item.productId)!.priceCents,
-  }));
+  if (items.some(item => !Number.isInteger(item.quantity) || item.quantity <= 0)) {
+    throw new Error("Order quantities must be positive whole numbers.");
+  }
+
+  const lines = items.map(item => {
+    const product = products.get(item.productId);
+    if (!product) {
+      throw new Error("One or more selected items are no longer available.");
+    }
+    return {
+      ...item,
+      unitPriceCents: quotedUnitPriceCents ?? product.priceCents,
+    };
+  });
   return {
     lines,
     totalCents: lines.reduce((total, item) => total + item.unitPriceCents * item.quantity, 0),
@@ -172,5 +185,6 @@ export function assertNotSelfTransaction(actorId: number, sellerId: number) {
 }
 
 export function transactionStatusFor(paymentReferenceNote?: string) {
-  return paymentReferenceNote ? "payment_coordinated" as const : "recorded" as const;
+  const normalized = paymentReferenceNote?.trim();
+  return normalized ? "payment_coordinated" as const : "recorded" as const;
 }

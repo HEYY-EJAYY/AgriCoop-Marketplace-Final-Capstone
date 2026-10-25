@@ -14,7 +14,6 @@ import {
   transactions,
   users,
 } from "../drizzle/schema.js";
-import { ENV } from "./_core/env.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -51,12 +50,6 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet[field] = user[field] ?? null;
     }
   });
-  if (user.openId === ENV.ownerOpenId) {
-    values.role = "admin";
-    values.approvalStatus = "approved";
-    updateSet.role = "admin";
-    updateSet.approvalStatus = "approved";
-  }
   await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
 }
 

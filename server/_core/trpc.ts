@@ -32,6 +32,22 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
+const requireSupabaseUser = t.middleware(async opts => {
+  const { ctx, next } = opts;
+  if (!ctx.supabaseUser) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+  }
+  requireOperationalRole(ctx.supabaseUser, APP_ROLES);
+  return next({
+    ctx: {
+      ...ctx,
+      supabaseUser: ctx.supabaseUser,
+    },
+  });
+});
+
+export const supabaseProtectedProcedure = t.procedure.use(requireSupabaseUser);
+
 export const adminProcedure = t.procedure.use(requireUser).use(
   t.middleware(async opts => {
     const { ctx, next } = opts;

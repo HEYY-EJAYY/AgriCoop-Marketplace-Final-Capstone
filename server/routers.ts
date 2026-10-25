@@ -3,7 +3,7 @@ import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies.js";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc.js";
+import { publicProcedure, protectedProcedure, router, supabaseProtectedProcedure } from "./_core/trpc.js";
 import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz.js";
 import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules.js";
 import {
@@ -25,8 +25,12 @@ import {
   getConversationsForUser,
   upsertUser,
 } from "./db.js";
+import { createSupabaseProfile, findOrCreateSupabaseCooperative, findSupabaseCooperative, getSupabaseMarketplaceProduct, getSupabaseRoleId, isUuid, listSupabaseCooperatives, listSupabaseMarketplace, listSupabaseMarketplaceCategories } from "./supabaseData.js";
 import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema.js";
 import { supabaseAdmin } from "./clients.js";
+import { assertSupabaseServerEnvironment } from "./supabaseConfig.js";
+import { archiveSupabaseProduct, createSupabaseOrder, createSupabaseProduct, createSupabaseQuotation, decideSupabaseQuotation, listSupabaseBuyerOrders, listSupabaseBuyerQuotations, listSupabaseSellerProducts, SUPABASE_PRODUCT_ACTIVE_STATUS, SUPABASE_PRODUCT_ARCHIVED_STATUS, updateSupabaseProduct } from "./supabaseCommerce.js";
+import { getSupabaseAdminOverview, getSupabaseOfficerOverview, reviewSupabaseProduct, reviewSupabaseQuotation, updateSupabaseMemberStatus, updateSupabaseOfficerOrder, updateSupabaseProfileAsAdmin } from "./supabaseOperations.js";
 import { normalizeCooperativeName } from "./cooperativeNames.js";
 import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions.js";
 import { storageCreateSignedUpload } from "./storage.js";
@@ -99,7 +103,7 @@ async function recordOrderEvent(db: Awaited<ReturnType<typeof dbOrThrow>>, input
 export const appRouter = router({
   system: systemRouter,
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query(opts => opts.ctx.supabaseUser ?? opts.ctx.user),
     register: publicProcedure
       .input(z.object({
         email: z.string().email(),
@@ -107,12 +111,17 @@ export const appRouter = router({
         name: z.string().min(2).max(120),
         role: registrationRoleSchema,
         sellerType: z.enum(["individual", "cooperative"]).optional(),
-        cooperativeId: z.number().int().positive().optional(),
+        cooperativeId: z.string().uuid().optional(),
         cooperativeName: z.string().max(180).optional(),
       }))
       .mutation(async ({ input }) => {
-        let cooperativeId: number | null = null;
-        let joinedExistingCooperative: string | null = null;
+        try {
+          assertSupabaseServerEnvironment(process.env);
+        } catch {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server configuration is incomplete." });
+        }
+
+        let cooperativeId: string | null = null;
         let cooperativeName: string | null = null;
 
         if (input.role === "seller") {
@@ -120,13 +129,12 @@ export const appRouter = router({
             throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether you are an individual seller or a cooperative member." });
           }
           if (input.sellerType === "cooperative") {
-            const db = await dbOrThrow();
             if (input.cooperativeId !== undefined) {
-              const existing = (await db.select().from(cooperatives).where(eq(cooperatives.id, input.cooperativeId)).limit(1))[0];
-              if (!existing || existing.status !== "active") {
+              const existing = await findSupabaseCooperative(input.cooperativeId);
+              if (!existing) {
                 throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an active cooperative from the list." });
               }
-              cooperativeId = existing.id;
+              cooperativeId = existing.cooperative_id;
               cooperativeName = existing.name;
             } else if (input.cooperativeName !== undefined) {
               let normalized: ReturnType<typeof normalizeCooperativeName>;
@@ -138,55 +146,26 @@ export const appRouter = router({
               if (normalized.displayName.length > 180) {
                 throw new TRPCError({ code: "BAD_REQUEST", message: "Cooperative name must be 180 characters or fewer." });
               }
-              const existing = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
-              if (existing) {
-                cooperativeId = existing.id;
-                cooperativeName = existing.name;
-                joinedExistingCooperative = existing.name;
-              } else {
-                try {
-                  const [created] = await db.insert(cooperatives).values({
-                    name: normalized.displayName,
-                    normalizedName: normalized.normalizedName,
-                    location: "Not specified",
-                  }).$returningId();
-                  cooperativeId = created.id;
-                  cooperativeName = normalized.displayName;
-                } catch (error) {
-                  const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
-                  const errorCode = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-                  const errorNumber = typeof cause === "object" && cause !== null && "errno" in cause ? cause.errno : undefined;
-                  if (errorCode !== "ER_DUP_ENTRY" && errorNumber !== 1062) throw error;
-                  const racedExisting = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
-                  if (!racedExisting) throw error;
-                  cooperativeId = racedExisting.id;
-                  cooperativeName = racedExisting.name;
-                  joinedExistingCooperative = racedExisting.name;
-                }
-              }
+              const created = await findOrCreateSupabaseCooperative(normalized.displayName);
+              cooperativeId = created.cooperative_id;
+              cooperativeName = created.name;
             } else {
               throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an existing cooperative or enter a new cooperative name." });
             }
           }
         }
 
-        const { data, error } = await supabaseAdmin.auth.admin.createUser({
-          email: input.email,
-          password: input.password,
-          email_confirm: true,
-          user_metadata: { name: input.name, role: input.role },
-        });
+        const roleName = input.role === "admin" ? "coop_officer" : input.role;
+        const roleId = await getSupabaseRoleId(roleName);
+        const { data, error } = await supabaseAdmin.auth.admin.createUser({ email: input.email, password: input.password, email_confirm: true, user_metadata: { name: input.name } });
         if (error || !data.user) throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Unable to create the account." });
-        await upsertUser({
-          openId: data.user.id,
-          email: input.email,
-          name: input.name,
-          role: input.role,
-          approvalStatus: input.role === "buyer" ? "approved" : "pending",
-          cooperativeId,
-          loginMethod: "supabase",
-        });
-        return { success: true, cooperativeName, joinedExistingCooperative };
+        try {
+          await createSupabaseProfile({ userId: data.user.id, fullName: input.name, email: input.email, roleId, cooperativeId, accountStatus: input.role === "buyer" ? "approved" : "pending" });
+        } catch {
+          await supabaseAdmin.auth.admin.deleteUser(data.user.id);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The account could not be initialized safely." });
+        }
+        return { success: true, cooperativeName, joinedExistingCooperative: null };
       }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -292,7 +271,7 @@ export const appRouter = router({
   }),
 
   cooperatives: router({
-    list: publicProcedure.query(() => getCooperatives()),
+    list: publicProcedure.query(() => listSupabaseCooperatives().then(rows => rows.map(row => ({ id: row.cooperative_id, name: row.name, location: row.location, status: "active" as const })))),
     create: protectedProcedure
       .input(z.object({ name: z.string().min(3).max(180), location: z.string().min(3).max(180), description: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
@@ -310,16 +289,16 @@ export const appRouter = router({
 
   marketplace: router({
     byId: publicProcedure
-      .input(z.object({ id: z.number().int().positive() }))
+      .input(z.object({ id: z.string().uuid() }))
       .query(async ({ input }) => {
-        const listing = await getMarketplaceProduct(input.id);
+        const listing = await getSupabaseMarketplaceProduct(input.id);
         if (!listing) throw new TRPCError({ code: "NOT_FOUND", message: "This product is not currently available." });
         return listing;
       }),
     list: publicProcedure
       .input(z.object({ category: z.string().optional(), sort: z.enum(["asc", "desc"]).default("asc") }).optional())
-      .query(({ input }) => getMarketplace(input?.category, input?.sort ?? "asc")),
-    categories: publicProcedure.query(() => getCategories()),
+      .query(({ input }) => listSupabaseMarketplace(input?.category, input?.sort ?? "asc")),
+    categories: publicProcedure.query(() => listSupabaseMarketplaceCategories()),
   }),
 
   products: router({
@@ -384,6 +363,43 @@ export const appRouter = router({
         const db = await dbOrThrow();
         await db.update(products).set({ status: "archived" }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id)));
         return { success: true };
+      }),
+  }),
+
+  supabaseProducts: router({
+    mine: supabaseProtectedProcedure.query(async ({ ctx }) => {
+      if (ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Seller accounts can manage products." });
+      return listSupabaseSellerProducts(ctx.supabaseUser.id);
+    }),
+    create: supabaseProtectedProcedure
+      .input(z.object({ name: z.string().trim().min(2).max(160), category: z.string().trim().min(2).max(80), description: z.string().trim().min(1).max(1200), unit: z.string().trim().min(1).max(40), priceCents: z.number().int().positive(), stockQty: z.number().int().min(0), status: z.enum([SUPABASE_PRODUCT_ACTIVE_STATUS, SUPABASE_PRODUCT_ARCHIVED_STATUS]).default(SUPABASE_PRODUCT_ACTIVE_STATUS) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Seller accounts can create products." });
+        try {
+          return await createSupabaseProduct({ ...input, sellerId: ctx.supabaseUser.id });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to create this product." });
+        }
+      }),
+    update: supabaseProtectedProcedure
+      .input(z.object({ productId: z.string().uuid(), name: z.string().trim().min(2).max(160), category: z.string().trim().min(2).max(80), description: z.string().trim().min(1).max(1200), unit: z.string().trim().min(1).max(40), priceCents: z.number().int().positive(), stockQty: z.number().int().min(0), status: z.enum([SUPABASE_PRODUCT_ACTIVE_STATUS, SUPABASE_PRODUCT_ARCHIVED_STATUS]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Seller accounts can update products." });
+        try {
+          return await updateSupabaseProduct({ ...input, sellerId: ctx.supabaseUser.id });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to update this product." });
+        }
+      }),
+    archive: supabaseProtectedProcedure
+      .input(z.object({ productId: z.string().uuid() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Seller accounts can archive products." });
+        try {
+          return await archiveSupabaseProduct(ctx.supabaseUser.id, input.productId);
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to archive this product." });
+        }
       }),
   }),
 
@@ -626,6 +642,128 @@ export const appRouter = router({
           throw error;
         }
         return { success: true };
+      }),
+  }),
+
+  // UUID/Supabase implementations used by the migrated buyer flows. The
+  // legacy numeric-ID procedures remain below until their seller/officer
+  // counterparts are migrated and covered by integration tests.
+  supabaseQuotations: router({
+    buyerMine: supabaseProtectedProcedure.query(async ({ ctx }) => {
+      if (ctx.supabaseUser.role !== "buyer" && ctx.supabaseUser.role !== "seller") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only Buyer or Seller accounts can view quotation requests." });
+      }
+      return listSupabaseBuyerQuotations(ctx.supabaseUser.id);
+    }),
+    request: supabaseProtectedProcedure
+      .input(z.object({ productId: z.string().uuid(), requestedQty: z.number().int().positive(), buyerNote: z.string().max(600).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "buyer" && ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Buyer or Seller accounts can request quotations." });
+        try {
+          return await createSupabaseQuotation({ buyerId: ctx.supabaseUser.id, productId: input.productId, requestedQty: input.requestedQty });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." });
+        }
+      }),
+    decide: supabaseProtectedProcedure
+      .input(z.object({ quotationId: z.string().uuid(), status: z.enum(["accepted", "declined"]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "buyer" && ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Buyer or Seller accounts can decide quotations." });
+        try {
+          return await decideSupabaseQuotation({ buyerId: ctx.supabaseUser.id, quotationId: input.quotationId, status: input.status });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to save this quotation decision." });
+        }
+      }),
+  }),
+
+  supabaseOrders: router({
+    buyerMine: supabaseProtectedProcedure.query(async ({ ctx }) => {
+      if (ctx.supabaseUser.role !== "buyer" && ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Buyer or Seller accounts can view orders." });
+      return listSupabaseBuyerOrders(ctx.supabaseUser.id);
+    }),
+    create: supabaseProtectedProcedure
+      .input(z.object({ items: z.array(z.object({ productId: z.string().uuid(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional(), quotationId: z.string().uuid().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "buyer" && ctx.supabaseUser.role !== "seller") throw new TRPCError({ code: "FORBIDDEN", message: "Only Buyer or Seller accounts can place orders." });
+        try {
+          return await createSupabaseOrder({ buyerId: ctx.supabaseUser.id, items: input.items, quotationId: input.quotationId });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to create this order." });
+        }
+      }),
+  }),
+
+  supabaseOfficer: router({
+    overview: supabaseProtectedProcedure.query(async ({ ctx }) => {
+      if (ctx.supabaseUser.role !== "admin" && ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Cooperative officer access is required." });
+      if (!ctx.supabaseUser.cooperativeId) throw new TRPCError({ code: "FORBIDDEN", message: "Assign this officer to a cooperative before viewing cooperative records." });
+      try {
+        return await getSupabaseOfficerOverview(ctx.supabaseUser.cooperativeId);
+      } catch (error) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error instanceof Error ? error.message : "Unable to load cooperative records." });
+      }
+    }),
+    updateMemberStatus: supabaseProtectedProcedure
+      .input(z.object({ userId: z.string().uuid(), accountStatus: z.enum(["approved", "suspended"]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "admin" && ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Cooperative officer access is required." });
+        try {
+          return await updateSupabaseMemberStatus(ctx.supabaseUser.id, input.userId, input.accountStatus);
+        } catch (error) {
+          throw new TRPCError({ code: "FORBIDDEN", message: error instanceof Error ? error.message : "Unable to update member status." });
+        }
+      }),
+    reviewProduct: supabaseProtectedProcedure
+      .input(z.object({ productId: z.string().uuid(), decision: z.enum([SUPABASE_PRODUCT_ACTIVE_STATUS, SUPABASE_PRODUCT_ARCHIVED_STATUS]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "admin" && ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Cooperative officer access is required." });
+        try {
+          return await reviewSupabaseProduct(ctx.supabaseUser.id, input.productId, input.decision);
+        } catch (error) {
+          throw new TRPCError({ code: "FORBIDDEN", message: error instanceof Error ? error.message : "Unable to review this product." });
+        }
+      }),
+    reviewQuotation: supabaseProtectedProcedure
+      .input(z.object({ quotationId: z.string().uuid(), decision: z.enum(["responded", "declined"]), proposedPriceCents: z.number().int().positive().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "admin" && ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Cooperative officer access is required." });
+        try {
+          return await reviewSupabaseQuotation(ctx.supabaseUser.id, input.quotationId, input.decision, input.proposedPriceCents);
+        } catch (error) {
+          throw new TRPCError({ code: "FORBIDDEN", message: error instanceof Error ? error.message : "Unable to review this quotation." });
+        }
+      }),
+    updateOrderStatus: supabaseProtectedProcedure
+      .input(z.object({ orderId: z.string().uuid(), status: z.enum(["confirmed", "ready", "completed", "cancelled"]) }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "admin" && ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Cooperative officer access is required." });
+        try {
+          return await updateSupabaseOfficerOrder(ctx.supabaseUser.id, input.orderId, input.status);
+        } catch (error) {
+          throw new TRPCError({ code: "FORBIDDEN", message: error instanceof Error ? error.message : "Unable to update this order." });
+        }
+      }),
+  }),
+
+  supabaseAdmin: router({
+    overview: supabaseProtectedProcedure.query(async ({ ctx }) => {
+      if (ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "System administrator access is required." });
+      try {
+        return await getSupabaseAdminOverview();
+      } catch (error) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error instanceof Error ? error.message : "Unable to load administrator records." });
+      }
+    }),
+    updateProfile: supabaseProtectedProcedure
+      .input(z.object({ userId: z.string().uuid(), roleName: z.enum(["buyer", "seller", "coop_officer", "system_admin"]), accountStatus: z.enum(["approved", "pending", "suspended"]), cooperativeId: z.string().uuid().nullable() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.supabaseUser.role !== "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "System administrator access is required." });
+        try {
+          return await updateSupabaseProfileAsAdmin({ actorId: ctx.supabaseUser.id, targetUserId: input.userId, roleName: input.roleName, accountStatus: input.accountStatus, cooperativeId: input.cooperativeId });
+        } catch (error) {
+          throw new TRPCError({ code: "FORBIDDEN", message: error instanceof Error ? error.message : "Unable to update this profile." });
+        }
       }),
   }),
 

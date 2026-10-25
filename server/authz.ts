@@ -6,11 +6,11 @@ export type AppRole = (typeof APP_ROLES)[number];
 type VerificationStatus = "unverified" | "pending" | "approved" | "rejected";
 
 type OperationalUser = {
-  id: number;
+  id: string | number;
   role: AppRole;
   approvalStatus: "approved" | "pending" | "suspended";
   verificationStatus?: VerificationStatus;
-  cooperativeId: number | null;
+  cooperativeId: string | number | null;
 };
 
 export function hasRole(role: string, allowed: readonly AppRole[]) {
@@ -19,14 +19,14 @@ export function hasRole(role: string, allowed: readonly AppRole[]) {
 
 export function canManageSellerOrder(
   actor: Pick<OperationalUser, "id" | "role">,
-  sellerId: number,
+  sellerId: string | number,
 ) {
   return actor.role === "admin" || actor.role === "superadmin" || (actor.role === "seller" && actor.id === sellerId);
 }
 
 export function canUpdateOrderStatus(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  order: { sellerId: number; cooperativeId: number | null },
+  order: { sellerId: string | number; cooperativeId: string | number | null },
   nextStatus: "confirmed" | "ready" | "completed" | "cancelled",
 ) {
   if (actor.role === "superadmin") return true;
@@ -40,7 +40,7 @@ export function canUpdateOrderStatus(
 
 export function canAccessOrderForCooperative(
   actor: Pick<OperationalUser, "role" | "cooperativeId">,
-  orderCooperativeId: number | null,
+  orderCooperativeId: string | number | null,
 ) {
   if (actor.role === "superadmin") return true;
   if (actor.role !== "admin") return false;
@@ -49,19 +49,19 @@ export function canAccessOrderForCooperative(
 
 export function canManageCooperativeResource(
   actor: Pick<OperationalUser, "role" | "cooperativeId">,
-  resourceCooperativeId: number | null,
+  resourceCooperativeId: string | number | null,
 ) {
   return canAccessOrderForCooperative(actor, resourceCooperativeId);
 }
 
-export function adminOverviewCooperativeScope(actor: Pick<OperationalUser, "role" | "cooperativeId">) {
+export function adminOverviewCooperativeScope<T extends Pick<OperationalUser, "role" | "cooperativeId">>(actor: T): T["cooperativeId"] | undefined {
   return actor.role === "superadmin" ? undefined : actor.cooperativeId;
 }
 
 export function canUpdateCooperativeUser(
   actor: Pick<OperationalUser, "role" | "cooperativeId">,
-  targetCooperativeId: number | null,
-  requestedCooperativeId: number | null,
+  targetCooperativeId: string | number | null,
+  requestedCooperativeId: string | number | null,
   requestedRole: AppRole,
 ) {
   if (actor.role === "superadmin") return true;
@@ -78,8 +78,8 @@ export function isSellerApproved(approvalStatus: OperationalUser["approvalStatus
 
 export function canAccessConversation(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  conversation: { buyerId: number; sellerId: number | null },
-  sellerCooperativeId: number | null,
+  conversation: { buyerId: string | number; sellerId: string | number | null },
+  sellerCooperativeId: string | number | null,
 ) {
   if (actor.role === "superadmin" || actor.id === conversation.buyerId || actor.id === conversation.sellerId) return true;
   return actor.role === "admin" && actor.cooperativeId !== null && actor.cooperativeId === sellerCooperativeId;
@@ -90,7 +90,7 @@ export function canSubmitProfileVerification(user: Pick<OperationalUser, "role" 
   return user.verificationStatus !== "approved";
 }
 
-export function requireOperationalRole(user: OperationalUser | null, allowed: readonly AppRole[]) {
+export function requireOperationalRole<T extends OperationalUser>(user: T | null, allowed: readonly AppRole[]): T {
   if (!user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in to continue." });
   }

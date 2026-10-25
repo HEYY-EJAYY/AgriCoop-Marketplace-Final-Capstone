@@ -31,6 +31,13 @@ describe("marketplace order rules", () => {
       .toThrow("only 20 kg available");
   });
 
+  it("rejects non-positive or invalid quantities before they affect stock or totals", () => {
+    expect(() => aggregateOrderItems([{ productId: 1, quantity: 0 }])).toThrow("positive whole numbers");
+    expect(() => aggregateOrderItems([{ productId: 1, quantity: -2 }])).toThrow("positive whole numbers");
+    expect(() => priceOrderItems([{ productId: 1, quantity: 0 }], new Map([[1, products[0]]]))).toThrow("positive whole numbers");
+    expect(transactionStatusFor("   ")).toBe("recorded");
+  });
+
   it("uses the accepted quotation's unit price rather than the listing price", () => {
     const prepared = prepareOrder(products.slice(0, 1), [{ productId: 1, quantity: 3 }]);
     const pricing = priceOrderItems(prepared.items, prepared.productMap, 1234);

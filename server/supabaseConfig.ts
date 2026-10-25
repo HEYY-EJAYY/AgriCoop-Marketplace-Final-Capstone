@@ -3,7 +3,6 @@ export function readSupabaseConfig(environment: Record<string, string | undefine
     const missing = [
       ["NEXT_PUBLIC_SUPABASE_URL", environment.NEXT_PUBLIC_SUPABASE_URL],
       ["NEXT_PUBLIC_SUPABASE_ANON_KEY", environment.NEXT_PUBLIC_SUPABASE_ANON_KEY],
-      ["SUPABASE_SERVICE_ROLE_KEY", environment.SUPABASE_SERVICE_ROLE_KEY],
     ].filter(([, value]) => !value?.trim()).map(([name]) => name);
     if (missing.length > 0) {
       throw new Error(`Missing required Supabase environment variables in production: ${missing.join(", ")}`);
@@ -19,4 +18,11 @@ export function readSupabaseConfig(environment: Record<string, string | undefine
 
 export function assertSupabaseEnvironment(environment: Record<string, string | undefined>) {
   readSupabaseConfig(environment);
+}
+
+export function assertSupabaseServerEnvironment(environment: Record<string, string | undefined>) {
+  readSupabaseConfig(environment);
+  if (environment.NODE_ENV === "production" && !environment.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+    throw new Error("Missing required server-only Supabase environment variable: SUPABASE_SERVICE_ROLE_KEY");
+  }
 }

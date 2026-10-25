@@ -25,7 +25,7 @@ export default function Auth() {
           sellerType,
           ...(sellerType === "cooperative" ? cooperativeChoice === "new"
             ? { cooperativeName: newCooperativeName }
-            : { cooperativeId: Number(cooperativeChoice) }
+            : { cooperativeId: cooperativeChoice }
             : {}),
         } : {}),
       });

@@ -38,4 +38,19 @@ describe("Vercel Express adapter", () => {
     expect(response.headers.get("x-frame-options")).toBe("SAMEORIGIN");
     expect(response.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
   });
+
+  it("serves the browser's direct /api/trpc URL for unauthenticated auth.me", async () => {
+    const input = encodeURIComponent(JSON.stringify({ json: null }));
+    const response = await fetch(`${baseUrl}/api/trpc/auth.me?input=${input}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ result: { data: { json: null } } });
+  });
+
+  it("does not confuse the SPA fallback with the API route", async () => {
+    const response = await fetch(`${baseUrl}/api/trpc/auth.me`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ result: { data: { json: null } } });
+  });
 });

@@ -1,8 +1,6 @@
 const REQUIRED_PRODUCTION_ENVIRONMENT = [
-  "DATABASE_URL",
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-  "SUPABASE_SERVICE_ROLE_KEY",
 ] as const;
 
 export function assertProductionEnvironment(environment: Record<string, string | undefined>) {
@@ -13,13 +11,9 @@ export function assertProductionEnvironment(environment: Record<string, string |
     throw new Error(`Missing required production environment variables: ${missing.join(", ")}`);
   }
 
-  let databaseUrl: URL;
-  try {
-    databaseUrl = new URL(environment.DATABASE_URL!);
-  } catch {
-    throw new Error("DATABASE_URL must be a valid MySQL connection URL.");
-  }
-  if (databaseUrl.protocol !== "mysql:") {
-    throw new Error("DATABASE_URL must use the mysql:// protocol.");
-  }
+  // DATABASE_URL and SUPABASE_SERVICE_ROLE_KEY are intentionally not required
+  // for public startup. The active production architecture is Supabase
+  // PostgreSQL; public endpoints such as auth.me must start even when a
+  // privileged server-only operation is not configured. Those operations must
+  // validate their own server-only prerequisites before executing.
 }
