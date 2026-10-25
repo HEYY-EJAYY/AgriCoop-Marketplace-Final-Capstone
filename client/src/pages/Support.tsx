@@ -12,9 +12,9 @@ export default function Support() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [reply, setReply] = useState("");
-  const { data: threads = [], isLoading: threadsLoading, error: threadsError, refetch: refetchThreads } = trpc.conversations.mine.useQuery(undefined, { enabled: !!user, refetchInterval: user ? 10_000 : false });
+  const { data: threads = [], isLoading: threadsLoading, error: threadsError, refetch: refetchThreads } = trpc.conversations.mine.useQuery(undefined, { enabled: !!user, refetchInterval: user ? 2_500 : false });
   const activeId = selectedId ?? threads[0]?.conversation.id ?? null;
-  const { data: messages = [], isLoading: messagesLoading, error: messagesError, refetch: refetchMessages } = trpc.conversations.messages.useQuery({ conversationId: activeId! }, { enabled: !!activeId, refetchInterval: activeId ? 5_000 : false });
+  const { data: messages = [], isLoading: messagesLoading, error: messagesError, refetch: refetchMessages } = trpc.conversations.messages.useQuery({ conversationId: activeId! }, { enabled: !!activeId, refetchInterval: activeId ? 2_500 : false });
   const utils = trpc.useUtils();
   const create = trpc.conversations.create.useMutation({ onSuccess: data => { setSubject(""); setBody(""); setSelectedId(data.conversationId); utils.conversations.mine.invalidate(); toast.success("Inquiry sent to AgriCoop support."); }, onError: error => toast.error(error.message) });
   const send = trpc.conversations.send.useMutation({ onSuccess: () => { setReply(""); utils.conversations.messages.invalidate({ conversationId: activeId! }); utils.conversations.mine.invalidate(); }, onError: error => toast.error(error.message) });

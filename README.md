@@ -7,13 +7,13 @@ AgriCoop is a cooperative-centered agricultural marketplace for Buyers, Sellers/
 - React 19 + Vite + Wouter
 - Tailwind CSS 4 and shadcn-style UI components
 - Express 4 + tRPC 11
-- Drizzle ORM with MySQL/TiDB at runtime
+- Drizzle ORM with PostgreSQL via the Supabase transaction pooler (port 6543)
 - Supabase Auth bearer-token verification
-- Authenticated Server-Sent Events for conversation updates
+- Short-polling conversation updates (2.5-second interval)
 - Vitest, TypeScript, Vite/esbuild production build
 - **Payments are intentionally F2F-only**; online gateway/webhook code is not active
 
-> This repository is currently a Vite/Express + MySQL runtime, not yet a native Next.js + Supabase Postgres deployment. `supabase/rls.sql` is the target migration/security artifact and must be applied and verified only after the Postgres cutover.
+> The approved application data model is isolated in the `agricoop_app` schema. The reduced legacy Supabase modules remain in the repository until Stage 4 verification.
 
 ## Roles
 
@@ -26,14 +26,13 @@ Seller listings are hidden until submitted and approved. Rejected listings retai
 
 ## Local setup
 
-Start a local MySQL/MariaDB server first and create the database named by `DATABASE_URL`. Copy the required local configuration into `.env.local` (see [docs/ENVIRONMENT.md](./docs/ENVIRONMENT.md)); keep database and Supabase service-role credentials private.
+Configure `DATABASE_URL` with the Supabase PostgreSQL transaction pooler URL on port 6543. Copy the required local configuration into `.env.local` (see [docs/ENVIRONMENT.md](./docs/ENVIRONMENT.md)); keep database and Supabase service-role credentials private.
 
 ```powershell
 corepack pnpm install
 if (-not (Test-Path .env.local)) { New-Item -ItemType File .env.local }
 notepad .env.local
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS agricoop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-corepack pnpm db:push
+corepack pnpm db:migrate
 corepack pnpm seed:defaults
 corepack pnpm dev
 ```

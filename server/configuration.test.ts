@@ -33,10 +33,10 @@ describe("production configuration", () => {
       .toThrow("DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY");
   });
 
-  it("accepts a MySQL URL and ignores production requirements outside production", () => {
+  it("accepts a Supabase transaction-pooler URL and ignores production requirements outside production", () => {
     expect(() => assertProductionEnvironment({
       NODE_ENV: "production",
-      DATABASE_URL: "mysql://user:password@localhost/agricoop",
+      DATABASE_URL: "postgresql://user:password@aws-0-region.pooler.supabase.com:6543/postgres?sslmode=require",
       NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
       SUPABASE_SERVICE_ROLE_KEY: "service-role",
@@ -44,21 +44,28 @@ describe("production configuration", () => {
     expect(() => assertProductionEnvironment({ NODE_ENV: "development" })).not.toThrow();
   });
 
-  it("rejects malformed and non-MySQL production URLs without printing their contents", () => {
+  it("rejects malformed, non-PostgreSQL, and non-pooler production URLs without printing their contents", () => {
     expect(() => assertProductionEnvironment({
       NODE_ENV: "production",
       DATABASE_URL: "not-a-url",
       NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
       SUPABASE_SERVICE_ROLE_KEY: "service-role",
-    })).toThrow("DATABASE_URL must be a valid MySQL connection URL.");
+    })).toThrow("DATABASE_URL must be a valid PostgreSQL connection URL.");
     expect(() => assertProductionEnvironment({
       NODE_ENV: "production",
-      DATABASE_URL: "postgres://localhost/db",
+      DATABASE_URL: "mysql://localhost/db",
       NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
       SUPABASE_SERVICE_ROLE_KEY: "service-role",
-    })).toThrow("DATABASE_URL must use the mysql:// protocol.");
+    })).toThrow("DATABASE_URL must use the postgres:// or postgresql:// protocol.");
+    expect(() => assertProductionEnvironment({
+      NODE_ENV: "production",
+      DATABASE_URL: "postgres://localhost:5432/db",
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role",
+    })).toThrow("DATABASE_URL must use the Supabase transaction pooler on port 6543.");
   });
 });
 

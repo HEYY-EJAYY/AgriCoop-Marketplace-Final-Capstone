@@ -118,3 +118,6 @@ client/public/__manus__/version.json
 supabase/.temp/
 users-backup.json
 backup.sql
+
+.vercel
+.env*

@@ -11,15 +11,16 @@ export async function createContext(opts: CreateExpressContextOptions): Promise<
   if (bearer) {
     const { data } = await supabaseAdmin.auth.getUser(bearer);
     if (data.user) {
-      const metadata = data.user.user_metadata ?? {};
-      const requestedRole = metadata.role === "seller" || metadata.role === "buyer" || metadata.role === "admin" ? metadata.role : "buyer";
       const existing = await getUserByOpenId(data.user.id);
       if (existing) {
-        await upsertUser({ openId: data.user.id, email: data.user.email, name: metadata.name ?? data.user.email, loginMethod: "supabase" });
-        user = existing;
-      } else {
-        await upsertUser({ openId: data.user.id, email: data.user.email, name: metadata.name ?? data.user.email, loginMethod: "supabase", role: requestedRole, approvalStatus: requestedRole === "buyer" ? "approved" : "pending" });
-        user = (await getUserByOpenId(data.user.id)) ?? null;
+        const metadata = data.user.user_metadata ?? {};
+        await upsertUser({
+          openId: data.user.id,
+          email: data.user.email,
+          name: metadata.name ?? existing.name ?? data.user.email,
+          loginMethod: "supabase",
+        });
+        user = (await getUserByOpenId(data.user.id)) ?? existing;
       }
     }
   }

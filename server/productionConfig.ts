@@ -17,9 +17,12 @@ export function assertProductionEnvironment(environment: Record<string, string |
   try {
     databaseUrl = new URL(environment.DATABASE_URL!);
   } catch {
-    throw new Error("DATABASE_URL must be a valid MySQL connection URL.");
+    throw new Error("DATABASE_URL must be a valid PostgreSQL connection URL.");
   }
-  if (databaseUrl.protocol !== "mysql:") {
-    throw new Error("DATABASE_URL must use the mysql:// protocol.");
+  if (databaseUrl.protocol !== "postgres:" && databaseUrl.protocol !== "postgresql:") {
+    throw new Error("DATABASE_URL must use the postgres:// or postgresql:// protocol.");
+  }
+  if (databaseUrl.port !== "6543") {
+    throw new Error("DATABASE_URL must use the Supabase transaction pooler on port 6543.");
   }
 }

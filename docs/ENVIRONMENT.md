@@ -6,12 +6,12 @@ Copy `.env.example` to `.env.local` for local development. Keep `.env.local` pri
 
 | Variable | Use | Exposure |
 |---|---|---|
-| `DATABASE_URL` | MySQL connection URL (`mysql://...`) for the app and Drizzle migrations | Server-only secret |
+| `DATABASE_URL` | Supabase PostgreSQL transaction-pooler URL on port 6543, with TLS required | Server-only secret |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase Auth and Storage project URL | Public |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase browser Auth client | Public |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side account management and signed image uploads | Server-only secret |
 
-The server validates these values at startup in production and rejects malformed or non-MySQL database URLs. Never put the Supabase service-role key in a `VITE_*` or other browser-exposed variable.
+The server validates these values at startup in production and requires the PostgreSQL transaction pooler on port 6543. Drizzle uses postgres-js with prepared statements disabled for pooler compatibility. Never put the database URL or Supabase service-role key in a browser-exposed variable.
 
 ## Optional runtime variables
 
@@ -19,8 +19,6 @@ The server validates these values at startup in production and rejects malformed
 |---|---|---|
 | `PORT` | Local Express port; defaults to `3000` | Server |
 | `SUPABASE_STORAGE_BUCKET` | Product image bucket; defaults to `product-images` | Server |
-| `DATABASE_SSL` | Set to `true` to enable verified TLS for MySQL | Server |
-| `DATABASE_SSL_CA` | Optional certificate authority, with newlines represented as `\n` | Server-only secret/config |
 | `OWNER_OPEN_ID` | Supabase user ID granted the owner role during account upsert | Server-only |
 | `BUILT_IN_FORGE_API_URL` | Optional upstream URL for template integrations such as LLM, image generation, voice, notifications, and map helpers | Server |
 | `BUILT_IN_FORGE_API_KEY` | Credential for those optional upstream integrations | Server-only secret |

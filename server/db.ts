@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
-import { createPool, type PoolOptions } from "mysql2";
+import postgres from "postgres";
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   cooperatives,
   conversationMessages,
@@ -15,25 +15,24 @@ import {
   users,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
+import * as schema from "../drizzle/schema.js";
 
-let _db: ReturnType<typeof drizzle> | null = null;
+let _db: PostgresJsDatabase<typeof schema> | null = null;
+let _client: ReturnType<typeof postgres> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
-    const sslCa = process.env.DATABASE_SSL_CA?.replace(/\\n/g, "\n");
-    const poolOptions: PoolOptions = {
-      uri: process.env.DATABASE_URL,
-      connectionLimit: 3,
-      maxIdle: 1,
-      idleTimeout: 60_000,
-      waitForConnections: true,
-      queueLimit: 10,
-      connectTimeout: 10_000,
-      ...(process.env.DATABASE_SSL === "true"
-        ? { ssl: { rejectUnauthorized: true, ...(sslCa ? { ca: sslCa } : {}) } }
-        : {}),
-    };
-    _db = drizzle(createPool(poolOptions));
+    const parsedUrl = new URL(process.env.DATABASE_URL);
+    if (parsedUrl.port !== "6543") {
+      throw new Error("DATABASE_URL must use the Supabase transaction pooler on port 6543.");
+    }
+    _client = postgres(process.env.DATABASE_URL, {
+      prepare: false,
+      max: 5,
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+    _db = drizzle(_client, { schema });
   }
   return _db;
 }
@@ -57,7 +56,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     updateSet.role = "admin";
     updateSet.approvalStatus = "approved";
   }
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {

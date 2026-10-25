@@ -7,7 +7,7 @@ const db = await getDb();
 if (!db) throw new Error("DATABASE_URL is required to seed demo data");
 
 const existingCoop = (await db.select().from(cooperatives).where(eq(cooperatives.name, "AgriCoop Butuan Producers Cooperative")).limit(1))[0];
-const coopId = existingCoop?.id ?? (await db.insert(cooperatives).values({ name: "AgriCoop Butuan Producers Cooperative", description: "A defense-demo cooperative connecting verified producers with institutional and household buyers.", location: "Butuan City, Agusan del Norte", status: "active" }).$returningId())[0].id;
+const coopId = existingCoop?.id ?? (await db.insert(cooperatives).values({ name: "AgriCoop Butuan Producers Cooperative", description: "A defense-demo cooperative connecting verified producers with institutional and household buyers.", location: "Butuan City, Agusan del Norte", status: "active" }).returning({ id: cooperatives.id }))[0].id;
 
 const people = [
   { openId: "demo-buyer-001", name: "Mara Santos", email: "mara.buyer@agricoop.demo", role: "buyer" as const, approvalStatus: "approved" as const },
@@ -19,7 +19,7 @@ const people = [
 const ids: Record<string, number> = {};
 for (const person of people) {
   const found = (await db.select().from(users).where(eq(users.openId, person.openId)).limit(1))[0];
-  ids[person.openId] = found?.id ?? (await db.insert(users).values({ ...person, cooperativeId: coopId, loginMethod: "demo" }).$returningId())[0].id;
+  ids[person.openId] = found?.id ?? (await db.insert(users).values({ ...person, cooperativeId: coopId, loginMethod: "demo" }).returning({ id: users.id }))[0].id;
 }
 const farmerIds = [ids["demo-farmer-001"], ids["demo-farmer-002"], ids["demo-farmer-003"]];
 const catalog = [
@@ -32,7 +32,7 @@ for (let i = 0; i < catalog.length; i++) {
   const [name, category, unit, priceCents, stockQty, description] = catalog[i];
   const sellerId = farmerIds[i % farmerIds.length];
   const found = (await db.select().from(products).where(and(eq(products.name, name), eq(products.sellerId, sellerId))).limit(1))[0];
-  productIds.push(found?.id ?? (await db.insert(products).values({ sellerId, cooperativeId: coopId, name, category, unit, priceCents, stockQty, description, qualityGrade: i % 4 === 0 ? "premium" : "standard", status: "published", verificationStatus: "approved", visibility: "visible" }).$returningId())[0].id);
+  productIds.push(found?.id ?? (await db.insert(products).values({ sellerId, cooperativeId: coopId, name, category, unit, priceCents, stockQty, description, qualityGrade: i % 4 === 0 ? "premium" : "standard", status: "published", verificationStatus: "approved", visibility: "visible" }).returning({ id: products.id }))[0].id);
 }
 const buyerId = ids["demo-buyer-001"];
 const farmer1 = farmerIds[0];
@@ -45,16 +45,16 @@ if (!existingQuote) {
 }
 const existingOrder = (await db.select().from(orders).where(eq(orders.buyerId, buyerId)).limit(1))[0];
 if (!existingOrder) {
-  const order1 = (await db.insert(orders).values({ buyerId, sellerId: farmer1, cooperativeId: coopId, orderType: "regular", status: "completed", paymentStatus: "paid", paymentMethod: "f2f", totalCents: 12500, buyerNote: "Demo completed F2F order", completedAt: new Date() }).$returningId())[0].id;
+  const order1 = (await db.insert(orders).values({ buyerId, sellerId: farmer1, cooperativeId: coopId, orderType: "regular", status: "completed", paymentStatus: "paid", paymentMethod: "f2f", totalCents: 12500, buyerNote: "Demo completed F2F order", completedAt: new Date() }).returning({ id: orders.id }))[0].id;
   await db.insert(orderItems).values({ orderId: order1, productId: productIds[0], quantity: 1, unitPriceCents: 12500 });
   await db.insert(transactions).values({ orderId: order1, buyerId, sellerId: farmer1, amountCents: 12500, paymentMethod: "f2f", status: "paid", paymentReferenceNote: "Cash handed over at cooperative office" });
-  const order2 = (await db.insert(orders).values({ buyerId, sellerId: farmerIds[1], cooperativeId: coopId, orderType: "bulk", status: "confirmed", paymentStatus: "F2F-pending-confirmation", paymentMethod: "f2f", totalCents: 910000, buyerNote: "Demo bulk order for school canteen" }).$returningId())[0].id;
+  const order2 = (await db.insert(orders).values({ buyerId, sellerId: farmerIds[1], cooperativeId: coopId, orderType: "bulk", status: "confirmed", paymentStatus: "F2F-pending-confirmation", paymentMethod: "f2f", totalCents: 910000, buyerNote: "Demo bulk order for school canteen" }).returning({ id: orders.id }))[0].id;
   await db.insert(orderItems).values({ orderId: order2, productId: productIds[4], quantity: 100, unitPriceCents: 9100 });
   await db.insert(transactions).values({ orderId: order2, buyerId, sellerId: farmerIds[1], amountCents: 910000, paymentMethod: "f2f", status: "payment_coordinated", paymentReferenceNote: "Meet at cooperative office" });
 }
 const existingConversation = (await db.select().from(conversations).where(eq(conversations.buyerId, buyerId)).limit(1))[0];
 if (!existingConversation) {
-  const [thread] = await db.insert(conversations).values({ buyerId, sellerId: farmer1, productId: productIds[0], subject: "Demo order handover", orderId: existingOrder?.id, status: "open" }).$returningId();
+  const [thread] = await db.insert(conversations).values({ buyerId, sellerId: farmer1, productId: productIds[0], subject: "Demo order handover", orderId: existingOrder?.id, status: "open" }).returning({ id: conversations.id });
   await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: buyerId, body: "Please confirm the F2F pickup window at the cooperative office." });
 }
 console.log(JSON.stringify({ cooperativeId: coopId, sellerIds: farmerIds, products: productIds.length, seeded: true }, null, 2));

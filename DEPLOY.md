@@ -4,8 +4,8 @@ This repository builds a Vite client and serves its tRPC API from an Express Ver
 
 ## 1. Prepare hosted services
 
-1. Create a hosted MySQL database with a provider you choose. The provider is intentionally not prescribed here.
-2. Enable TLS and keep the provider's CA certificate available if it requires a custom CA. Use a provider connection limit that can accommodate multiple serverless instances; each warm function process pools up to three MySQL connections.
+1. Use the Supabase PostgreSQL transaction pooler and its connection string on port 6543. Store that URL only in server environment variables.
+2. The server uses postgres-js with `prepare: false` and a small pool for Vercel function reuse.
 3. Create or select a Supabase project. The `product-images` bucket is created/configured by the server as public, with a 5 MiB file limit and JPEG/PNG/WebP MIME restrictions.
 4. Choose a Vercel region close to the database after selecting the provider and database region. No region is hard-coded because those choices are not known yet.
 
@@ -19,12 +19,10 @@ This repository builds a Vite client and serves its tRPC API from an Express Ver
 
 | Variable | Required | Notes |
 |---|---:|---|
-| `DATABASE_URL` | Yes | MySQL URL using `mysql://`; server-only |
+| `DATABASE_URL` | Yes | Supabase PostgreSQL transaction-pooler URL on port 6543; server-only |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL; public |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/publishable key; public |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service-role key; server-only, never use a `VITE_*` name |
-| `DATABASE_SSL` | Recommended | Set to `true` when the provider supports TLS |
-| `DATABASE_SSL_CA` | As needed | Provider CA certificate if required |
 | `SUPABASE_STORAGE_BUCKET` | No | Defaults to `product-images` |
 | `OWNER_OPEN_ID` | No | Optional Supabase user ID for owner-role upsert behavior |
 | `BUILT_IN_FORGE_API_URL` | Feature-dependent | Optional upstream integrations; server-only |
@@ -48,13 +46,7 @@ Keep the service-role key server-side. The browser uses only the anon key. Produ
 
 ## 4. Apply database migrations
 
-Never run `drizzle-kit push`. Before changing a database, make a backup. For a local MySQL installation, the project’s backup command is:
-
-```powershell
-mysqldump -u root -p agricoop --result-file=backup.sql
-```
-
-For hosted MySQL, use the provider's equivalent export/backup command and a protected destination. Then, from a trusted machine with `DATABASE_URL` configured in its private `.env.local`, run:
+The reviewed additive SQL is `drizzle-postgres/0000_approved_schema.sql`. It creates `agricoop_app`, leaves existing public tables untouched, and enables RLS without policies. Review the complete file before applying it in Supabase. Never run it before review. For backup, use the Supabase dashboard or `pg_dump` with a protected destination. After the SQL is approved and applied, configure `DATABASE_URL` privately and run:
 
 ```powershell
 corepack pnpm db:migrate

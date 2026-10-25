@@ -66,7 +66,7 @@ for (const account of accounts) {
     await db.update(users).set(userRecord).where(eq(users.id, existingAppUser.id));
     authUsers.push({ role: account.role, email, id: existingAppUser.id });
   } else {
-    const [created] = await db.insert(users).values(userRecord).$returningId();
+    const [created] = await db.insert(users).values(userRecord).returning({ id: users.id });
     authUsers.push({ role: account.role, email, id: created.id });
   }
 }

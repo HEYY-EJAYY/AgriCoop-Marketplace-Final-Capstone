@@ -80,7 +80,7 @@ async function dbOrThrow() {
 }
 
 async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { buyerId: number; sellerId?: number; productId?: number; subject: string; body: string; orderId?: number; quotationId?: number }) {
-  const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).$returningId();
+  const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).returning({ id: conversations.id });
   await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
   return thread.id;
 }
@@ -149,14 +149,13 @@ export const appRouter = router({
                     name: normalized.displayName,
                     normalizedName: normalized.normalizedName,
                     location: "Not specified",
-                  }).$returningId();
+                  }).returning({ id: cooperatives.id });
                   cooperativeId = created.id;
                   cooperativeName = normalized.displayName;
                 } catch (error) {
                   const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
                   const errorCode = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-                  const errorNumber = typeof cause === "object" && cause !== null && "errno" in cause ? cause.errno : undefined;
-                  if (errorCode !== "ER_DUP_ENTRY" && errorNumber !== 1062) throw error;
+                  if (errorCode !== "23505") throw error;
                   const racedExisting = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
                   if (!racedExisting) throw error;
                   cooperativeId = racedExisting.id;
@@ -223,7 +222,7 @@ export const appRouter = router({
         ? undefined
         : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
       if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
-      const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).$returningId();
+      await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
       return { success: true };
     }),
@@ -354,8 +353,8 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        const result = await db.update(products).set({ verificationStatus: "pending", visibility: "hidden", rejectionReason: null }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id)));
-        if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another Seller." });
+        const result = await db.update(products).set({ verificationStatus: "pending", visibility: "hidden", rejectionReason: null }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id))).returning({ id: products.id });
+        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another Seller." });
         return { success: true };
       }),
     update: protectedProcedure
@@ -373,8 +372,8 @@ export const appRouter = router({
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         const { id, ...values } = input;
-        const result = await db.update(products).set(values).where(and(eq(products.id, id), eq(products.sellerId, seller.id)));
-        if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
+        const result = await db.update(products).set(values).where(and(eq(products.id, id), eq(products.sellerId, seller.id))).returning({ id: products.id });
+        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
         return { success: true };
       }),
     archive: protectedProcedure
@@ -414,7 +413,7 @@ export const appRouter = router({
         if (input.requestedQty > product.stockQty) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${product.stockQty} ${product.unit} are currently available.` });
         }
-        const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).$returningId();
+        const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).returning({ id: quotations.id });
         const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
         return { success: true, conversationId };
       }),
@@ -426,8 +425,8 @@ export const appRouter = router({
         const current = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
         if (!current || current.sellerId !== seller.id || !isQuotationOpen(current.status)) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
         const { quotationId, ...values } = input;
-        const result = await db.update(quotations).set({ ...values, respondedAt: new Date() }).where(and(eq(quotations.id, quotationId), eq(quotations.sellerId, seller.id), eq(quotations.status, "requested")));
-        if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
+        const result = await db.update(quotations).set({ ...values, respondedAt: new Date() }).where(and(eq(quotations.id, quotationId), eq(quotations.sellerId, seller.id), eq(quotations.status, "requested"))).returning({ id: quotations.id });
+        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
         return { success: true };
       }),
     decide: protectedProcedure
@@ -445,8 +444,8 @@ export const appRouter = router({
             eq(quotations.id, input.quotationId),
             eq(quotations.buyerId, buyer.id),
             eq(quotations.status, "responded"),
-          ));
-        if (!result[0].affectedRows) {
+          )).returning({ id: quotations.id });
+        if (!result.length) {
           throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
         }
         return { success: true };
@@ -489,7 +488,7 @@ export const appRouter = router({
           quotedPriceCents = quotation.quotedPriceCents;
         }
         const pricing = priceOrderItems(prepared.items, prepared.productMap, quotedPriceCents);
-        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).$returningId();
+        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).returning({ id: orders.id });
         await db.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
         await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: pricing.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
         const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: prepared.sellerId, orderId: newOrder.id, quotationId: input.quotationId, subject: `Order #${newOrder.id} support`, body: "Please confirm availability, F2F payment coordination, and handover details." });
@@ -563,8 +562,9 @@ export const appRouter = router({
                 await applyDeduction(async item => {
                   const result = await tx.update(products)
                     .set({ stockQty: sql`${products.stockQty} - ${item.quantity}` })
-                    .where(and(eq(products.id, item.productId), gte(products.stockQty, item.quantity)));
-                  return result[0].affectedRows > 0;
+                    .where(and(eq(products.id, item.productId), gte(products.stockQty, item.quantity)))
+                    .returning({ id: products.id });
+                  return result.length > 0;
                 });
               });
               const completedAt = new Date();
@@ -585,7 +585,8 @@ export const appRouter = router({
                 status: transactionStatusFor(input.paymentReferenceNote),
                 paymentMethod: "f2f",
                 completedAt,
-              }).onDuplicateKeyUpdate({
+              }).onConflictDoUpdate({
+                target: transactions.orderId,
                 set: {
                   amountCents: completion.totalCents,
                   paymentReferenceNote: input.paymentReferenceNote,
@@ -677,8 +678,8 @@ export const appRouter = router({
       if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
       if (!canManageCooperativeResource(actor, target.cooperativeId)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
       const scope = actor.role === "superadmin" ? eq(products.id, input.productId) : and(eq(products.id, input.productId), eq(products.cooperativeId, actor.cooperativeId!));
-      const result = await db.update(products).set({ verificationStatus: input.decision, visibility: input.decision === "approved" ? "visible" : "hidden", rejectionReason: input.rejectionReason ?? null, status: input.decision === "approved" ? "published" : "archived" }).where(scope);
-      if (!result[0].affectedRows) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
+      const result = await db.update(products).set({ verificationStatus: input.decision, visibility: input.decision === "approved" ? "visible" : "hidden", rejectionReason: input.rejectionReason ?? null, status: input.decision === "approved" ? "published" : "archived" }).where(scope).returning({ id: products.id });
+      if (!result.length) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
       return { success: true };
     }),
     updateUser: protectedProcedure
@@ -694,8 +695,8 @@ export const appRouter = router({
         const scope = actor.role === "superadmin"
           ? eq(users.id, input.userId)
           : and(eq(users.id, input.userId), eq(users.cooperativeId, actor.cooperativeId!));
-        const result = await db.update(users).set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId }).where(scope);
-        if (!result[0].affectedRows) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
+        const result = await db.update(users).set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId }).where(scope).returning({ id: users.id });
+        if (!result.length) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
         return { success: true };
       }),
   }),
