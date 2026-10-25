@@ -116,3 +116,5 @@ client/public/__manus__/version.json
 .env*
 !.env.example
 supabase/.temp/
+users-backup.json
+backup.sql
