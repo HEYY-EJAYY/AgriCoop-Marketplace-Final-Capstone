@@ -1,20 +1,65 @@
-// Preconfigured storage helpers for Manus WebDev templates
-// Uploads via Forge Server presigned URL to S3 (PUT direct).
-// Downloads return /manus-storage/{key} paths served via 307 redirect.
+// Supabase Storage helpers (replaces the Manus Forge/S3 storage layer).
+// Uploads go through the server using the service-role key, so that key
+// never reaches the browser. Files may be stored in either public or private buckets.
 
-import { ENV } from "./_core/env";
+import { supabaseAdmin } from "./clients";
 
-function getForgeConfig() {
-  const forgeUrl = ENV.forgeApiUrl;
-  const forgeKey = ENV.forgeApiKey;
+const DEFAULT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
+const DEFAULT_SIGNED_URL_SECONDS = 300;
 
-  if (!forgeUrl || !forgeKey) {
+type StorageBucketOptions = {
+  bucket?: string;
+  public?: boolean;
+  expiresIn?: number;
+};
+
+function assertConfigured() {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error(
-      "Storage config missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY",
+      "Storage config missing: set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local",
     );
   }
+}
 
-  return { forgeUrl: forgeUrl.replace(/\/+$/, ""), forgeKey };
+function normalizeBucketOptions(
+  bucketOrOptions?: string | StorageBucketOptions,
+  fallbackPublic = true,
+): Required<StorageBucketOptions> {
+  if (typeof bucketOrOptions === "string") {
+    return { bucket: bucketOrOptions || DEFAULT_BUCKET, public: fallbackPublic, expiresIn: DEFAULT_SIGNED_URL_SECONDS };
+  }
+
+  if (bucketOrOptions && typeof bucketOrOptions === "object") {
+    return {
+      bucket: bucketOrOptions.bucket || DEFAULT_BUCKET,
+      public: bucketOrOptions.public ?? fallbackPublic,
+      expiresIn: bucketOrOptions.expiresIn ?? DEFAULT_SIGNED_URL_SECONDS,
+    };
+  }
+
+  return { bucket: DEFAULT_BUCKET, public: fallbackPublic, expiresIn: DEFAULT_SIGNED_URL_SECONDS };
+}
+
+async function ensureBucket(bucketName: string, isPublic: boolean) {
+  const { data: existing, error: readError } = await supabaseAdmin.storage.getBucket(bucketName);
+  if (readError && !/not found|does not exist/i.test(readError.message)) {
+    throw new Error(`Storage bucket check failed: ${readError.message}`);
+  }
+
+  if (!existing) {
+    const { error } = await supabaseAdmin.storage.createBucket(bucketName, { public: isPublic });
+    if (error && !/already exists|duplicate/i.test(error.message)) {
+      throw new Error(`Storage bucket check failed: ${error.message}`);
+    }
+    return;
+  }
+
+  if (existing.public !== isPublic) {
+    const { error } = await supabaseAdmin.storage.updateBucket(bucketName, { public: isPublic });
+    if (error) {
+      throw new Error(`Storage bucket update failed: ${error.message}`);
+    }
+  }
 }
 
 function normalizeKey(relKey: string): string {
@@ -28,70 +73,70 @@ function appendHashSuffix(relKey: string): string {
   return `${relKey.slice(0, lastDot)}_${hash}${relKey.slice(lastDot)}`;
 }
 
+async function publicUrl(bucketName: string, key: string): Promise<string> {
+  const { data } = await supabaseAdmin.storage.from(bucketName).getPublicUrl(key);
+  if (!data?.publicUrl) {
+    throw new Error("Storage public URL failed: no URL returned");
+  }
+  return data.publicUrl;
+}
+
+async function signedUrl(bucketName: string, key: string, expiresIn: number): Promise<string> {
+  const { data, error } = await supabaseAdmin.storage.from(bucketName).createSignedUrl(key, expiresIn);
+  if (error || !data?.signedUrl) {
+    throw new Error(`Storage signed URL failed: ${error?.message ?? "no URL returned"}`);
+  }
+  return data.signedUrl;
+}
+
+async function resolveUrl(bucketName: string, key: string, isPublic: boolean, expiresIn: number): Promise<string> {
+  if (isPublic) return publicUrl(bucketName, key);
+  return signedUrl(bucketName, key, expiresIn);
+}
+
 export async function storagePut(
   relKey: string,
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream",
+  bucketOrOptions?: string | StorageBucketOptions,
+  fallbackPublic = true,
 ): Promise<{ key: string; url: string }> {
-  const { forgeUrl, forgeKey } = getForgeConfig();
+  assertConfigured();
+
+  const options = normalizeBucketOptions(bucketOrOptions, fallbackPublic);
+  await ensureBucket(options.bucket, options.public);
+
   const key = appendHashSuffix(normalizeKey(relKey));
+  const body = typeof data === "string" ? Buffer.from(data) : data;
 
-  // 1. Get presigned PUT URL from Forge
-  const presignUrl = new URL("v1/storage/presign/put", forgeUrl + "/");
-  presignUrl.searchParams.set("path", key);
+  const { error } = await supabaseAdmin.storage
+    .from(options.bucket)
+    .upload(key, body, { contentType, upsert: false });
 
-  const presignResp = await fetch(presignUrl, {
-    headers: { Authorization: `Bearer ${forgeKey}` },
-  });
-
-  if (!presignResp.ok) {
-    const msg = await presignResp.text().catch(() => presignResp.statusText);
-    throw new Error(`Storage presign failed (${presignResp.status}): ${msg}`);
+  if (error) {
+    throw new Error(`Storage upload failed: ${error.message}`);
   }
 
-  const { url: s3Url } = (await presignResp.json()) as { url: string };
-  if (!s3Url) throw new Error("Forge returned empty presign URL");
-
-  // 2. PUT file directly to S3
-  const blob =
-    typeof data === "string"
-      ? new Blob([data], { type: contentType })
-      : new Blob([data as any], { type: contentType });
-
-  const uploadResp = await fetch(s3Url, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: blob,
-  });
-
-  if (!uploadResp.ok) {
-    throw new Error(`Storage upload to S3 failed (${uploadResp.status})`);
-  }
-
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: await resolveUrl(options.bucket, key, options.public, options.expiresIn) };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
+export async function storageGet(
+  relKey: string,
+  bucketOrOptions?: string | StorageBucketOptions,
+  fallbackPublic = true,
+): Promise<{ key: string; url: string }> {
+  const options = normalizeBucketOptions(bucketOrOptions, fallbackPublic);
   const key = normalizeKey(relKey);
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: await resolveUrl(options.bucket, key, options.public, options.expiresIn) };
 }
 
-export async function storageGetSignedUrl(relKey: string): Promise<string> {
-  const { forgeUrl, forgeKey } = getForgeConfig();
+export async function storageGetSignedUrl(
+  relKey: string,
+  bucketOrOptions?: string | StorageBucketOptions,
+  fallbackPublic = false,
+): Promise<string> {
+  assertConfigured();
+  const options = normalizeBucketOptions(bucketOrOptions, fallbackPublic);
   const key = normalizeKey(relKey);
-
-  const getUrl = new URL("v1/storage/presign/get", forgeUrl + "/");
-  getUrl.searchParams.set("path", key);
-
-  const resp = await fetch(getUrl, {
-    headers: { Authorization: `Bearer ${forgeKey}` },
-  });
-
-  if (!resp.ok) {
-    const msg = await resp.text().catch(() => resp.statusText);
-    throw new Error(`Storage signed URL failed (${resp.status}): ${msg}`);
-  }
-
-  const { url } = (await resp.json()) as { url: string };
-  return url;
+  return signedUrl(options.bucket, key, options.expiresIn);
 }

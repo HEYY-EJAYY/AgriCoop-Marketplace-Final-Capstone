@@ -28,9 +28,18 @@ export const users = mysqlTable("users", {
   approvalStatus: mysqlEnum("approvalStatus", ["approved", "pending", "suspended"])
     .default("approved")
     .notNull(),
+  verificationStatus: mysqlEnum("verificationStatus", ["unverified", "pending", "approved", "rejected"])
+    .default("unverified")
+    .notNull(),
+  verificationNote: text("verificationNote"),
+  verifiedBy: int("verifiedBy").references((): any => users.id),
+  verifiedAt: timestamp("verifiedAt"),
+  profileImageUrl: varchar("profileImageUrl", { length: 1000 }),
+  birthdate: timestamp("birthdate"),
+  phone: varchar("phone", { length: 40 }),
+  address: text("address"),
   cooperativeId: int("cooperativeId").references(() => cooperatives.id),
   contactNumber: varchar("contactNumber", { length: 40 }),
-  address: text("address"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -75,6 +84,7 @@ export const quotations = mysqlTable("quotations", {
     .default("requested")
     .notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   respondedAt: timestamp("respondedAt"),
 });
 
@@ -98,12 +108,25 @@ export const orders = mysqlTable("orders", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const orderEvents = mysqlTable("orderEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  orderId: int("orderId").notNull().references(() => orders.id),
+  actorUserId: int("actorUserId").notNull().references(() => users.id),
+  action: varchar("action", { length: 80 }).notNull(),
+  fromStatus: varchar("fromStatus", { length: 32 }),
+  toStatus: varchar("toStatus", { length: 32 }),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export const orderItems = mysqlTable("orderItems", {
   id: int("id").autoincrement().primaryKey(),
   orderId: int("orderId").notNull().references(() => orders.id),
   productId: int("productId").notNull().references(() => products.id),
   quantity: int("quantity").notNull(),
   unitPriceCents: int("unitPriceCents").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const transactions = mysqlTable(
@@ -126,7 +149,9 @@ export const transactions = mysqlTable(
       .notNull(),
     paymentMethod: varchar("paymentMethod", { length: 64 }),
     externalId: varchar("externalId", { length: 128 }),
-    completedAt: timestamp("completedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    completedAt: timestamp("completedAt"),
   },
   table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)],
 );
@@ -150,6 +175,7 @@ export const conversationMessages = mysqlTable("conversationMessages", {
   senderId: int("senderId").notNull().references(() => users.id),
   body: text("body").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;

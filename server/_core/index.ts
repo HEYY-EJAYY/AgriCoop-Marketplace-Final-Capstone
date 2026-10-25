@@ -8,10 +8,11 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { supabaseAdmin } from "../clients";
-import { conversations } from "../../drizzle/schema";
-import { and, eq, or } from "drizzle-orm";
+import { conversations, users } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
 import { getDb, getUserByOpenId } from "../db";
 import { subscribeConversation } from "../realtime";
+import { canAccessConversation } from "../authz";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -47,8 +48,11 @@ async function startServer() {
     const conversationId = Number(req.params.conversationId);
     const db = await getDb();
     if (!localUser || !db || !Number.isInteger(conversationId)) return res.status(403).end();
-    const thread = (await db.select().from(conversations).where(and(eq(conversations.id, conversationId), or(eq(conversations.buyerId, localUser.id), eq(conversations.sellerId, localUser.id)))).limit(1))[0];
-    if (!thread && localUser.role !== "admin" && localUser.role !== "superadmin") return res.status(403).end();
+    const thread = (await db.select().from(conversations).where(eq(conversations.id, conversationId)).limit(1))[0];
+    const seller = thread?.sellerId === null || thread?.sellerId === undefined
+      ? undefined
+      : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
+    if (!thread || !canAccessConversation(localUser, thread, seller?.cooperativeId ?? null)) return res.status(403).end();
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write(`event: ready\ndata: ${JSON.stringify({ conversationId })}\n\n`);
     const unsubscribe = subscribeConversation(conversationId, event => res.write(`event: message\ndata: ${JSON.stringify(event)}\n\n`));

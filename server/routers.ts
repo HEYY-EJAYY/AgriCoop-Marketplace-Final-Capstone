@@ -1,13 +1,12 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { APP_ROLES, canManageSellerOrder, requireOperationalRole } from "./authz";
-import { assertInventorySufficient, assertNotSelfTransaction, canTransitionOrder, isQuotationOpen, prepareOrder, transactionStatusFor } from "./marketplaceRules";
+import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
 import {
-  decrementProductStock,
   getAdminOverview,
   getBuyerOrders,
   getBuyerQuotations,
@@ -17,6 +16,7 @@ import {
   getMarketplace,
   getMarketplaceProduct,
   getOfficerOverview,
+  getOrderDetail,
   getProductById,
   getSellerOrders,
   getSellerProducts,
@@ -25,16 +25,20 @@ import {
   getConversationsForUser,
   upsertUser,
 } from "./db";
-import { conversationMessages, conversations, cooperatives, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
+import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
 import { supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
 import { normalizeCooperativeName } from "./cooperativeNames";
-import { PRODUCT_UNITS } from "../shared/productOptions";
+import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions";
 import { storagePut } from "./storage";
 
-const roleSchema = z.enum(["buyer", "seller"]);
 const registrationRoleSchema = z.enum(["buyer", "seller", "admin"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
+export const accountProfileInputSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  contactNumber: z.string().max(40).optional(),
+  address: z.string().max(500).optional(),
+}).strict();
 const productFields = {
   name: z.string().trim().min(2).max(160),
   category: z.string().trim().min(2).max(80),
@@ -79,6 +83,17 @@ async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, inpu
   const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).$returningId();
   await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
   return thread.id;
+}
+
+async function recordOrderEvent(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { orderId: number; actorUserId: number; action: string; fromStatus?: string | null; toStatus?: string | null; note?: string | null }) {
+  await db.insert(orderEvents).values({
+    orderId: input.orderId,
+    actorUserId: input.actorUserId,
+    action: input.action,
+    fromStatus: input.fromStatus ?? null,
+    toStatus: input.toStatus ?? null,
+    note: input.note ?? null,
+  });
 }
 
 export const appRouter = router({
@@ -181,11 +196,18 @@ export const appRouter = router({
   }),
 
   conversations: router({
-    mine: protectedProcedure.query(({ ctx }) => getConversationsForUser(ctx.user.id, ctx.user.role === "admin" || ctx.user.role === "superadmin")),
+    mine: protectedProcedure.query(({ ctx }) => getConversationsForUser(
+      ctx.user.id,
+      ctx.user.role === "superadmin",
+      ctx.user.role === "admin" ? ctx.user.cooperativeId : null,
+    )),
     messages: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
-      if (!thread || (thread.buyerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "superadmin")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
+      const seller = thread?.sellerId === null || thread?.sellerId === undefined
+        ? undefined
+        : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
+      if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
       return getConversationMessages(input.conversationId);
     }),
     create: protectedProcedure.input(z.object({ subject: z.string().min(3).max(180), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
@@ -196,7 +218,10 @@ export const appRouter = router({
     send: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
-      if (!thread || (thread.buyerId !== ctx.user.id && ctx.user.role !== "admin" && ctx.user.role !== "superadmin")) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
+      const seller = thread?.sellerId === null || thread?.sellerId === undefined
+        ? undefined
+        : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
+      if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
       const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).$returningId();
       publishConversationMessage({ conversationId: input.conversationId, messageId: message.id, senderId: ctx.user.id });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
@@ -207,12 +232,62 @@ export const appRouter = router({
   account: router({
     myProfile: protectedProcedure.query(({ ctx }) => ctx.user),
     updateProfile: protectedProcedure
-      .input(z.object({ role: roleSchema, cooperativeId: z.number().int().positive().nullable(), contactNumber: z.string().max(40).optional(), address: z.string().max(500).optional() }))
+      .input(accountProfileInputSchema)
       .mutation(async ({ ctx, input }) => {
         const db = await dbOrThrow();
-        const approvalStatus = input.role === "buyer" ? "approved" : "pending";
-        await db.update(users).set({ ...input, approvalStatus }).where(eq(users.id, ctx.user.id));
-        return { success: true, approvalStatus };
+        await db.update(users).set(input).where(eq(users.id, ctx.user.id));
+        return { success: true };
+      }),
+    submitVerification: protectedProcedure
+      .input(z.object({
+        birthdate: z.string().trim().min(1).max(40).optional(),
+        phone: z.string().trim().max(40).optional(),
+        address: z.string().trim().max(500).optional(),
+        idNumber: z.string().trim().min(4).max(80).optional(),
+        selfieUrl: z.string().trim().max(1000).optional(),
+        note: z.string().trim().max(600).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!canSubmitProfileVerification({ role: ctx.user.role, verificationStatus: ctx.user.verificationStatus })) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This profile is already verified or cannot be verified with the current role." });
+        }
+        const db = await dbOrThrow();
+        const birthdateValue = input.birthdate ? new Date(input.birthdate) : undefined;
+        if (input.birthdate && Number.isNaN(birthdateValue?.getTime() ?? NaN)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The birthdate is not a valid date." });
+        }
+        await db.update(users)
+          .set({
+            birthdate: birthdateValue ?? null,
+            phone: input.phone?.trim() || null,
+            address: input.address?.trim() || null,
+            profileImageUrl: input.selfieUrl?.trim() || null,
+            verificationStatus: "pending",
+            verificationNote: input.note?.trim() || null,
+            verifiedAt: null,
+          })
+          .where(eq(users.id, ctx.user.id));
+        return { success: true, verificationStatus: "pending" };
+      }),
+    reviewVerification: protectedProcedure
+      .input(z.object({ userId: z.number().int().positive(), decision: z.enum(["approved", "rejected"]), note: z.string().trim().max(600).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const target = (await db.select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
+        if (!target) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "The requested user record was not found." });
+        }
+        if (ctx.user.role === "admin" && target.cooperativeId !== ctx.user.cooperativeId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You can only review members from your own cooperative." });
+        }
+        await db.update(users).set({
+          verificationStatus: input.decision,
+          verificationNote: input.note?.trim() || null,
+          verifiedBy: ctx.user.id,
+          verifiedAt: new Date(),
+        }).where(eq(users.id, input.userId));
+        return { success: true, verificationStatus: input.decision };
       }),
   }),
 
@@ -264,7 +339,7 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().min(1).max(255),
         contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-        base64: z.string().min(1).max(12_000_000),
+        base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
       }))
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
@@ -272,8 +347,8 @@ export const appRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "The selected image file is invalid." });
         }
         const bytes = Buffer.from(input.base64, "base64");
-        if (bytes.length === 0 || bytes.length > 8 * 1024 * 1024) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be smaller than 8 MB." });
+        if (!isProductImageSizeAllowed(bytes.length)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be 5 MB or less." });
         }
         const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "product-image";
         const uploaded = await storagePut(`products/${seller.id}/${Date.now()}-${safeName}`, bytes, input.contentType);
@@ -333,13 +408,17 @@ export const appRouter = router({
         const product = await getProductById(input.productId);
         if (!product || product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible") throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
         try { assertNotSelfTransaction(buyer.id, product.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." }); }
+        const db = await dbOrThrow();
+        const seller = (await db.select({ approvalStatus: users.approvalStatus }).from(users).where(eq(users.id, product.sellerId)).limit(1))[0];
+        if (!isSellerApproved(seller?.approvalStatus)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive quotation requests." });
+        }
         if (input.requestedQty < product.minOrderQty) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum order is ${product.minOrderQty} ${product.unit}.` });
         }
         if (input.requestedQty > product.stockQty) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${product.stockQty} ${product.unit} are currently available.` });
         }
-        const db = await dbOrThrow();
         const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).$returningId();
         const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
         return { success: true, conversationId };
@@ -356,6 +435,27 @@ export const appRouter = router({
         if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
         return { success: true };
       }),
+    decide: protectedProcedure
+      .input(z.object({ quotationId: z.number().int().positive(), status: z.enum(["accepted", "declined"]) }))
+      .mutation(async ({ ctx, input }) => {
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const db = await dbOrThrow();
+        const quotation = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
+        if (!quotation || !canDecideBuyerQuotation(buyer.id, quotation)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
+        }
+        const result = await db.update(quotations)
+          .set({ status: input.status })
+          .where(and(
+            eq(quotations.id, input.quotationId),
+            eq(quotations.buyerId, buyer.id),
+            eq(quotations.status, "responded"),
+          ));
+        if (!result[0].affectedRows) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
+        }
+        return { success: true };
+      }),
   }),
 
   orders: router({
@@ -368,7 +468,7 @@ export const appRouter = router({
       return getSellerOrders(ctx.user.id);
     }),
     create: protectedProcedure
-      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional() }))
+      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional(), quotationId: z.number().int().positive().optional() }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
@@ -378,29 +478,157 @@ export const appRouter = router({
         let prepared;
         try { prepared = prepareOrder(listedProducts, input.items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
         try { assertNotSelfTransaction(buyer.id, prepared.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
-        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: prepared.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).$returningId();
-        await db.insert(orderItems).values(input.items.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: prepared.productMap.get(item.productId)!.priceCents })));
-        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: prepared.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
-        const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: prepared.sellerId, orderId: newOrder.id, subject: `Order #${newOrder.id} support`, body: "Please confirm availability, F2F payment coordination, and handover details." });
+        const seller = (await db.select({ approvalStatus: users.approvalStatus }).from(users).where(eq(users.id, prepared.sellerId)).limit(1))[0];
+        if (!isSellerApproved(seller?.approvalStatus)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive orders." });
+        }
+        let quotedPriceCents: number | undefined;
+        if (input.quotationId !== undefined) {
+          const quotation = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
+          if (!quotation || !canPlaceAcceptedQuotationOrder(buyer.id, quotation, prepared.items)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Only your accepted quotation and its quoted quantity can be used for this order." });
+          }
+          if (quotation.quotedPriceCents === null) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "An accepted quotation can only be ordered for its product and quoted quantity." });
+          }
+          quotedPriceCents = quotation.quotedPriceCents;
+        }
+        const pricing = priceOrderItems(prepared.items, prepared.productMap, quotedPriceCents);
+        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).$returningId();
+        await db.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
+        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: pricing.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
+        const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: prepared.sellerId, orderId: newOrder.id, quotationId: input.quotationId, subject: `Order #${newOrder.id} support`, body: "Please confirm availability, F2F payment coordination, and handover details." });
         return { success: true, orderId: newOrder.id, conversationId };
       }),
     updateStatus: protectedProcedure
-      .input(z.object({ orderId: z.number().int().positive(), status: orderStatusSchema, paymentReferenceNote: z.string().max(600).optional() }))
+      .input(z.object({
+        orderId: z.number().int().positive(),
+        status: orderStatusSchema,
+        paymentReferenceNote: z.string().max(600).optional(),
+        finalItems: z.array(z.object({
+          orderItemId: z.number().int().positive(),
+          quantity: z.number().int().min(0, "Final delivered quantity cannot be negative."),
+        })).optional(),
+      }).superRefine((input, context) => {
+        if (input.status === "completed" && !input.finalItems) {
+          context.addIssue({ code: "custom", path: ["finalItems"], message: "Final delivered quantities are required to complete this order." });
+        }
+        if (input.status === "completed" && input.finalItems && !input.finalItems.some(item => item.quantity > 0)) {
+          context.addIssue({ code: "custom", path: ["finalItems"], message: "At least one final delivered quantity must be greater than zero." });
+        }
+      }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["seller", "admin"]);
+        const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        const orderRow = (await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1))[0];
-        if (!orderRow || !canManageSellerOrder(actor, orderRow.sellerId)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot update this order." });
-        if (!canTransitionOrder(orderRow.status, input.status)) throw new TRPCError({ code: "BAD_REQUEST", message: "This fulfillment update is not valid for the order's current status." });
-        if (input.status === "completed") {
-          const items = await db.select().from(orderItems).where(eq(orderItems.orderId, input.orderId));
-          const currentProducts = await db.select().from(products).where(inArray(products.id, items.map(item => item.productId)));
-          try { assertInventorySufficient(currentProducts, items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Insufficient current inventory to complete this order." }); }
-          for (const item of items) await decrementProductStock(item.productId, item.quantity);
-          await db.update(orders).set({ status: "completed", completedAt: new Date() }).where(eq(orders.id, input.orderId));
-          await db.update(transactions).set({ paymentReferenceNote: input.paymentReferenceNote, status: transactionStatusFor(input.paymentReferenceNote) }).where(eq(transactions.orderId, orderRow.id));
-        } else {
-          await db.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
+        try {
+          await db.transaction(async tx => {
+            const [orderRow] = await tx.select().from(orders)
+              .where(eq(orders.id, input.orderId))
+              .for("update");
+            if (!orderRow) throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
+            if (!canUpdateOrderStatus(actor, orderRow, input.status)) {
+              throw new TRPCError({ code: "FORBIDDEN", message: "Only the seller's cooperative Admin Officer or a SuperAdmin can complete or cancel this order. Sellers may only confirm orders or mark them ready." });
+            }
+            if (!canTransitionOrder(orderRow.status, input.status)) {
+              const message = orderRow.status === "completed" || orderRow.status === "cancelled"
+                ? "This order is already completed or cancelled and cannot be changed."
+                : "This fulfillment update is not valid for the order's current status.";
+              throw new TRPCError({ code: "BAD_REQUEST", message });
+            }
+
+            const previousStatus = orderRow.status;
+            if (input.status === "completed") {
+              const orderedItems = await tx.select().from(orderItems)
+                .where(eq(orderItems.orderId, input.orderId))
+                .for("update");
+              let completion: ReturnType<typeof prepareOrderCompletion>;
+              try {
+                completion = prepareOrderCompletion(orderedItems, input.finalItems ?? []);
+              } catch (error) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Final delivered quantities are invalid." });
+              }
+
+              const productIds = Array.from(new Set(orderedItems.map(item => item.productId)));
+              const lockedProducts = productIds.length
+                ? await tx.select().from(products).where(inArray(products.id, productIds)).orderBy(asc(products.id)).for("update")
+                : [];
+              if (lockedProducts.length !== productIds.length) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: "A product in this order could not be found." });
+              }
+              try {
+                assertInventorySufficient(
+                  lockedProducts,
+                  completion.items.map(item => ({ productId: item.productId, quantity: item.quantity })),
+                );
+              } catch (error) {
+                throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Insufficient current inventory to complete this order." });
+              }
+
+              await applyInventoryDeductions(completion.items, async applyDeduction => {
+                await applyDeduction(async item => {
+                  const result = await tx.update(products)
+                    .set({ stockQty: sql`${products.stockQty} - ${item.quantity}` })
+                    .where(and(eq(products.id, item.productId), gte(products.stockQty, item.quantity)));
+                  return result[0].affectedRows > 0;
+                });
+              });
+              const completedAt = new Date();
+              for (const item of completion.items) {
+                await tx.update(orderItems)
+                  .set({ quantity: item.quantity })
+                  .where(and(eq(orderItems.id, item.id), eq(orderItems.orderId, input.orderId)));
+              }
+              await tx.update(orders)
+                .set({ status: "completed", totalCents: completion.totalCents, completedAt })
+                .where(eq(orders.id, input.orderId));
+              await tx.insert(transactions).values({
+                orderId: orderRow.id,
+                buyerId: orderRow.buyerId,
+                sellerId: orderRow.sellerId,
+                amountCents: completion.totalCents,
+                paymentReferenceNote: input.paymentReferenceNote,
+                status: transactionStatusFor(input.paymentReferenceNote),
+                paymentMethod: "f2f",
+                completedAt,
+              }).onDuplicateKeyUpdate({
+                set: {
+                  amountCents: completion.totalCents,
+                  paymentReferenceNote: input.paymentReferenceNote,
+                  status: transactionStatusFor(input.paymentReferenceNote),
+                  paymentMethod: "f2f",
+                  completedAt,
+                },
+              });
+              await tx.insert(orderEvents).values({
+                orderId: input.orderId,
+                actorUserId: actor.id,
+                action: "status_change",
+                fromStatus: previousStatus,
+                toStatus: input.status,
+                note: input.paymentReferenceNote ?? null,
+              });
+            } else {
+              await tx.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
+              await tx.update(transactions).set({
+                paymentReferenceNote: input.paymentReferenceNote,
+                status: transactionStatusFor(input.paymentReferenceNote),
+              }).where(eq(transactions.orderId, orderRow.id));
+              await tx.insert(orderEvents).values({
+                orderId: input.orderId,
+                actorUserId: actor.id,
+                action: "status_change",
+                fromStatus: previousStatus,
+                toStatus: input.status,
+                note: input.paymentReferenceNote ?? null,
+              });
+            }
+          });
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          if (error instanceof Error && error.message === "Insufficient current inventory to complete this order.") {
+            throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+          }
+          throw error;
         }
         return { success: true };
       }),
@@ -411,6 +639,26 @@ export const appRouter = router({
       const cooperativeAdmin = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       return getOfficerOverview(cooperativeAdmin.cooperativeId);
     }),
+    orderDetails: protectedProcedure
+      .input(z.object({ orderId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const orderDetail = await getOrderDetail(input.orderId);
+        if (!orderDetail) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+        if (!canAccessOrderForCooperative(actor, orderDetail.order.cooperativeId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only view orders in their cooperative." });
+        }
+        const seller = await db.select().from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);
+        const buyer = await db.select().from(users).where(eq(users.id, orderDetail.order.buyerId)).limit(1);
+        return {
+          order: orderDetail.order,
+          buyer: buyer[0],
+          seller: seller[0],
+          items: orderDetail.items,
+          events: orderDetail.events,
+        };
+      }),
     updateMemberStatus: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), approvalStatus: z.enum(["approved", "suspended"]) }))
       .mutation(async ({ ctx, input }) => {
@@ -424,17 +672,35 @@ export const appRouter = router({
 
   admin: router({
     overview: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
-      return getAdminOverview();
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      return getAdminOverview(adminOverviewCooperativeScope(actor));
     }),
-    reviewProduct: protectedProcedure.input(z.object({ productId: z.number().int().positive(), decision: z.enum(["approved", "rejected"]), rejectionReason: z.string().max(600).optional() })).mutation(async ({ ctx, input }) => { requireOperationalRole(ctx.user, ["admin", "superadmin"]); const db = await dbOrThrow(); await db.update(products).set({ verificationStatus: input.decision, visibility: input.decision === "approved" ? "visible" : "hidden", rejectionReason: input.rejectionReason ?? null, status: input.decision === "approved" ? "published" : "archived" }).where(eq(products.id, input.productId)); return { success: true }; }),
+    reviewProduct: protectedProcedure.input(z.object({ productId: z.number().int().positive(), decision: z.enum(["approved", "rejected"]), rejectionReason: z.string().max(600).optional() })).mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const target = (await db.select({ cooperativeId: products.cooperativeId }).from(products).where(eq(products.id, input.productId)).limit(1))[0];
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+      if (!canManageCooperativeResource(actor, target.cooperativeId)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
+      const scope = actor.role === "superadmin" ? eq(products.id, input.productId) : and(eq(products.id, input.productId), eq(products.cooperativeId, actor.cooperativeId!));
+      const result = await db.update(products).set({ verificationStatus: input.decision, visibility: input.decision === "approved" ? "visible" : "hidden", rejectionReason: input.rejectionReason ?? null, status: input.decision === "approved" ? "published" : "archived" }).where(scope);
+      if (!result[0].affectedRows) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
+      return { success: true };
+    }),
     updateUser: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), role: z.enum(APP_ROLES), approvalStatus: z.enum(["approved", "pending", "suspended"]), cooperativeId: z.number().int().positive().nullable() }))
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
-        if (actor.role === "admin" && input.role === "superadmin") throw new TRPCError({ code: "FORBIDDEN", message: "Only a SuperAdmin can assign the SuperAdmin role." });
         const db = await dbOrThrow();
-        await db.update(users).set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId }).where(eq(users.id, input.userId));
+        if (actor.role === "admin" && !actor.cooperativeId) throw new TRPCError({ code: "FORBIDDEN", message: "Assign this officer to a cooperative before managing users." });
+        const target = (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, input.userId)).limit(1))[0];
+        if (!target || !canUpdateCooperativeUser(actor, target.cooperativeId, input.cooperativeId, input.role)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
+        }
+        const scope = actor.role === "superadmin"
+          ? eq(users.id, input.userId)
+          : and(eq(users.id, input.userId), eq(users.cooperativeId, actor.cooperativeId!));
+        const result = await db.update(users).set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId }).where(scope);
+        if (!result[0].affectedRows) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
         return { success: true };
       }),
   }),

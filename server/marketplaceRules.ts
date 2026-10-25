@@ -1,4 +1,18 @@
 export type OrderItemRequest = { productId: number; quantity: number };
+export type OrderItemCompletion = {
+  id: number;
+  productId: number;
+  quantity: number;
+  unitPriceCents: number;
+};
+export type FinalOrderItemQuantity = { orderItemId: number; quantity: number };
+export type BuyerQuotation = {
+  buyerId: number;
+  productId: number;
+  requestedQty: number;
+  quotedPriceCents: number | null;
+  status: string;
+};
 export type AvailableProduct = {
   id: number;
   sellerId: number;
@@ -11,8 +25,59 @@ export type AvailableProduct = {
   name: string;
 };
 
+export function aggregateOrderItems(items: OrderItemRequest[]) {
+  const quantities = new Map<number, number>();
+  for (const item of items) {
+    quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
+  }
+  return Array.from(quantities, ([productId, quantity]) => ({ productId, quantity }));
+}
+
+export async function applyInventoryDeductions(
+  items: OrderItemRequest[],
+  runInTransaction: (work: (applyDeduction: (item: OrderItemRequest) => Promise<boolean>) => Promise<void>) => Promise<void>,
+) {
+  await runInTransaction(async deduct => {
+    for (const item of aggregateOrderItems(items)) {
+      if (item.quantity === 0) continue;
+      if (!(await deduct(item))) {
+        throw new Error("Insufficient current inventory to complete this order.");
+      }
+    }
+  });
+}
+
+export function priceOrderItems(
+  items: OrderItemRequest[],
+  products: Map<number, AvailableProduct>,
+  quotedUnitPriceCents?: number,
+) {
+  const lines = items.map(item => ({
+    ...item,
+    unitPriceCents: quotedUnitPriceCents ?? products.get(item.productId)!.priceCents,
+  }));
+  return {
+    lines,
+    totalCents: lines.reduce((total, item) => total + item.unitPriceCents * item.quantity, 0),
+  };
+}
+
+export function canDecideBuyerQuotation(actorId: number, quotation: Pick<BuyerQuotation, "buyerId" | "status">) {
+  return quotation.buyerId === actorId && quotation.status === "responded";
+}
+
+export function canPlaceAcceptedQuotationOrder(actorId: number, quotation: BuyerQuotation, items: OrderItemRequest[]) {
+  return quotation.buyerId === actorId
+    && quotation.status === "accepted"
+    && quotation.quotedPriceCents !== null
+    && items.length === 1
+    && items[0].productId === quotation.productId
+    && items[0].quantity === quotation.requestedQty;
+}
+
 export function prepareOrder(products: AvailableProduct[], items: OrderItemRequest[]) {
-  const productIds = new Set(items.map(item => item.productId));
+  const aggregatedItems = aggregateOrderItems(items);
+  const productIds = new Set(aggregatedItems.map(item => item.productId));
   if (products.length !== productIds.size || products.some(product => product.status !== "published")) {
     throw new Error("One or more selected items are no longer available.");
   }
@@ -21,7 +86,7 @@ export function prepareOrder(products: AvailableProduct[], items: OrderItemReque
     throw new Error("A bulk order must contain products from one seller. Please submit separate orders for other farms.");
   }
   const productMap = new Map(products.map(product => [product.id, product]));
-  for (const item of items) {
+  for (const item of aggregatedItems) {
     const product = productMap.get(item.productId);
     if (!product) throw new Error("One or more selected items are no longer available.");
     if (item.quantity < product.minOrderQty) {
@@ -34,9 +99,9 @@ export function prepareOrder(products: AvailableProduct[], items: OrderItemReque
   return {
     sellerId: products[0].sellerId,
     cooperativeId: products[0].cooperativeId,
-    orderType: items.length === 1 ? "regular" as const : "bulk" as const,
-    totalCents: items.reduce((total, item) => total + productMap.get(item.productId)!.priceCents * item.quantity, 0),
+    orderType: aggregatedItems.length === 1 ? "regular" as const : "bulk" as const,
     productMap,
+    items: aggregatedItems,
   };
 }
 
@@ -54,10 +119,48 @@ export function canTransitionOrder(current: string, next: string) {
 
 export function assertInventorySufficient(products: AvailableProduct[], items: OrderItemRequest[]) {
   const productMap = new Map(products.map(product => [product.id, product]));
-  for (const item of items) {
+  for (const item of aggregateOrderItems(items)) {
     const product = productMap.get(item.productId);
-    if (!product || product.stockQty < item.quantity) throw new Error("Insufficient current inventory to complete this order.");
+    if (!product) throw new Error("A product in this order could not be found.");
+    if (product.stockQty < item.quantity) {
+      throw new Error(`Insufficient current inventory: ${product.name} has ${product.stockQty} ${product.unit}, but ${item.quantity} ${product.unit} are required.`);
+    }
   }
+}
+
+export function prepareOrderCompletion(
+  items: OrderItemCompletion[],
+  finalQuantities: FinalOrderItemQuantity[],
+) {
+  if (items.length !== finalQuantities.length) {
+    throw new Error("Enter a final delivered quantity for every order item.");
+  }
+
+  const quantitiesByItemId = new Map<number, number>();
+  for (const finalItem of finalQuantities) {
+    if (quantitiesByItemId.has(finalItem.orderItemId)) {
+      throw new Error("Each order item must have exactly one final delivered quantity.");
+    }
+    if (!Number.isSafeInteger(finalItem.quantity) || finalItem.quantity < 0) {
+      throw new Error("Final delivered quantities must be non-negative whole numbers.");
+    }
+    quantitiesByItemId.set(finalItem.orderItemId, finalItem.quantity);
+  }
+
+  const completedItems = items.map(item => {
+    if (!quantitiesByItemId.has(item.id)) {
+      throw new Error("Enter a final delivered quantity for every order item.");
+    }
+    return { ...item, quantity: quantitiesByItemId.get(item.id)! };
+  });
+  if (!completedItems.some(item => item.quantity > 0)) {
+    throw new Error("At least one final delivered quantity must be greater than zero.");
+  }
+
+  return {
+    items: completedItems,
+    totalCents: completedItems.reduce((total, item) => total + item.quantity * item.unitPriceCents, 0),
+  };
 }
 
 export function isQuotationOpen(status: string) {

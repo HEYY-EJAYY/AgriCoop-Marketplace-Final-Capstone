@@ -5,6 +5,7 @@ import {
   conversationMessages,
   conversations,
   InsertUser,
+  orderEvents,
   orderItems,
   orders,
   products,
@@ -35,7 +36,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 
   const values: any = { openId: user.openId, lastSignedIn: new Date() };
   const updateSet: Record<string, unknown> = { lastSignedIn: new Date() };
-  (["name", "email", "loginMethod", "role", "approvalStatus", "cooperativeId"] as const).forEach(field => {
+  (["name", "email", "loginMethod", "role", "approvalStatus", "cooperativeId", "verificationStatus", "profileImageUrl", "birthdate", "phone", "address"] as const).forEach(field => {
     if (user[field] !== undefined) {
       values[field] = user[field] ?? null;
       updateSet[field] = user[field] ?? null;
@@ -151,6 +152,39 @@ export async function getSellerOrders(sellerId: number) {
     .orderBy(desc(orders.createdAt));
 }
 
+export async function getOrderDetail(orderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [orderRow] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!orderRow) return undefined;
+
+  const [buyer, seller] = await Promise.all([
+    db.select().from(users).where(eq(users.id, orderRow.buyerId)).limit(1),
+    db.select().from(users).where(eq(users.id, orderRow.sellerId)).limit(1),
+  ]);
+
+  const items = await db
+    .select({ item: orderItems, productName: products.name, unit: products.unit, priceCents: products.priceCents, stockQty: products.stockQty })
+    .from(orderItems)
+    .innerJoin(products, eq(orderItems.productId, products.id))
+    .where(eq(orderItems.orderId, orderId));
+
+  const events = await db
+    .select({ event: orderEvents, actorName: users.name })
+    .from(orderEvents)
+    .leftJoin(users, eq(orderEvents.actorUserId, users.id))
+    .where(eq(orderEvents.orderId, orderId))
+    .orderBy(desc(orderEvents.createdAt));
+
+  return {
+    order: orderRow,
+    buyer: buyer[0],
+    seller: seller[0],
+    items,
+    events,
+  };
+}
+
 export async function getBuyerQuotations(buyerId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -196,20 +230,25 @@ export async function getOfficerOverview(cooperativeId: number | null) {
   return { members, products: listings, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
 }
 
-export async function getAdminOverview() {
+export async function getAdminOverview(cooperativeId?: number | null) {
   const db = await getDb();
   if (!db) return { users: [], cooperatives: [], products: [], orders: [], quotations: [], transactions: [] };
+  const scoped = cooperativeId !== undefined;
+  const userScope = !scoped ? undefined : cooperativeId === null ? eq(users.id, -1) : eq(users.cooperativeId, cooperativeId);
+  const productScope = !scoped ? undefined : cooperativeId === null ? eq(products.id, -1) : eq(products.cooperativeId, cooperativeId);
+  const orderScope = !scoped ? undefined : cooperativeId === null ? eq(orders.id, -1) : eq(orders.cooperativeId, cooperativeId);
   const memberRows = await db
     .select({ user: users, cooperativeName: cooperatives.name })
     .from(users)
     .leftJoin(cooperatives, eq(users.cooperativeId, cooperatives.id))
+    .where(userScope)
     .orderBy(desc(users.createdAt));
   const [cooperativeRows, listingRows, orderRows, quotationRows, transactionRows] = await Promise.all([
-    db.select().from(cooperatives).orderBy(asc(cooperatives.name)),
-    db.select().from(products).orderBy(desc(products.createdAt)),
-    db.select().from(orders).orderBy(desc(orders.createdAt)),
-    db.select({ quotation: quotations, unit: products.unit }).from(quotations).innerJoin(products, eq(quotations.productId, products.id)).orderBy(desc(quotations.createdAt)),
-    db.select().from(transactions).orderBy(desc(transactions.completedAt)),
+    db.select().from(cooperatives).where(!scoped ? undefined : cooperativeId === null ? eq(cooperatives.id, -1) : eq(cooperatives.id, cooperativeId)).orderBy(asc(cooperatives.name)),
+    db.select().from(products).where(productScope).orderBy(desc(products.createdAt)),
+    db.select().from(orders).where(orderScope).orderBy(desc(orders.createdAt)),
+    db.select({ quotation: quotations, unit: products.unit }).from(quotations).innerJoin(products, eq(quotations.productId, products.id)).where(productScope).orderBy(desc(quotations.createdAt)),
+    db.select().from(transactions).where(!scoped ? undefined : cooperativeId === null ? eq(transactions.orderId, -1) : inArray(transactions.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.cooperativeId, cooperativeId)))).orderBy(desc(transactions.completedAt)),
   ]);
   return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
 }
@@ -221,24 +260,19 @@ export async function getProductById(productId: number) {
   return rows[0];
 }
 
-export async function decrementProductStock(productId: number, quantity: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
-  await db
-    .update(products)
-    .set({ stockQty: sql`${products.stockQty} - ${quantity}` })
-    .where(eq(products.id, productId));
-}
-
-export async function getConversationsForUser(userId: number, canSeeAll = false) {
+export async function getConversationsForUser(userId: number, canSeeAll = false, cooperativeId: number | null = null) {
   const db = await getDb();
   if (!db) return [];
+  const visibleConversations = [eq(conversations.buyerId, userId), eq(conversations.sellerId, userId)];
+  if (cooperativeId !== null) {
+    visibleConversations.push(inArray(conversations.sellerId, db.select({ id: users.id }).from(users).where(eq(users.cooperativeId, cooperativeId))));
+  }
   return db.select({ conversation: conversations, ownerName: users.name, productName: products.name, productUnit: products.unit, requestedQty: quotations.requestedQty })
     .from(conversations)
     .innerJoin(users, eq(conversations.buyerId, users.id))
     .leftJoin(products, eq(conversations.productId, products.id))
     .leftJoin(quotations, eq(conversations.quotationId, quotations.id))
-    .where(canSeeAll ? undefined : or(eq(conversations.buyerId, userId), eq(conversations.sellerId, userId)))
+    .where(canSeeAll ? undefined : or(...visibleConversations))
     .orderBy(desc(conversations.updatedAt));
 }
 
