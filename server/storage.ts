@@ -1,11 +1,12 @@
-// Supabase Storage helpers (replaces the Manus Forge/S3 storage layer).
-// Uploads go through the server using the service-role key, so that key
-// never reaches the browser. Files may be stored in either public or private buckets.
+// Supabase Storage helpers. Signed upload tokens let the browser upload bytes
+// directly without exposing the service-role key.
 
 import { supabaseAdmin } from "./clients";
+import { MAX_PRODUCT_IMAGE_SIZE_BYTES } from "../shared/productOptions";
 
 const DEFAULT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
 const DEFAULT_SIGNED_URL_SECONDS = 300;
+const PRODUCT_IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 type StorageBucketOptions = {
   bucket?: string;
@@ -41,21 +42,32 @@ function normalizeBucketOptions(
 }
 
 async function ensureBucket(bucketName: string, isPublic: boolean) {
+  const bucketSettings = {
+    public: isPublic,
+    fileSizeLimit: MAX_PRODUCT_IMAGE_SIZE_BYTES,
+    allowedMimeTypes: PRODUCT_IMAGE_CONTENT_TYPES,
+  };
   const { data: existing, error: readError } = await supabaseAdmin.storage.getBucket(bucketName);
   if (readError && !/not found|does not exist/i.test(readError.message)) {
     throw new Error(`Storage bucket check failed: ${readError.message}`);
   }
 
   if (!existing) {
-    const { error } = await supabaseAdmin.storage.createBucket(bucketName, { public: isPublic });
+    const { error } = await supabaseAdmin.storage.createBucket(bucketName, bucketSettings);
     if (error && !/already exists|duplicate/i.test(error.message)) {
       throw new Error(`Storage bucket check failed: ${error.message}`);
     }
     return;
   }
 
-  if (existing.public !== isPublic) {
-    const { error } = await supabaseAdmin.storage.updateBucket(bucketName, { public: isPublic });
+  const allowedMimeTypes = [...(existing.allowed_mime_types ?? [])].sort();
+  const expectedMimeTypes = [...PRODUCT_IMAGE_CONTENT_TYPES].sort();
+  if (
+    existing.public !== isPublic
+    || existing.file_size_limit !== MAX_PRODUCT_IMAGE_SIZE_BYTES
+    || allowedMimeTypes.join(",") !== expectedMimeTypes.join(",")
+  ) {
+    const { error } = await supabaseAdmin.storage.updateBucket(bucketName, bucketSettings);
     if (error) {
       throw new Error(`Storage bucket update failed: ${error.message}`);
     }
@@ -118,6 +130,30 @@ export async function storagePut(
   }
 
   return { key, url: await resolveUrl(options.bucket, key, options.public, options.expiresIn) };
+}
+
+export async function storageCreateSignedUpload(
+  relKey: string,
+): Promise<{ bucket: string; key: string; token: string; url: string }> {
+  assertConfigured();
+
+  const options = normalizeBucketOptions(undefined, true);
+  await ensureBucket(options.bucket, options.public);
+  const key = appendHashSuffix(normalizeKey(relKey));
+  const { data, error } = await supabaseAdmin.storage
+    .from(options.bucket)
+    .createSignedUploadUrl(key, { upsert: false });
+
+  if (error || !data?.token) {
+    throw new Error(`Storage upload authorization failed: ${error?.message ?? "no upload token returned"}`);
+  }
+
+  return {
+    bucket: options.bucket,
+    key,
+    token: data.token,
+    url: await publicUrl(options.bucket, key),
+  };
 }
 
 export async function storageGet(

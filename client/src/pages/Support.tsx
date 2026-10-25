@@ -2,8 +2,7 @@ import { WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
-import { supabase } from "@/lib/supabase";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, MessageCircle, Send } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,24 +12,12 @@ export default function Support() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [reply, setReply] = useState("");
-  const { data: threads = [], isLoading: threadsLoading } = trpc.conversations.mine.useQuery(undefined, { enabled: !!user });
+  const { data: threads = [], isLoading: threadsLoading } = trpc.conversations.mine.useQuery(undefined, { enabled: !!user, refetchInterval: user ? 10_000 : false });
   const activeId = selectedId ?? threads[0]?.conversation.id ?? null;
-  const { data: messages = [], isLoading: messagesLoading } = trpc.conversations.messages.useQuery({ conversationId: activeId! }, { enabled: !!activeId });
+  const { data: messages = [], isLoading: messagesLoading } = trpc.conversations.messages.useQuery({ conversationId: activeId! }, { enabled: !!activeId, refetchInterval: activeId ? 5_000 : false });
   const utils = trpc.useUtils();
   const create = trpc.conversations.create.useMutation({ onSuccess: data => { setSubject(""); setBody(""); setSelectedId(data.conversationId); utils.conversations.mine.invalidate(); toast.success("Inquiry sent to AgriCoop support."); }, onError: error => toast.error(error.message) });
   const send = trpc.conversations.send.useMutation({ onSuccess: () => { setReply(""); utils.conversations.messages.invalidate({ conversationId: activeId! }); utils.conversations.mine.invalidate(); }, onError: error => toast.error(error.message) });
-  useEffect(() => {
-    if (!activeId) return;
-    let source: EventSource | null = null;
-    let cancelled = false;
-    void supabase.auth.getSession().then(({ data }) => {
-      if (cancelled || !data.session?.access_token) return;
-      source = new EventSource(`/api/conversations/${activeId}/stream?access_token=${encodeURIComponent(data.session.access_token)}`);
-      source.addEventListener("message", () => { utils.conversations.messages.invalidate({ conversationId: activeId }); utils.conversations.mine.invalidate(); });
-    });
-    return () => { cancelled = true; source?.close(); };
-  }, [activeId, utils]);
-
   if (loading) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]" /></div>;
   if (!user) return <><WorkspaceHeader title="Support and inquiries" description="Sign in to contact AgriCoop support." /><main className="mx-auto max-w-3xl px-4 py-10"><div className="agri-card p-8 text-center"><MessageCircle className="mx-auto text-[#6d9852]" /><h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to open an inquiry</h1></div></main></>;
 

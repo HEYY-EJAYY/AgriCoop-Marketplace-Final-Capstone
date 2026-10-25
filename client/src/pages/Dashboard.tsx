@@ -5,23 +5,37 @@ import { goToAuth } from "@/const";
 import { formatDateManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
 import { getProductImageUrl } from "@/lib/productImages";
-import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../../../shared/productOptions";
+import { getProductVarieties, isProductImageSizeAllowed, PRODUCT_UNITS } from "../../../shared/productOptions";
 import { AlertCircle, BarChart3, Check, ClipboardList, Download, FileText, Leaf, Loader2, LucideIcon, Package, Plus, Store, Users } from "lucide-react";
 import { FormEvent, ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import { supabase } from "@/lib/supabase";
 
 const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
 const when = (value: Date | string | null) => formatDateManila(value);
 const Status = ({ value }: { value: string }) => <span className={`status-pill status-${value}`}>{value.replaceAll("_", " ")}</span>;
 
-function readImageAsBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("Could not read the selected image."));
-    reader.readAsDataURL(file);
-  });
+const PRODUCT_IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+type ProductImageContentType = (typeof PRODUCT_IMAGE_CONTENT_TYPES)[number];
+type ProductImageUploadInput = { fileName: string; contentType: ProductImageContentType; size: number };
+type ProductImageUploadTicket = { bucket: string; key: string; token: string; url: string };
+
+async function uploadProductImage(
+  file: File,
+  createTicket: (input: ProductImageUploadInput) => Promise<ProductImageUploadTicket>,
+) {
+  const contentType = PRODUCT_IMAGE_CONTENT_TYPES.find(type => type === file.type);
+  if (!contentType || !isProductImageSizeAllowed(file.size)) {
+    throw new Error("Choose a JPEG, PNG, or WebP image that is 5 MB or less.");
+  }
+
+  const ticket = await createTicket({ fileName: file.name, contentType, size: file.size });
+  const { error } = await supabase.storage
+    .from(ticket.bucket)
+    .uploadToSignedUrl(ticket.key, ticket.token, file, { contentType });
+  if (error) throw new Error(`Image upload failed: ${error.message}`);
+  return ticket.url;
 }
 
 function Metric({ label, value, icon: Icon }: { label: string; value: string; icon: LucideIcon }) {
@@ -92,14 +106,10 @@ function SellerProductCard({ product }: { product: any }) {
     if (Number(values.minOrderQty) > Number(values.stock)) return;
     let primaryImageUrl = values.imageUrl || null;
     if (imageFile) {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(imageFile.type) || imageFile.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
-        setImageError("Choose a JPEG, PNG, or WebP image that is 5 MB or less.");
-        return;
-      }
       try {
-        const uploaded = await uploadImage.mutateAsync({ fileName: imageFile.name, contentType: imageFile.type as "image/jpeg" | "image/png" | "image/webp", base64: await readImageAsBase64(imageFile) });
-        primaryImageUrl = uploaded.url;
+        primaryImageUrl = await uploadProductImage(imageFile, input => uploadImage.mutateAsync(input));
       } catch (error) {
+        setImageError(error instanceof Error ? error.message : "Image upload failed.");
         toast.error(error instanceof Error ? error.message : "Image upload failed.");
         return;
       }
@@ -127,13 +137,10 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
     if (Number(form.minOrderQty) > Number(form.stock)) return;
     let imageUrl: string | undefined;
     if (imageFile) {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(imageFile.type) || imageFile.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
-        setImageError("Choose a JPEG, PNG, or WebP image that is 5 MB or less.");
-        return;
-      }
       try {
-        imageUrl = (await uploadImage.mutateAsync({ fileName: imageFile.name, contentType: imageFile.type as "image/jpeg" | "image/png" | "image/webp", base64: await readImageAsBase64(imageFile) })).url;
+        imageUrl = await uploadProductImage(imageFile, input => uploadImage.mutateAsync(input));
       } catch (error) {
+        setImageError(error instanceof Error ? error.message : "Image upload failed.");
         toast.error(error instanceof Error ? error.message : "Image upload failed.");
         return;
       }
