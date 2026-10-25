@@ -1,11 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz";
-import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
+import { COOKIE_NAME } from "../shared/const.js";
+import { getSessionCookieOptions } from "./_core/cookies.js";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc.js";
+import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz.js";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules.js";
 import {
   getAdminOverview,
   getBuyerOrders,
@@ -24,13 +24,13 @@ import {
   getConversationMessages,
   getConversationsForUser,
   upsertUser,
-} from "./db";
-import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
-import { supabaseAdmin } from "./clients";
-import { normalizeCooperativeName } from "./cooperativeNames";
-import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions";
-import { storageCreateSignedUpload } from "./storage";
-import { systemRouter } from "./_core/systemRouter";
+} from "./db.js";
+import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema.js";
+import { supabaseAdmin } from "./clients.js";
+import { normalizeCooperativeName } from "./cooperativeNames.js";
+import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions.js";
+import { storageCreateSignedUpload } from "./storage.js";
+import { systemRouter } from "./_core/systemRouter.js";
 
 const registrationRoleSchema = z.enum(["buyer", "seller", "admin"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);

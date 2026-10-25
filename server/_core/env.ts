@@ -1,5 +1,5 @@
-import { assertSupabaseEnvironment } from "../supabaseConfig";
-import { assertProductionEnvironment } from "../productionConfig";
+import { assertSupabaseEnvironment } from "../supabaseConfig.js";
+import { assertProductionEnvironment } from "../productionConfig.js";
 
 assertProductionEnvironment(process.env);
 assertSupabaseEnvironment(process.env);

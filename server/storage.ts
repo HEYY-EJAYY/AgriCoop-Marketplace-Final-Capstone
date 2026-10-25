@@ -1,8 +1,8 @@
 // Supabase Storage helpers. Signed upload tokens let the browser upload bytes
 // directly without exposing the service-role key.
 
-import { supabaseAdmin } from "./clients";
-import { MAX_PRODUCT_IMAGE_SIZE_BYTES } from "../shared/productOptions";
+import { supabaseAdmin } from "./clients.js";
+import { MAX_PRODUCT_IMAGE_SIZE_BYTES } from "../shared/productOptions.js";
 
 const DEFAULT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
 const DEFAULT_SIGNED_URL_SECONDS = 300;

@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { readSupabaseConfig } from "./supabaseConfig";
+import { readSupabaseConfig } from "./supabaseConfig.js";
 
 const { url: supabaseUrl, anonKey: supabaseKey, serviceRoleKey: supabaseServiceKey } = readSupabaseConfig(process.env);
 
