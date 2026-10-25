@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { createPool, type PoolOptions } from "mysql2";
 import {
   cooperatives,
   conversationMessages,
@@ -12,19 +13,27 @@ import {
   quotations,
   transactions,
   users,
-} from "../drizzle/schema";
-import { ENV } from "./_core/env";
+} from "../drizzle/schema.js";
+import { ENV } from "./_core/env.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+    const sslCa = process.env.DATABASE_SSL_CA?.replace(/\\n/g, "\n");
+    const poolOptions: PoolOptions = {
+      uri: process.env.DATABASE_URL,
+      connectionLimit: 3,
+      maxIdle: 1,
+      idleTimeout: 60_000,
+      waitForConnections: true,
+      queueLimit: 10,
+      connectTimeout: 10_000,
+      ...(process.env.DATABASE_SSL === "true"
+        ? { ssl: { rejectUnauthorized: true, ...(sslCa ? { ca: sslCa } : {}) } }
+        : {}),
+    };
+    _db = drizzle(createPool(poolOptions));
   }
   return _db;
 }

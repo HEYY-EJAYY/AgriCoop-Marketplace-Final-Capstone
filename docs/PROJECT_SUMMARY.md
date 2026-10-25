@@ -25,7 +25,7 @@ This is **not** a Next.js application and the active database is MySQL, not Supa
 | Folder | Contents and current purpose |
 |---|---|
 | [`client/`](../client/) | React/Vite application, pages, UI components, Supabase browser client, tRPC client, and static product images. |
-| [`server/`](../server/) | Express/tRPC API, authorization, MySQL queries, marketplace rules, SSE broker, Supabase clients/storage, and unit tests. |
+| [`server/`](../server/) | Express/tRPC API, authorization, MySQL queries, marketplace rules, Supabase clients/storage, and unit tests. |
 | [`shared/`](../shared/) | Shared product units/options, CSV serialization, constants, and shared error/type definitions. |
 | [`drizzle/`](../drizzle/) | MySQL Drizzle schema, seven numbered MySQL migrations, metadata snapshots, and relations. |
 | [`scripts/`](../scripts/) | Default/demo/SuperAdmin seeding scripts. |
@@ -35,7 +35,7 @@ This is **not** a Next.js application and the active database is MySQL, not Supa
 ### Request and authentication flow
 
 1. [`client/src/main.tsx`](../client/src/main.tsx) initializes React Query and the typed tRPC client, retrieves the Supabase access token, and sends it in the tRPC `Authorization` header to `/api/trpc`.
-2. [`server/_core/index.ts`](../server/_core/index.ts) runs Express, mounts the tRPC Express adapter, serves Vite in development or static files in production, and registers the SSE and legacy Manus storage-proxy routes.
+2. [`server/_core/index.ts`](../server/_core/index.ts) runs the local Express server and serves Vite in development or static files in local production. Vercel exports the same Express app from [`api/index.ts`](../api/index.ts); static assets are served by Vercel.
 3. [`server/_core/context.ts`](../server/_core/context.ts) validates a bearer token using Supabase Auth (`supabaseAdmin.auth.getUser`), looks up/creates a local MySQL `users` profile by `openId`, and places that local profile in tRPC context.
 4. [`server/_core/trpc.ts`](../server/_core/trpc.ts) provides public, protected, and `adminProcedure` middleware. Most application authorization is performed in the individual procedures using [`server/authz.ts`](../server/authz.ts) (`requireOperationalRole`).
 5. [`server/routers.ts`](../server/routers.ts) implements business procedures. They use helpers in [`server/db.ts`](../server/db.ts), which constructs Drizzle through `drizzle-orm/mysql2`, against the `DATABASE_URL` MySQL connection.
@@ -46,16 +46,16 @@ Supabase Auth is therefore an identity provider; application roles, approvals, c
 
 | Bucket/path | Visibility in code | Current use |
 |---|---|---|
-| `product-images` (or the `SUPABASE_STORAGE_BUCKET` override) | Public | The only Supabase bucket currently referenced by a live upload call. `server/storage.ts` defaults it to public, checks/creates/updates the bucket, uploads, and returns a public URL. `products.uploadImage` uses the default options. |
+| `product-images` (or the `SUPABASE_STORAGE_BUCKET` override) | Public | Product images use a short-lived Supabase signed upload token for direct browser uploads and public URLs. The bucket is constrained to 5 MiB and JPEG/PNG/WebP. |
 | `verification-docs` | NOT VERIFIED / not implemented | No such bucket name or upload/review procedure was found. |
 | `chat-images` | NOT VERIFIED / not implemented | No such bucket name or upload/message procedure was found. |
-| `/manus-storage/*` | Legacy external proxy; not a Supabase bucket | Express registers `registerStorageProxy` in `server/_core/index.ts`; `server/_core/storageProxy.ts` obtains a signed external URL from the Manus-compatible service. The route has no user/owner check. |
+| `/manus-storage/*` | Removed | Product and profile image URL counts in the configured database were zero before removing the legacy proxy. New uploads use Supabase Storage directly. |
 
 `storagePut` accepts an optional bucket and `{ bucket, public, expiresIn }` configuration. Private upload URLs are signed for a default of 300 seconds. This helper does not itself authorize the caller or establish ownership; a future private-file endpoint must do so. No current verification/chat workflow invokes it. Evidence: [`server/storage.ts`](../server/storage.ts) (`ensureBucket`, `storagePut`, `storageGet`, `storageGetSignedUrl`) and [`server/routers.ts`](../server/routers.ts) (`products.uploadImage`).
 
 ### Chat updates
 
-`server/realtime.ts` is a process-local Node `EventEmitter` keyed by conversation ID. The Express SSE endpoint authenticates the Supabase token, checks a thread participant/admin condition, and subscribes to the broker. `conversations.send` publishes an event; the Support page receives SSE and invalidates the tRPC message/list queries. There is no polling fallback and this broker does not share events across multiple server processes. Evidence: [`server/realtime.ts`](../server/realtime.ts), [`server/_core/index.ts`](../server/_core/index.ts) (`/api/conversations/:conversationId/stream`), [`server/routers.ts`](../server/routers.ts) (`conversations.send`), [`client/src/pages/Support.tsx`](../client/src/pages/Support.tsx).
+Conversation updates use tRPC polling: the Support page refreshes messages every five seconds and the thread list every ten seconds. This avoids process-local pub/sub and SSE connections that do not work reliably across serverless invocations. Evidence: [`server/routers.ts`](../server/routers.ts) (`conversations.send`) and [`client/src/pages/Support.tsx`](../client/src/pages/Support.tsx).
 
 ## 3. ROLES AND PERMISSIONS MATRIX
 
@@ -172,7 +172,7 @@ All routes below are tRPC procedures unless noted. Procedure definitions are in 
 | `conversations.mine` | none | Protected | Lists a user's threads; Admin/SuperAdmin request all threads. |
 | `conversations.messages` | positive `conversationId` | Protected, but code grants only buyer owner or admin/superadmin | Returns chronological text messages. |
 | `conversations.create` | subject (3–180 chars), body (1–2000 chars) | Any protected user | Creates buyer-owned generic support thread and initial message. |
-| `conversations.send` | positive `conversationId`, body (1–2000 chars) | Protected, but code grants only buyer owner or admin/superadmin | Inserts text, publishes SSE event, updates thread timestamp. |
+| `conversations.send` | positive `conversationId`, body (1–2000 chars) | Protected, but code grants only buyer owner or admin/superadmin | Inserts text and updates thread timestamp; clients receive changes through polling. |
 | `account.myProfile` | none | Protected | Returns current local user. |
 | `account.updateProfile` | role buyer/seller, nullable cooperative ID, optional contact number/address | Protected | Updates the current user's role/cooperative/contact/address; forces approval to approved for buyer or pending for seller. |
 | `cooperatives.list` | none | Public | Lists active cooperatives. |
@@ -233,15 +233,13 @@ Only product imagery uses Supabase Storage in the current app, via the public de
 | High | [`server/routers.ts`](../server/routers.ts#L214) | `account.updateProfile` accepts caller-supplied buyer/seller role and arbitrary cooperative ID for the current profile, and sets approval to `approved` whenever the caller selects buyer. A suspended account can therefore change itself to Buyer and clear its suspension; role assignment should be server-controlled. |
 | High | [`server/routers.ts`](../server/routers.ts#L191), [`server/routers.ts`](../server/routers.ts#L196) | `conversations.create` and `conversations.send` require authentication but do not call `requireOperationalRole`; a suspended Buyer can continue creating support threads and sending messages. Suspension is therefore not a global block. |
 | High | [`server/routers.ts`](../server/routers.ts#L430), [`server/db.ts`](../server/db.ts#L199) | Admin is the cooperative Officer role, but `admin.overview`, `admin.reviewProduct`, and `admin.updateUser` are platform-wide. Product review and user role/status/cooperative changes do not check the actor's cooperative. The Admin overview also returns all users and associated cooperative data. |
-| High | [`server/routers.ts`](../server/routers.ts#L188), [`server/_core/index.ts`](../server/_core/index.ts#L50) | tRPC message read/send permits buyer owner or global Admin/SuperAdmin, but not `sellerId`; Seller is excluded despite appearing as a thread participant. There is no participant table. The SSE condition does allow buyer or seller, so access control differs between SSE and tRPC. Admin access is not cooperative-limited. |
+| High | [`server/routers.ts`](../server/routers.ts#L188) | tRPC message read/send permits buyer owner or global Admin/SuperAdmin, but not `sellerId`; Seller is excluded despite appearing as a thread participant. There is no participant table. Admin access is not cooperative-limited. |
 | High | [`server/routers.ts`](../server/routers.ts#L400), [`server/db.ts`](../server/db.ts#L224) | Completion checks stock then decrements with an unconditional `stockQty - quantity` update. The check and decrement are not protected by a transaction/conditional update; concurrent completions can oversell, and multi-item completion can partially apply if an intermediate write fails. |
 | Medium | [`server/routers.ts`](../server/routers.ts#L334), [`server/routers.ts`](../server/routers.ts#L377) | Quotation and order creation check listing status but do not re-check the Seller's current account approval status. A listing hidden from marketplace queries after Seller suspension may still be acted on through a direct mutation with its product ID. |
 | High | [`supabase/rls.sql`](../supabase/rls.sql#L24), [`supabase/rls.sql`](../supabase/rls.sql#L44), [`drizzle/schema.ts`](../drizzle/schema.ts) | RLS is only a target SQL file, assumes `auth_user_id` and snake_case columns/tables not present in the current Drizzle schema, and is not a functioning enforcement layer for the live MySQL database. Several policies grant Admin/SuperAdmin broad access and do not encode cooperative scope or explicit conversation participants. |
 | Medium | [`server/routers.ts`](../server/routers.ts#L160) | Public registration creates Auth accounts with `email_confirm: true`; email ownership is not confirmed by this flow. |
-| Medium | [`server/_core/index.ts`](../server/_core/index.ts#L35), [`client/src/pages/Support.tsx`](../client/src/pages/Support.tsx#L20) | The SSE access token is accepted in a query parameter because `EventSource` cannot set a custom header. URLs may be captured in browser/proxy logs; consider a safer short-lived stream token or fetch-stream approach. |
-| Medium | [`server/_core/storageProxy.ts`](../server/_core/storageProxy.ts#L4), [`server/_core/index.ts`](../server/_core/index.ts#L55) | Legacy `/manus-storage/*` route has no application authentication/ownership check and redirects to an upstream signed URL for a supplied path. It should not be used for sensitive documents. |
-| Medium | [`server/storage.ts`](../server/storage.ts#L43), [`server/routers.ts`](../server/routers.ts#L279) | Bucket visibility is changed by helper options; the live product upload defaults public. Upload limits are 8 MB, not the requested 5 MB pre-compression limit, and the client does no compression/resize. |
-| Medium | [`server/clients.ts`](../server/clients.ts#L3), [`server/_core/env.ts`](../server/_core/env.ts#L1) | Missing Supabase values fall back to localhost/dummy anon settings or an anon client instead of failing at client construction. This is not a leaked secret, but can disguise misconfiguration and make admin/storage behavior fail unexpectedly. |
+| Medium | [`server/routers.ts`](../server/routers.ts) | Product images are public by design. The signed upload flow now limits uploads to 5 MiB and JPEG/PNG/WebP; private documents would need a separate private bucket and ownership checks. |
+| Medium | [`server/clients.ts`](../server/clients.ts#L3), [`server/_core/env.ts`](../server/_core/env.ts#L1) | Development retains localhost/dummy Supabase defaults; production startup now rejects missing database or Supabase variables before serving requests. |
 | Medium | [`client/src/pages/Reports.tsx`](../client/src/pages/Reports.tsx#L13), [`server/routers.ts`](../server/routers.ts#L426) | CSV page is enabled only for role `admin`, while API overview also allows SuperAdmin; conversely Admin/Officer's report data is platform-wide rather than cooperative-scoped. |
 
 ## 9. ENVIRONMENT AND HOW TO RUN
@@ -256,18 +254,18 @@ Required/optional judgments below describe current runtime/setup dependencies; v
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase Auth client/server project URL; also used by storage | Required for Auth; Storage calls also require it. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser Supabase Auth client key | Required for browser Auth. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side Supabase admin Auth/storage client | Required for account creation, seed operations, and storage. Never expose to browser. |
-| `JWT_SECRET` | Mapped to `ENV.cookieSecret` | Listed as required by `docs/ENVIRONMENT.md`; exact active runtime consumer is **NOT VERIFIED**. |
+| `DATABASE_SSL` / `DATABASE_SSL_CA` | Optional MySQL TLS configuration | Enable verified TLS when required by the database provider. |
 | `PORT` | Preferred Express port; defaults to 3000 | Optional. |
 | `NODE_ENV` | Selects Vite development server or production static serving | Optional; set appropriately for mode. |
 | `SUPABASE_STORAGE_BUCKET` | Overrides default product image bucket name | Optional. |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | Alternate browser Supabase values read by `client/src/lib/supabase.ts` | Optional aliases for the `NEXT_PUBLIC_*` values. |
-| `VITE_APP_ID`, `OAUTH_SERVER_URL`, `OWNER_OPEN_ID` | Template compatibility values; `OWNER_OPEN_ID` influences local Admin role upsert | Optional/legacy. |
-| `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY` | Manus-hosted template APIs (notification, storage proxy, image/LLM/map/transcription helpers) | Optional for core marketplace; required to use those template services. |
-| `VITE_FRONTEND_FORGE_API_URL`, `VITE_FRONTEND_FORGE_API_KEY` | Frontend Manus Map component configuration | Optional; Map component is not part of active app routes. |
+| `OWNER_OPEN_ID` | Optional owner identity used during account upsert | Optional. |
+| `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY` | Optional server-side template integrations (notification, image/LLM/map/transcription helpers) | Not required for core marketplace; required only for those integrations. |
+| `VITE_FRONTEND_FORGE_API_URL`, `VITE_FRONTEND_FORGE_API_KEY` | Optional browser map integration | Public configuration; restrict any key by origin. |
 | `SEED_SUPERADMIN_1_EMAIL`, `SEED_SUPERADMIN_1_PASSWORD`, `SEED_SUPERADMIN_2_EMAIL`, `SEED_SUPERADMIN_2_PASSWORD`, `SEED_OFFICER_EMAIL`, `SEED_OFFICER_PASSWORD`, `SEED_BUYER_EMAIL`, `SEED_BUYER_PASSWORD`, `SEED_SELLER_EMAIL`, `SEED_SELLER_PASSWORD` | Five-account `seed:defaults` configuration | Required by that seed script, not ordinary app startup. |
 | `SUPERADMIN_JOAN_PASSWORD`, `SUPERADMIN_EROL_PASSWORD` | Legacy `seed:superadmins` inputs | Required only for that separate script; its script also contains inline identity data. |
 
-Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core/env.ts`](../server/_core/env.ts), and `process.env`/`import.meta.env` references in runtime and seed code. No `.env` files were consulted.
+Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core/env.ts`](../server/_core/env.ts), and `process.env`/`import.meta.env` references in runtime and seed code. No environment values are included here.
 
 ### Every package script
 
@@ -279,14 +277,15 @@ Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core
 | `check` | `tsc --noEmit` | TypeScript check. |
 | `format` | `prettier --write .` | Formats repository files; do not run for a documentation-only task. |
 | `test` | `vitest run` | Vitest suite. |
-| `db:push` | `drizzle-kit generate && drizzle-kit migrate` | Generate and apply MySQL migrations. |
+| `db:generate` | `drizzle-kit generate` | Generate a MySQL migration from schema changes. |
+| `db:migrate` | `drizzle-kit migrate` | Apply committed MySQL migrations; do not use `drizzle-kit push`. |
 | `seed:demo` | `cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-demo.ts` | Legacy demo-data seed; separate from default five-account seed. |
 | `seed:defaults` | `cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-defaults.ts` | Default accounts and visible listing seed. |
 | `seed:superadmins` | `tsx scripts/seed-superadmins.ts` | Separate SuperAdmin provisioning script. |
 
 ### Windows PowerShell setup
 
-1. Install Node.js and enable Corepack. An exact supported Node engine is **NOT VERIFIED** in `package.json`.
+1. Install Node.js 22.x and enable Corepack. The package pins pnpm 10.4.1.
 2. In PowerShell, enter the repository root and install dependencies:
    ```powershell
    Set-Location 'C:\Users\joana\Downloads\CAPSTONE\VSC\AgriCoop-Marketplace-Final-Capstone'
@@ -297,9 +296,13 @@ Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core
    mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS agricoop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
    ```
 4. Configure the required environment **names** and local secret values privately, using [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md). Do not paste secret values into prompts or commit them.
-5. Generate and apply the tracked MySQL schema migrations:
+5. Before applying migrations, back up the database:
    ```powershell
-   corepack pnpm db:push
+   mysqldump -u root -p agricoop --result-file=backup.sql
+   ```
+   Then apply committed migrations:
+   ```powershell
+   corepack pnpm db:migrate
    ```
 6. To load the default five role accounts and crop catalog, configure all `SEED_*` variables privately and run:
    ```powershell
@@ -355,9 +358,9 @@ Important behaviors with **no direct test found**: actual tRPC authorization by 
 
 | Template artifact | Current status |
 |---|---|
-| `vite-plugin-manus-runtime` | Imported and used in [`vite.config.ts`](../vite.config.ts) via `vitePluginManusRuntime()`. |
-| `.manus-logs` debug collector and [`client/public/__manus__/debug-collector.js`](../client/public/__manus__/debug-collector.js) | Active in Vite development configuration; debug logs are accepted and written locally by the custom plugin in [`vite.config.ts`](../vite.config.ts). |
-| [`server/_core/storageProxy.ts`](../server/_core/storageProxy.ts) | Imported and registered by Express; proxies `/manus-storage/*` to a Manus-compatible service. |
+| `vite-plugin-manus-runtime` | Removed from package dependencies and Vite configuration. |
+| `.manus-logs` debug collector and `client/public/__manus__/debug-collector.js` | Removed; no browser log endpoint or filesystem debug logging remains. |
+| Legacy `/manus-storage/*` proxy | Removed after the configured database had zero product/profile references; new uploads use Supabase signed uploads. |
 | [`server/_core/notification.ts`](../server/_core/notification.ts) | Used by `systemRouter.notifyOwner`; calls Manus Notification Service. |
 | [`server/_core/dataApi.ts`](../server/_core/dataApi.ts) | Not imported by active routers/server entry; no live call site found. Dead/unwired in current route graph. |
 | [`server/_core/imageGeneration.ts`](../server/_core/imageGeneration.ts) | Contains Forge image-generation/list-model helpers and uses `storagePut`; no active route imports it. Dead/unwired. |
@@ -366,8 +369,8 @@ Important behaviors with **no direct test found**: actual tRPC authorization by 
 | [`server/_core/heartbeat.ts`](../server/_core/heartbeat.ts), [`server/_core/llm.ts`](../server/_core/llm.ts) | Template helpers with Manus API configuration; no active app route/import call sites found. Dead/unwired. |
 | [`client/src/components/AIChatBox.tsx`](../client/src/components/AIChatBox.tsx) | Referenced by [`client/src/pages/ComponentShowcase.tsx`](../client/src/pages/ComponentShowcase.tsx), which is not imported or routed in [`client/src/App.tsx`](../client/src/App.tsx); not reachable through active routes. |
 | [`client/src/components/Map.tsx`](../client/src/components/Map.tsx) | Not imported by active app routes. |
-| [`client/src/components/ManusDialog.tsx`](../client/src/components/ManusDialog.tsx) | No active import/reference found. |
-| `vite-plugin-manus-runtime`, AWS SDK S3 packages, Google Maps types | Template dependencies remain in `package.json`; live Supabase product-image upload uses `server/storage.ts`, not AWS S3. |
+| `client/src/components/ManusDialog.tsx`, `server/_core/types/manusTypes.ts` | Removed as unreferenced Manus-only artifacts. |
+| AWS SDK S3 packages and Google Maps types | Unused template dependencies remain; live Supabase product-image upload uses `server/storage.ts`, not AWS S3. |
 
 “Dead/unwired” means no code import/call path from the active app router/server entry was found in this repository scan; dynamic external invocation is **NOT VERIFIED**. Evidence: [`vite.config.ts`](../vite.config.ts), [`server/_core/index.ts`](../server/_core/index.ts), [`client/src/App.tsx`](../client/src/App.tsx), [`package.json`](../package.json).
 
@@ -402,7 +405,7 @@ This is a plan only; no migration work was performed.
 6. **Migrate data in dependency order.** Cooperatives → users → products → quotations → orders → order items → transactions → conversations → messages. Preserve PKs where selected, reset identity sequences, validate row counts, uniqueness, enum values, and foreign-key integrity.
 7. **Implement and test RLS before production cutover.** Enable RLS on every table that the browser/API can reach. Add self-profile policies; public approved-listing read; Seller-owned listing writes; Buyer/Seller participant reads/writes; member and order visibility constrained to the actor's cooperative; explicit SuperAdmin platform policy; and separate moderation/update policies. Add a `conversation_participants` model before participant policies. Add Storage policies for public product images and owner/reviewer-only private files. The current Express/Drizzle service connection must not silently bypass the intended policy: either apply user JWT claims in a transaction-scoped Postgres connection or keep privileged access server-only with complete, tested procedure authorization and do not expose direct table access.
 8. **Update seed and integration tests.** Rework scripts for Postgres/identity mapping, remove credential/identity literals from source, make seeds repeatable, and test all roles against real RLS sessions, not only service-role connections.
-9. **Cut over in staging.** Run dual-read comparisons or a controlled downtime export/import, validate order totals/stock and auth mapping, exercise image URLs and SSE, then switch `DATABASE_URL`/deployment configuration. Keep a rollback snapshot until validated.
+9. **Cut over in staging.** Run dual-read comparisons or a controlled downtime export/import, validate order totals/stock and auth mapping, exercise image URLs and conversation polling, then switch `DATABASE_URL`/deployment configuration. Keep a rollback snapshot until validated.
 
 Principal risks: integer IDs and Supabase Auth UUIDs can be mismatched; MySQL enum/default/`ON UPDATE` behavior differs; quoted camelCase names can break policies; MySQL `ON DUPLICATE KEY` result shapes differ; timestamps can shift; service-role database access bypasses RLS; policy leakage can expose PII or conversations; migration must preserve order-item/transaction relationships and unique order transaction constraints. `supabase/rls.sql` is a draft baseline and does not currently match the live schema.
 
@@ -415,16 +418,16 @@ The checked-in Typst manuscript sources are [`docs/generated/agricoop-documentat
 | Existing heading/table | Required correction/addition |
 |---|---|
 | Development process; Executive summary; Product purpose and problem statement; Intended users table | State which requirements were implemented versus proposed, and the current scope, four runtime roles and terminology mapping (`admin` = Officer), F2F record-only behavior, and absent verification/monitoring features. |
-| Current technology stack table | Replace any Next.js/Supabase Postgres/Vercel-as-current wording with React/Vite, Express/tRPC, MySQL/Drizzle, Supabase Auth/Storage, and process-local SSE. |
-| System architecture: Current runtime architecture / Native migration architecture | Correct active request flow and distinguish the proposed Postgres/Next architecture from current code; include current public product bucket, legacy Manus proxy, and one-process SSE limitations. |
+| Current technology stack table | Replace any Next.js/Supabase Postgres/Vercel-as-current wording with React/Vite, Express/tRPC on a Vercel Function, MySQL/Drizzle, Supabase Auth/Storage, and conversation polling. |
+| System architecture: Current runtime architecture / Native migration architecture | Correct active request flow and distinguish the proposed Postgres/Next architecture from current code; include the public product bucket and serverless polling behavior. |
 | Data model and persistence: Main entities / Database migrations | Replace any participant/audit/evidence entities described as present; list the nine actual tables and the seven actual migrations. |
 | Authentication and authorization: Registration, Authorization layers, Role matrix table | Document `email_confirm: true`, Buyer approved vs Seller/Admin pending, SuperAdmin registration/procedure exceptions, self-editable role/cooperative field, and current non-scoped Admin endpoints. |
 | Public user experience / Seller workflow / Buyer workflow | Add actual routes and distinguish implemented UI from missing profile, user verification, image compression, bulk price negotiation, and accepted quotation conversion. |
 | Payment and transaction policy | Clarify transaction completion timestamp default occurs on row creation; actual online transfer/card processing is absent. |
-| Conversations and real-time support | Correct Seller tRPC read/send mismatch; explain no participants table, no three-party Officer inclusion, process-local EventEmitter/SSE, and no message types besides text. |
+| Conversations and real-time support | Correct Seller tRPC read/send mismatch; explain no participants table, no three-party Officer inclusion, five-/ten-second tRPC polling, and no message types besides text. |
 | Administration, moderation, and reporting | Explain cooperative overview scope vs global `admin.overview`, global product review/user updates, CSV page role mismatch, and no audit events. |
 | Demo data and defense preparation | Verify role seed claims against `seed-defaults.ts`; state default accounts are application-approved and listings approved/visible, but no user verification or monitoring acknowledgement exists. Do not include account email/password values. |
-| Security and privacy considerations | Replace broad assurance with Section 8 findings: public listing bucket, no private KYC/chat uploads, no retention, RLS not active/mismatched, PII reachability, role/scope gaps, and token-in-query SSE. |
+| Security and privacy considerations | Replace broad assurance with Section 8 findings: public listing bucket, no private KYC/chat uploads, no retention, RLS not active/mismatched, PII reachability, and role/scope gaps. |
 | Testing and quality assurance table | Update from older counts to the fresh result: 7 test files / 16 passing tests, and list uncovered endpoint/integration behaviors. |
 | Deployment and operations; File and directory guide | Remove references to non-existent active Next app/deployment scripts if still present; document actual Windows commands/scripts and MySQL requirement. |
 | End-to-end scenario walkthroughs | Correct current behavior: stock is deducted at completion (not order placement); no pickup schedule field, final quantity editor, order event trail, third-party chat member, or verification gate. |
@@ -442,7 +445,7 @@ Prioritized by likely impact on marketplace correctness, privacy, and defense cl
 
 1. **Suspended accounts can self-reactivate.** A suspended account can call `account.updateProfile` with role `buyer`; the procedure writes `approvalStatus: approved`. Remove caller control of role/status. [`server/routers.ts`](../server/routers.ts) (`account.updateProfile`).
 2. **Admin scope contradicts cooperative Officer model.** Can an Officer really see/change all cooperatives? If not, add cooperative checks to listing review, user management, order status, conversation oversight, and report data. [`server/routers.ts`](../server/routers.ts) (`admin.*`, `orders.updateStatus`).
-3. **Conversation access is inconsistent.** Seller threads appear in their list but `messages`/`send` reject them; SSE permits them. Decide the explicit participant model and enforce it uniformly. [`server/routers.ts`](../server/routers.ts), [`server/_core/index.ts`](../server/_core/index.ts).
+3. **Conversation access is inconsistent.** Seller threads appear in their list but `messages`/`send` reject them. Decide the explicit participant model and enforce it uniformly. [`server/routers.ts`](../server/routers.ts).
 4. **Completion inventory is race-prone and non-atomic.** Use a transaction/conditional stock decrement and test simultaneous completion and rollback, including repeated product IDs in one request. [`server/routers.ts`](../server/routers.ts) (`orders.updateStatus`, `orders.create`), [`server/db.ts`](../server/db.ts) (`decrementProductStock`).
 5. **Suspension is not consistently enforced.** A Buyer can self-reactivate through profile update, and conversation create/send checks authentication but not operational approval. Quotation/order mutations also fail to re-check the Seller's account approval; decide which actions suspension must block. [`server/routers.ts`](../server/routers.ts) (`account.updateProfile`, `conversations.create`, `conversations.send`, `quotations.request`, `orders.create`).
 6. **Privacy features in the requested manuscript are not implemented.** There is no KYC/ID/selfie workflow, user verification gate, consent, notice acknowledgement, retention policy, private document bucket, or review queue. Do not claim these are operational.
@@ -452,7 +455,7 @@ Prioritized by likely impact on marketplace correctness, privacy, and defense cl
 10. **Dates and report exports can mislead.** No UTC policy or Manila formatter; report date fields are raw string output; transaction `completedAt` is set when transaction is inserted. [`drizzle/schema.ts`](../drizzle/schema.ts), [`Reports.tsx`](../client/src/pages/Reports.tsx), [`Support.tsx`](../client/src/pages/Support.tsx).
 11. **Product image policy misses the stated storage budget.** Client upload allows 8 MB and does not resize/compress; only one public image is stored. Decide compression dependency/canvas approach and a strict pre-compression cap. [`Dashboard.tsx`](../client/src/pages/Dashboard.tsx), [`routers.ts`](../server/routers.ts) (`products.uploadImage`).
 12. **No route-level tests cover most authorization and sensitive workflows.** Add tests for own-cooperative restrictions, nonparticipant reads/sends, role/approval mutation, storage ownership, and privacy gating before defense claims rely on them. [`server/*.test.ts`](../server/).
-13. **Notification and template-service dependencies remain.** Is Manus notification/proxy functionality needed in the final zero-cost deployment? Remove or replace active dependencies and dead helpers only after confirming no demo dependency. [`server/_core/notification.ts`](../server/_core/notification.ts), [`server/_core/storageProxy.ts`](../server/_core/storageProxy.ts), [`vite.config.ts`](../vite.config.ts).
+13. **Optional template-service dependencies remain.** Notification and other Forge integrations still need their server-only variables if used; the Manus runtime/debug collector and legacy storage proxy have been removed. [`server/_core/notification.ts`](../server/_core/notification.ts), [`vite.config.ts`](../vite.config.ts).
 14. **Manual and generated docs are stale in important places.** One generated source describes placement-time stock deduction, but current code deducts on completion; other procedure/role claims also differ. Which exact external PDF/version will be submitted is **NOT VERIFIED**.
 
 ### HANDOFF CHECKLIST

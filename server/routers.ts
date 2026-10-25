@@ -1,11 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz";
-import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
+import { COOKIE_NAME } from "../shared/const.js";
+import { getSessionCookieOptions } from "./_core/cookies.js";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc.js";
+import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz.js";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules.js";
 import {
   getAdminOverview,
   getBuyerOrders,
@@ -24,13 +24,13 @@ import {
   getConversationMessages,
   getConversationsForUser,
   upsertUser,
-} from "./db";
-import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
-import { supabaseAdmin } from "./clients";
-import { publishConversationMessage } from "./realtime";
-import { normalizeCooperativeName } from "./cooperativeNames";
-import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions";
-import { storagePut } from "./storage";
+} from "./db.js";
+import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema.js";
+import { supabaseAdmin } from "./clients.js";
+import { normalizeCooperativeName } from "./cooperativeNames.js";
+import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions.js";
+import { storageCreateSignedUpload } from "./storage.js";
+import { systemRouter } from "./_core/systemRouter.js";
 
 const registrationRoleSchema = z.enum(["buyer", "seller", "admin"]);
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
@@ -67,7 +67,7 @@ const newProductSchema = z.object({
   ...productFields,
   qualityGrade: z.enum(["premium", "standard", "imperfect"]).default("standard"),
   imageUrls: z.array(z.string().max(1000).refine(
-    imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
+    imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/images/"),
     "Image must be a valid URL or local image path.",
   )).max(10).default([]),
   submitForVerification: z.boolean().default(true),
@@ -97,6 +97,7 @@ async function recordOrderEvent(db: Awaited<ReturnType<typeof dbOrThrow>>, input
 }
 
 export const appRouter = router({
+  system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     register: publicProcedure
@@ -223,7 +224,6 @@ export const appRouter = router({
         : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
       if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
       const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).$returningId();
-      publishConversationMessage({ conversationId: input.conversationId, messageId: message.id, senderId: ctx.user.id });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
       return { success: true };
     }),
@@ -339,20 +339,15 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().min(1).max(255),
         contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-        base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
+        size: z.number().int().positive().max(MAX_PRODUCT_IMAGE_SIZE_BYTES),
       }))
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
-        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected image file is invalid." });
-        }
-        const bytes = Buffer.from(input.base64, "base64");
-        if (!isProductImageSizeAllowed(bytes.length)) {
+        if (!isProductImageSizeAllowed(input.size)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be 5 MB or less." });
         }
         const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "product-image";
-        const uploaded = await storagePut(`products/${seller.id}/${Date.now()}-${safeName}`, bytes, input.contentType);
-        return { url: uploaded.url };
+        return storageCreateSignedUpload(`products/${seller.id}/${Date.now()}-${safeName}`);
       }),
     submit: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
@@ -370,7 +365,7 @@ export const appRouter = router({
         qualityGrade: z.enum(["premium", "standard", "imperfect"]),
         status: z.enum(["published", "archived"]),
         primaryImageUrl: z.string().max(1000).refine(
-          imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
+          imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/images/"),
           "Image must be a valid URL or local image path.",
         ).nullable().optional(),
       }).superRefine(validateProductQuantities))
