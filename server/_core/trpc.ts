@@ -18,7 +18,14 @@ const requireUser = t.middleware(async opts => {
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
 
-  if (!["auth.me", "auth.logout", "account.myProfile"].includes(opts.path)) {
+  if (
+    ![
+      "auth.me",
+      "auth.logout",
+      "account.myProfile",
+      "account.updateProfile",
+    ].includes(opts.path)
+  ) {
     requireOperationalRole(ctx.user, APP_ROLES);
   }
 
@@ -52,7 +59,10 @@ export const adminProcedure = t.procedure.use(requireUser).use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    if (!ctx.user || ctx.user.role !== 'admin') {
+    if (
+      !ctx.user ||
+      (ctx.user.role !== "admin" && ctx.user.role !== "superadmin")
+    ) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
 
@@ -62,5 +72,5 @@ export const adminProcedure = t.procedure.use(requireUser).use(
         user: ctx.user,
       },
     });
-  }),
+  })
 );

@@ -10,28 +10,30 @@ type CookieCall = {
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
-function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[]; responseHeaders: Record<string, string> } {
+function createAuthContext(): {
+  ctx: TrpcContext;
+  clearedCookies: CookieCall[];
+  responseHeaders: Record<string, string>;
+} {
   const clearedCookies: CookieCall[] = [];
   const responseHeaders: Record<string, string> = {};
 
   const user: AuthenticatedUser = {
-    id: 1,
-    openId: "sample-user",
+    id: "11111111-1111-4111-8111-111111111111",
     email: "sample@example.com",
     name: "Sample User",
-    loginMethod: "supabase",
     role: "buyer",
     approvalStatus: "approved",
+    verificationStatus: "unverified",
+    cooperativeName: null,
     cooperativeId: null,
     contactNumber: null,
     address: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    lastSignedIn: new Date(),
   };
 
   const ctx: TrpcContext = {
     user,
+    supabaseUser: user,
     req: {
       protocol: "https",
       headers: {},

@@ -1,50 +1,46 @@
 # AgriCoop Marketplace
 
-AgriCoop is a cooperative-focused produce marketplace for Buyers, Sellers/Farmers, Cooperative Admin Officers, and SuperAdmins. It supports approved product listings, quotations, orders, fulfillment records, and support conversations. Payments are arranged face-to-face; the app does not process money online.
+AgriCoop is a cooperative-focused produce marketplace for Buyers, Sellers/Farmers, Cooperative Officers, and System Administrators. It supports approved product listings, quotations, orders, fulfillment records, and face-to-face payment coordination.
 
-## Project documentation
-
-- [What is implemented and what remains](./docs/IMPLEMENTATION_STATUS.md)
-- [Detailed website and user guide](./docs/WEBSITE_GUIDE.md)
-- [Vercel deployment guide](./DEPLOY.md)
-- [Environment variable reference](./docs/ENVIRONMENT.md)
-- [Evidence-based technical project summary](./docs/PROJECT_SUMMARY.md)
-
-## Current stack
+## Current runtime
 
 - React, Vite, TypeScript, Tailwind CSS, and Wouter
-- Express and tRPC API
-- Drizzle ORM and MySQL
-- Supabase Auth for identity; Supabase Storage for product images
-- Vercel Function adapter for serverless API requests
+- Express and tRPC API served locally and through the Vercel function in [`api/index.ts`](./api/index.ts)
+- Supabase Auth and Supabase PostgreSQL tables for the active application runtime
+- Supabase Storage signed uploads for the optional product-image integration
 - Vitest for automated tests
 
-This is not a Next.js or Supabase Postgres application. The app database is MySQL.
+The active runtime does not require MySQL. The historical Drizzle/MySQL schema, migrations, seed scripts, and [`server/db.ts`](./server/db.ts) remain in the repository as legacy tooling and are not imported by the active router. Do not run the legacy migration or seed commands against the Supabase project.
 
-## Run locally (Windows PowerShell)
+## Local development
 
 1. Install Node.js 22.x and enable Corepack.
-2. Copy `.env.example` to `.env.local`; fill in private local MySQL and Supabase values without committing the file.
-3. Create/select the MySQL database, then back it up before applying migrations.
-4. Install dependencies and apply the committed migrations:
+2. Copy `.env.example` to `.env.local` and set the Supabase public URL/key plus the server-only service-role key. Keep `.env.local` private.
+3. Install dependencies and start the application:
 
    ```powershell
    corepack pnpm install
-   corepack pnpm db:migrate
-   ```
-
-5. Start the development server:
-
-   ```powershell
    corepack pnpm dev
    ```
 
-Do not use `drizzle-kit push`. For production setup and database backup guidance, see [DEPLOY.md](./DEPLOY.md).
+The browser receives only the public Supabase configuration. The service-role key is read only by server code and must never use a `VITE_*` variable.
 
-## Check the project
+## Safe development data
+
+The live project currently has no products or inventory rows. To add deliberately labeled development listings, set `SUPABASE_SEED_ALLOW_WRITE=true` and `SUPABASE_DEV_SELLER_ID` to an existing approved seller profile UUID in a non-production environment, then run:
+
+```powershell
+corepack pnpm seed:supabase-demo
+```
+
+The script refuses `NODE_ENV=production`, validates the seller role/status, writes only products and inventory, and never creates orders, quotations, transactions, or Auth users. It requires the server-only service-role key and does not print it.
+
+## Verification
 
 ```powershell
 corepack pnpm check
 corepack pnpm test
 corepack pnpm build
 ```
+
+See [`docs/ENVIRONMENT.md`](./docs/ENVIRONMENT.md), [`DEPLOY.md`](./DEPLOY.md), and [`docs/IMPLEMENTATION_STATUS.md`](./docs/IMPLEMENTATION_STATUS.md) for configuration, deployment, and known schema boundaries.

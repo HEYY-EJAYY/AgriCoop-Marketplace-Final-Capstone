@@ -1,41 +1,28 @@
 # Environment variables
 
-Copy `.env.example` to `.env.local` for local development. Keep `.env.local` private and never commit it. Vercel production values belong in the project's Environment Variables settings.
+Copy `.env.example` to `.env.local` for local development. Never commit `.env.local`, credentials, access tokens, or database backups.
 
-## Required for production
+## Active runtime
 
-| Variable | Use | Exposure |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase Auth and Storage project URL | Public |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase browser Auth client | Public |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-side account management and signed image uploads | Server-only secret |
+| Variable                        | Use                                                                    | Exposure           |
+| ------------------------------- | ---------------------------------------------------------------------- | ------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase Auth and server/browser client URL                            | Public             |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser Auth and public Supabase access                                | Public             |
+| `SUPABASE_SERVICE_ROLE_KEY`     | Server-side Auth account creation, protected reads/writes, and Storage | Server-only secret |
+| `SUPABASE_STORAGE_BUCKET`       | Product image bucket; defaults to `product-images`                     | Server-only        |
+| `VITE_SUPABASE_URL`             | Optional Vite alias for the public Supabase URL                        | Public             |
+| `VITE_SUPABASE_ANON_KEY`        | Optional Vite alias for the public anon key                            | Public             |
+| `VITE_FRONTEND_FORGE_API_URL`   | Optional browser map/helper integration                                | Public             |
+| `VITE_FRONTEND_FORGE_API_KEY`   | Optional browser integration key; restrict by origin                   | Public             |
+| `BUILT_IN_FORGE_API_URL`        | Optional server integration                                            | Server             |
+| `BUILT_IN_FORGE_API_KEY`        | Optional server integration credential                                 | Server-only secret |
 
-The server validates these Supabase values at startup in production. The active migration target is the existing Supabase PostgreSQL schema; the legacy MySQL adapter is not a production prerequisite. Never put the Supabase service-role key in a `VITE_*` or other browser-exposed variable.
+The server resolves the authenticated Supabase user from the bearer token, then maps `profiles.user_id → profiles.role_id → roles.role_name`. A missing profile is handled as an unauthenticated application account.
 
-## Optional runtime variables
+## Development-only seed variables
 
-| Variable | Use | Exposure |
-|---|---|---|
-| `PORT` | Local Express port; defaults to `3000` | Server |
-| `SUPABASE_STORAGE_BUCKET` | Product image bucket; defaults to `product-images` | Server |
-| `OWNER_OPEN_ID` | Legacy compatibility variable; no longer grants a role automatically | Server-only |
-| `BUILT_IN_FORGE_API_URL` | Optional upstream URL for template integrations such as LLM, image generation, voice, notifications, and map helpers | Server |
-| `BUILT_IN_FORGE_API_KEY` | Credential for those optional upstream integrations | Server-only secret |
-| `VITE_FRONTEND_FORGE_API_URL` | Optional browser map helper URL | Public configuration |
-| `VITE_FRONTEND_FORGE_API_KEY` | Optional browser map key; restrict it to the production and development origins with the provider | Public credential |
-| `VITE_SUPABASE_URL` | Optional Vite alias for `NEXT_PUBLIC_SUPABASE_URL` | Public |
-| `VITE_SUPABASE_ANON_KEY` | Optional Vite alias for `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public |
+`SUPABASE_SEED_ALLOW_WRITE=true` and `SUPABASE_DEV_SELLER_ID` are accepted only by `corepack pnpm seed:supabase-demo`. The script refuses `NODE_ENV=production`, validates that the seller profile is approved, and writes only labeled development products and inventory.
 
-The optional Forge integrations are not required for core marketplace, Auth, or product-image flows. Any browser map key is visible to users and must be origin-restricted. The `/manus-storage` proxy and Manus debug/runtime integrations have been removed.
+## Legacy tooling
 
-## Seed-only variables
-
-`corepack pnpm seed:defaults` is legacy and still targets the old Drizzle schema. It must not be run against the existing Supabase database. Its seed variables are not needed by normal app startup and must remain server-side.
-
-`SUPERADMIN_JOAN_PASSWORD` and `SUPERADMIN_EROL_PASSWORD` are read only by the legacy `seed:superadmins` script. Prefer `seed:defaults`; do not put seed passwords in source code or browser-exposed variables.
-
-## Local development
-
-The `dev` script loads `.env.local` and sets `NODE_ENV=development`. For production-like local checks, use the required production values in a private environment file and run the built server with `NODE_ENV=production`; do not put production secrets in shell history or logs.
-
-Public registration supports Buyer, Seller / Farmer, and Cooperative Admin Officer. Admin Officer registrations remain pending until approved, and SuperAdmin is not a public registration option. The current order flow is face-to-face; no payment-provider credentials are needed.
+`DATABASE_URL`, `DATABASE_SSL`, `DATABASE_SSL_CA`, `JWT_SECRET`, and the old seed-password variables belong to the historical Drizzle/MySQL tooling. They are not required by the active Supabase/Vercel runtime and must not be used to configure the production application database.

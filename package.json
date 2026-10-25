@@ -14,6 +14,7 @@
     "db:migrate": "drizzle-kit migrate",
     "seed:demo": "cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-demo.ts",
     "seed:defaults": "cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-defaults.ts",
+    "seed:supabase-demo": "cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-supabase-demo.ts",
     "seed:superadmins": "tsx scripts/seed-superadmins.ts"
   },
   "dependencies": {
