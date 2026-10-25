@@ -31,8 +31,9 @@ describe("AgriCoop role authorization", () => {
     expect(canAccessOrderForCooperative({ role: "superadmin", cooperativeId: null }, 3)).toBe(true);
   });
 
-  it("limits completion and cancellation to the seller's cooperative Admin Officer or SuperAdmin", () => {
-    const order = { sellerId: 20, cooperativeId: 2 };
+  it("allows buyers to cancel only their own orders and limits fulfillment to their cooperative Officer or SuperAdmin", () => {
+    const order = { buyerId: 40, sellerId: 20, cooperativeId: 2 };
+    const buyer = { id: 40, role: "buyer" as const, cooperativeId: null };
     const seller = { id: 20, role: "seller" as const, cooperativeId: 2 };
     const officer = { id: 30, role: "admin" as const, cooperativeId: 2 };
     const otherOfficer = { id: 31, role: "admin" as const, cooperativeId: 3 };
@@ -42,6 +43,9 @@ describe("AgriCoop role authorization", () => {
     expect(canUpdateOrderStatus(seller, order, "ready")).toBe(true);
     expect(canUpdateOrderStatus(seller, order, "completed")).toBe(false);
     expect(canUpdateOrderStatus(seller, order, "cancelled")).toBe(false);
+    expect(canUpdateOrderStatus(buyer, order, "cancelled")).toBe(true);
+    expect(canUpdateOrderStatus({ ...buyer, id: 41 }, order, "cancelled")).toBe(false);
+    expect(canUpdateOrderStatus(buyer, order, "completed")).toBe(false);
     expect(canUpdateOrderStatus(officer, order, "completed")).toBe(true);
     expect(canUpdateOrderStatus(otherOfficer, order, "completed")).toBe(false);
     expect(canUpdateOrderStatus(superAdmin, order, "completed")).toBe(true);
@@ -83,6 +87,8 @@ describe("AgriCoop role authorization", () => {
     expect(canAccessConversation({ id: 40, role: "superadmin", cooperativeId: null }, thread, 2)).toBe(true);
     expect(canAccessConversation({ id: 50, role: "buyer", cooperativeId: null }, thread, 2)).toBe(false);
     expect(canAccessConversation({ id: 60, role: "admin", cooperativeId: 3 }, thread, 2)).toBe(false);
+    expect(canAccessConversation({ id: 30, role: "admin", cooperativeId: 2 }, { buyerId: 10, sellerId: null }, null)).toBe(true);
+    expect(canAccessConversation({ id: 60, role: "admin", cooperativeId: 3 }, { buyerId: 10, sellerId: null }, null)).toBe(true);
   });
 
   it("allows profile verification to be submitted until it is approved", () => {

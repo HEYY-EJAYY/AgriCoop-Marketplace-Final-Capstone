@@ -26,10 +26,11 @@ export function canManageSellerOrder(
 
 export function canUpdateOrderStatus(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  order: { sellerId: number; cooperativeId: number | null },
+  order: { buyerId?: number; sellerId: number; cooperativeId: number | null },
   nextStatus: "confirmed" | "ready" | "completed" | "cancelled",
 ) {
   if (actor.role === "superadmin") return true;
+  if (actor.role === "buyer") return nextStatus === "cancelled" && order.buyerId !== undefined && actor.id === order.buyerId;
   if (actor.role === "admin") {
     return canAccessOrderForCooperative(actor, order.cooperativeId);
   }
@@ -82,7 +83,7 @@ export function canAccessConversation(
   sellerCooperativeId: number | null,
 ) {
   if (actor.role === "superadmin" || actor.id === conversation.buyerId || actor.id === conversation.sellerId) return true;
-  return actor.role === "admin" && actor.cooperativeId !== null && actor.cooperativeId === sellerCooperativeId;
+  return actor.role === "admin" && (conversation.sellerId === null || (actor.cooperativeId !== null && actor.cooperativeId === sellerCooperativeId));
 }
 
 export function canSubmitProfileVerification(user: Pick<OperationalUser, "role" | "verificationStatus">) {

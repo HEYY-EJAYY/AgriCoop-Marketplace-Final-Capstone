@@ -22,6 +22,9 @@ export function PublicHeader() {
     { label: "Marketplace", href: "/marketplace" },
     { label: "How it works", href: "/about" },
     { label: "Support", href: "/support" },
+    ...(user ? [{ label: "My activity", href: "/activity" }] : []),
+    ...(user?.role === "admin" ? [{ label: "Cooperative reports", href: "/reports" }] : []),
+    ...(user?.role === "superadmin" ? [{ label: "Platform reports", href: "/reports" }] : []),
   ];
   return (
     <header className="sticky top-0 z-40 border-b border-[#e4e7da] bg-[#fffdf8]/94 backdrop-blur">
@@ -35,7 +38,7 @@ export function PublicHeader() {
         </div>
         <button className="grid h-10 w-10 place-items-center rounded-xl text-[#1f5a3c] hover:bg-[#edf3e9] md:hidden" onClick={() => setOpen(!open)} aria-label="Toggle menu"><Menu /></button>
       </div>
-      {open && <div className="border-t border-[#e4e7da] bg-[#fffdf8] px-5 py-4 md:hidden"><div className="mx-auto flex max-w-7xl flex-col gap-3">{nav.map(item => <Link onClick={() => setOpen(false)} key={item.href} href={item.href} className="py-2 font-bold text-[#315640] no-underline">{item.label}</Link>)}{user ? <Link href="/dashboard" className="agri-button mt-1 text-sm no-underline">My workspace</Link> : <button className="agri-button mt-1 text-sm" onClick={() => goToAuth()}>Join AgriCoop</button>}</div></div>}
+      {open && <div className="border-t border-[#e4e7da] bg-[#fffdf8] px-5 py-4 md:hidden"><div className="mx-auto flex max-w-7xl flex-col gap-3">{nav.map(item => <Link onClick={() => setOpen(false)} key={item.href} href={item.href} className="py-2 font-bold text-[#315640] no-underline">{item.label}</Link>)}{user ? <><Link onClick={() => setOpen(false)} href="/dashboard" className="agri-button mt-1 text-sm no-underline">My workspace</Link><button className="agri-ghost justify-center text-sm" onClick={() => { setOpen(false); void logout(); }}>Sign out</button></> : <button className="agri-button mt-1 text-sm" onClick={() => goToAuth()}>Join AgriCoop</button>}</div></div>}
     </header>
   );
 }
@@ -50,5 +53,5 @@ export function PageFrame({ children }: { children: ReactNode }) {
 
 export function WorkspaceHeader({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
   const { user, logout } = useAuth();
-  return <header className="border-b border-[#dde4d9] bg-[#fffdf8]"><div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8"><div className="flex items-start gap-3"><BrandMark compact /><div><p className="font-display text-2xl font-bold text-[#174a31]">{title}</p><p className="mt-1 max-w-xl text-sm text-[#627266]">{description}</p></div></div><div className="flex flex-wrap items-center gap-2"><Link href="/marketplace" className="agri-ghost text-sm no-underline"><Leaf size={16} /> Browse market</Link><Link href="/support" className="agri-ghost text-sm no-underline">Support</Link>{(user?.role === "buyer" || user?.role === "seller") && <Link href="/activity" className="agri-ghost text-sm no-underline">My activity</Link>}{(user?.role === "admin" || user?.role === "superadmin") && <Link href="/reports" className="agri-ghost text-sm no-underline">{user.role === "admin" ? "Cooperative reports" : "Platform reports"}</Link>}<span className="hidden rounded-full bg-[#edf3e9] px-3 py-2 text-sm font-bold text-[#315640] sm:inline">{user?.name || "Member"}</span><Button onClick={logout} variant="ghost" size="icon" aria-label="Sign out"><LogOut size={18} /></Button></div></div></header>;
+  return <header className="border-b border-[#dde4d9] bg-[#fffdf8]"><div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8"><div className="flex items-start gap-3"><BrandMark compact /><div><p className="font-display text-2xl font-bold text-[#174a31]">{title}</p><p className="mt-1 max-w-xl text-sm text-[#627266]">{description}</p></div></div><div className="flex flex-wrap items-center gap-2"><Link href="/marketplace" className="agri-ghost text-sm no-underline"><Leaf size={16} /> Browse market</Link><Link href="/support" className="agri-ghost text-sm no-underline">Support</Link>{user && <Link href="/activity" className="agri-ghost text-sm no-underline">My activity</Link>}{(user?.role === "admin" || user?.role === "superadmin") && <Link href="/reports" className="agri-ghost text-sm no-underline">{user.role === "admin" ? "Cooperative reports" : "Platform reports"}</Link>}<span className="hidden rounded-full bg-[#edf3e9] px-3 py-2 text-sm font-bold text-[#315640] sm:inline">{user?.name || "Member"}</span><Button onClick={logout} variant="ghost" size="icon" aria-label="Sign out"><LogOut size={18} /></Button></div></div></header>;
 }

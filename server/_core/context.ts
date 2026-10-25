@@ -9,7 +9,11 @@ export async function createContext(opts: CreateExpressContextOptions): Promise<
   let user: User | null = null;
   const bearer = opts.req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (bearer) {
-    const { data } = await supabaseAdmin.auth.getUser(bearer);
+    const { data, error } = await supabaseAdmin.auth.getUser(bearer);
+    if (error || !data.user) {
+      console.warn("[auth.context] Supabase Auth token verification failed.");
+      return { req: opts.req, res: opts.res, user };
+    }
     if (data.user) {
       const existing = await getUserByOpenId(data.user.id);
       if (existing) {
@@ -21,6 +25,8 @@ export async function createContext(opts: CreateExpressContextOptions): Promise<
           loginMethod: "supabase",
         });
         user = (await getUserByOpenId(data.user.id)) ?? existing;
+      } else {
+        console.warn("[auth.context] No marketplace profile matches the authenticated user.");
       }
     }
   }

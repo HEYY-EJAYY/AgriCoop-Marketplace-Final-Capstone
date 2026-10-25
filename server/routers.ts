@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies.js";
@@ -79,7 +79,7 @@ async function dbOrThrow() {
   return db;
 }
 
-async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { buyerId: number; sellerId?: number; productId?: number; subject: string; body: string; orderId?: number; quotationId?: number }) {
+async function openSupportThread<T extends { insert: (...args: any[]) => any }>(db: T, input: { buyerId: number; sellerId?: number; productId?: number; subject: string; body: string; orderId?: number; quotationId?: number }) {
   const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).returning({ id: conversations.id });
   await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
   return thread.id;
@@ -388,7 +388,7 @@ export const appRouter = router({
 
   quotations: router({
     buyerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
       return getBuyerQuotations(ctx.user.id);
     }),
     sellerMine: protectedProcedure.query(({ ctx }) => {
@@ -398,7 +398,7 @@ export const appRouter = router({
     request: protectedProcedure
       .input(z.object({ productId: z.number().int().positive(), requestedQty: z.number().int().positive(), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
         const product = await getProductById(input.productId);
         if (!product || product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible") throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
         try { assertNotSelfTransaction(buyer.id, product.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." }); }
@@ -413,48 +413,77 @@ export const appRouter = router({
         if (input.requestedQty > product.stockQty) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${product.stockQty} ${product.unit} are currently available.` });
         }
-        const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).returning({ id: quotations.id });
-        const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
+        const conversationId = await db.transaction(async tx => {
+          const [quotation] = await tx.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).returning({ id: quotations.id });
+          return openSupportThread(tx, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
+        });
         return { success: true, conversationId };
       }),
     respond: protectedProcedure
-      .input(z.object({ quotationId: z.number().int().positive(), quotedPriceCents: z.number().int().positive(), sellerNote: z.string().max(600).optional(), status: z.enum(["responded", "declined"]) }))
+      .input(z.object({ quotationId: z.number().int().positive(), quotedPriceCents: z.number().int().positive().optional(), sellerNote: z.string().max(600).optional(), status: z.enum(["responded", "declined"]) }).superRefine((input, context) => {
+        if (input.status === "responded" && input.quotedPriceCents === undefined) {
+          context.addIssue({ code: "custom", path: ["quotedPriceCents"], message: "Enter a valid price before replying to this quotation." });
+        }
+      }))
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller"]);
         const db = await dbOrThrow();
         const current = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
         if (!current || current.sellerId !== seller.id || !isQuotationOpen(current.status)) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
         const { quotationId, ...values } = input;
-        const result = await db.update(quotations).set({ ...values, respondedAt: new Date() }).where(and(eq(quotations.id, quotationId), eq(quotations.sellerId, seller.id), eq(quotations.status, "requested"))).returning({ id: quotations.id });
-        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
+        await db.transaction(async tx => {
+          const respondedAt = new Date();
+          const result = await tx.update(quotations).set({ ...values, quotedPriceCents: input.status === "responded" ? input.quotedPriceCents! : null, updatedAt: respondedAt, respondedAt }).where(and(eq(quotations.id, quotationId), eq(quotations.sellerId, seller.id), eq(quotations.status, "requested"))).returning({ id: quotations.id });
+          if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
+          const thread = (await tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.quotationId, quotationId)).limit(1))[0];
+          if (thread) {
+            const body = input.status === "declined"
+              ? `The seller declined this quotation request.${input.sellerNote ? ` ${input.sellerNote}` : ""}`
+              : `Quotation response: ${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(input.quotedPriceCents! / 100)} per unit.${input.sellerNote ? ` ${input.sellerNote}` : ""}`;
+            await tx.insert(conversationMessages).values({ conversationId: thread.id, senderId: seller.id, body });
+            await tx.update(conversations).set({ updatedAt: respondedAt }).where(eq(conversations.id, thread.id));
+          }
+        });
         return { success: true };
       }),
     decide: protectedProcedure
       .input(z.object({ quotationId: z.number().int().positive(), status: z.enum(["accepted", "declined"]) }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         const quotation = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
         if (!quotation || !canDecideBuyerQuotation(buyer.id, quotation)) {
           throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
         }
-        const result = await db.update(quotations)
-          .set({ status: input.status })
-          .where(and(
-            eq(quotations.id, input.quotationId),
-            eq(quotations.buyerId, buyer.id),
-            eq(quotations.status, "responded"),
-          )).returning({ id: quotations.id });
-        if (!result.length) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
-        }
+        await db.transaction(async tx => {
+          const updatedAt = new Date();
+          const result = await tx.update(quotations)
+            .set({ status: input.status, updatedAt })
+            .where(and(
+              eq(quotations.id, input.quotationId),
+              eq(quotations.buyerId, buyer.id),
+              eq(quotations.status, "responded"),
+            )).returning({ id: quotations.id });
+          if (!result.length) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
+          }
+          const thread = (await tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.quotationId, input.quotationId)).limit(1))[0];
+          if (thread) {
+            await tx.insert(conversationMessages).values({
+              conversationId: thread.id,
+              senderId: buyer.id,
+              body: input.status === "accepted" ? "The buyer accepted this quotation." : "The buyer declined this quotation.",
+            });
+            await tx.update(conversations).set({ updatedAt }).where(eq(conversations.id, thread.id));
+          }
+        });
         return { success: true };
       }),
   }),
 
   orders: router({
     buyerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
       return getBuyerOrders(ctx.user.id);
     }),
     sellerMine: protectedProcedure.query(({ ctx }) => {
@@ -464,7 +493,7 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional(), quotationId: z.number().int().positive().optional() }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
         const listedProducts = await db.select().from(products).where(inArray(products.id, productIds));
@@ -488,11 +517,14 @@ export const appRouter = router({
           quotedPriceCents = quotation.quotedPriceCents;
         }
         const pricing = priceOrderItems(prepared.items, prepared.productMap, quotedPriceCents);
-        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).returning({ id: orders.id });
-        await db.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
-        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: pricing.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
-        const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: prepared.sellerId, orderId: newOrder.id, quotationId: input.quotationId, subject: `Order #${newOrder.id} support`, body: "Please confirm availability, F2F payment coordination, and handover details." });
-        return { success: true, orderId: newOrder.id, conversationId };
+        const result = await db.transaction(async tx => {
+          const [newOrder] = await tx.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).returning({ id: orders.id });
+          await tx.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
+          await tx.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: pricing.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
+          const conversationId = await openSupportThread(tx, { buyerId: buyer.id, sellerId: prepared.sellerId, orderId: newOrder.id, quotationId: input.quotationId, subject: `Order #${newOrder.id} support`, body: "Please confirm availability and coordinate the face-to-face payment and handover here. The seller will confirm the order and mark it ready when prepared." });
+          return { orderId: newOrder.id, conversationId };
+        });
+        return { success: true, ...result };
       }),
     updateStatus: protectedProcedure
       .input(z.object({
@@ -512,7 +544,7 @@ export const appRouter = router({
         }
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
         try {
           await db.transaction(async tx => {
@@ -520,8 +552,11 @@ export const appRouter = router({
               .where(eq(orders.id, input.orderId))
               .for("update");
             if (!orderRow) throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
-            if (!canUpdateOrderStatus(actor, orderRow, input.status)) {
-              throw new TRPCError({ code: "FORBIDDEN", message: "Only the seller's cooperative Admin Officer or a SuperAdmin can complete or cancel this order. Sellers may only confirm orders or mark them ready." });
+            const [sellerScope] = actor.role === "admin" && orderRow.cooperativeId === null
+              ? await tx.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, orderRow.sellerId)).limit(1)
+              : [];
+            if (!canUpdateOrderStatus(actor, { ...orderRow, cooperativeId: orderRow.cooperativeId ?? sellerScope?.cooperativeId ?? null }, input.status)) {
+              throw new TRPCError({ code: "FORBIDDEN", message: "Buyers may cancel only their own orders. Sellers may confirm or mark their orders ready; the cooperative Officer or a SuperAdmin handles completion and cancellation." });
             }
             if (!canTransitionOrder(orderRow.status, input.status)) {
               const message = orderRow.status === "completed" || orderRow.status === "cancelled"
@@ -531,6 +566,7 @@ export const appRouter = router({
             }
 
             const previousStatus = orderRow.status;
+            let completionTotalCents: number | undefined;
             if (input.status === "completed") {
               const orderedItems = await tx.select().from(orderItems)
                 .where(eq(orderItems.orderId, input.orderId))
@@ -568,6 +604,7 @@ export const appRouter = router({
                 });
               });
               const completedAt = new Date();
+              completionTotalCents = completion.totalCents;
               for (const item of completion.items) {
                 await tx.update(orderItems)
                   .set({ quantity: item.quantity })
@@ -618,6 +655,21 @@ export const appRouter = router({
                 note: input.paymentReferenceNote ?? null,
               });
             }
+            const orderThread = (await tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.orderId, input.orderId)).limit(1))[0];
+            if (orderThread) {
+              const statusMessage: Record<typeof input.status, string> = {
+                confirmed: "The seller confirmed this order.",
+                ready: "The seller marked this order ready for handover.",
+                completed: `The ${actor.role === "admin" ? "cooperative officer" : "SuperAdmin"} completed this order. Final recorded total: ${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format((completionTotalCents ?? orderRow.totalCents) / 100)}.`,
+                cancelled: `This order was cancelled by the ${actor.role === "buyer" ? "buyer" : actor.role === "admin" ? "cooperative officer" : "SuperAdmin"}. No inventory was deducted.`,
+              };
+              await tx.insert(conversationMessages).values({
+                conversationId: orderThread.id,
+                senderId: actor.id,
+                body: `${statusMessage[input.status]}${input.paymentReferenceNote ? ` Payment note: ${input.paymentReferenceNote}` : ""}`,
+              });
+              await tx.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, orderThread.id));
+            }
           });
         } catch (error) {
           if (error instanceof TRPCError) throw error;
@@ -642,7 +694,8 @@ export const appRouter = router({
         const db = await dbOrThrow();
         const orderDetail = await getOrderDetail(input.orderId);
         if (!orderDetail) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
-        if (!canAccessOrderForCooperative(actor, orderDetail.order.cooperativeId)) {
+        const [orderSeller] = await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);
+        if (!canAccessOrderForCooperative(actor, orderDetail.order.cooperativeId ?? orderSeller?.cooperativeId ?? null)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only view orders in their cooperative." });
         }
         const seller = await db.select().from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);

@@ -6,8 +6,8 @@ This repository builds a Vite client and serves its tRPC API from an Express Ver
 
 1. Use the Supabase PostgreSQL transaction pooler and its connection string on port 6543. Store that URL only in server environment variables.
 2. The server uses postgres-js with `prepare: false` and a small pool for Vercel function reuse.
-3. Create or select a Supabase project. The `product-images` bucket is created/configured by the server as public, with a 5 MiB file limit and JPEG/PNG/WebP MIME restrictions.
-4. Choose a Vercel region close to the database after selecting the provider and database region. No region is hard-coded because those choices are not known yet.
+3. Select the configured Supabase project. The `product-images` bucket is created/configured by the server as public, with a 5 MiB file limit and JPEG/PNG/WebP MIME restrictions.
+4. Check the Vercel project’s configured function region and keep it close to the Supabase database region where practical. Region selection is a Vercel project setting, not hard-coded in this repository.
 
 ## 2. Import and configure Vercel
 
@@ -64,15 +64,12 @@ Deploy from the Vercel dashboard or with the Vercel CLI. Check the deployment lo
 - marketplace listing and product image upload work;
 - quotation/order workflows and conversation polling work.
 
-Conversation updates use tRPC polling (messages every 5 seconds, conversation list every 10 seconds) rather than in-memory SSE/pub-sub, which cannot reliably connect separate serverless invocations.
+Conversation, order, and quotation views use short tRPC polling (about every 2.5 seconds for conversation messages and role activity views). No long-lived SSE connection or Supabase Realtime subscription is used by the current Vercel deployment.
 
 ## Rollback
 
 Use Vercel's deployment rollback to restore the previous application build. The user-profile migration is additive; rolling back application code does not require dropping columns. If a database rollback is ever necessary, stop writes and restore the verified backup using the provider's procedure. Do not drop, truncate, rename, or manually reverse schema objects as part of a routine app rollback.
 
-## Remaining manual choices
+## Current hosting model
 
-- Select a hosted MySQL provider and region, then choose the nearest supported Vercel region.
-- Configure production Vercel environment variables and run migrations after taking a backup.
-- Configure Supabase Site URL and redirect URLs.
-- Add and validate a custom domain, if desired.
+The deployed application uses Vercel for the Vite static frontend and the Express/tRPC serverless function, Supabase Auth for identity, Supabase Postgres for application data, and Supabase Storage for product images. This is the current production architecture; it is not a MySQL/Drizzle deployment. Refer to [docs/PLATFORM_GUIDE.md](./docs/PLATFORM_GUIDE.md) for the feature-level architecture and role flows.

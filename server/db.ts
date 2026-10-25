@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
@@ -222,7 +222,8 @@ export async function getOfficerOverview(cooperativeId: number | null) {
   if (!db || !cooperativeId) return { members: [], products: [], orders: [], quotations: [], transactions: [] };
   const members = await db.select().from(users).where(eq(users.cooperativeId, cooperativeId));
   const listings = await db.select().from(products).where(eq(products.cooperativeId, cooperativeId));
-  const orderRows = await db.select().from(orders).where(eq(orders.cooperativeId, cooperativeId)).orderBy(desc(orders.createdAt));
+  const cooperativeSellerIds = db.select({ id: users.id }).from(users).where(eq(users.cooperativeId, cooperativeId));
+  const orderRows = await db.select().from(orders).where(or(eq(orders.cooperativeId, cooperativeId), inArray(orders.sellerId, cooperativeSellerIds))).orderBy(desc(orders.createdAt));
   const quotationRows = await db
     .select({ quotation: quotations, productName: products.name, unit: products.unit, buyerName: users.name })
     .from(quotations)
@@ -234,7 +235,7 @@ export async function getOfficerOverview(cooperativeId: number | null) {
     .select()
     .from(transactions)
     .innerJoin(orders, eq(transactions.orderId, orders.id))
-    .where(eq(orders.cooperativeId, cooperativeId));
+    .where(or(eq(orders.cooperativeId, cooperativeId), inArray(orders.sellerId, cooperativeSellerIds)));
   return { members, products: listings, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
 }
 
@@ -244,7 +245,7 @@ export async function getAdminOverview(cooperativeId?: number | null) {
   const scoped = cooperativeId !== undefined;
   const userScope = !scoped ? undefined : cooperativeId === null ? eq(users.id, -1) : eq(users.cooperativeId, cooperativeId);
   const productScope = !scoped ? undefined : cooperativeId === null ? eq(products.id, -1) : eq(products.cooperativeId, cooperativeId);
-  const orderScope = !scoped ? undefined : cooperativeId === null ? eq(orders.id, -1) : eq(orders.cooperativeId, cooperativeId);
+  const orderScope = !scoped ? undefined : cooperativeId === null ? eq(orders.id, -1) : or(eq(orders.cooperativeId, cooperativeId), inArray(orders.sellerId, db.select({ id: users.id }).from(users).where(eq(users.cooperativeId, cooperativeId))));
   const memberRows = await db
     .select({ user: users, cooperativeName: cooperatives.name })
     .from(users)
@@ -256,7 +257,7 @@ export async function getAdminOverview(cooperativeId?: number | null) {
     db.select().from(products).where(productScope).orderBy(desc(products.createdAt)),
     db.select().from(orders).where(orderScope).orderBy(desc(orders.createdAt)),
     db.select({ quotation: quotations, unit: products.unit }).from(quotations).innerJoin(products, eq(quotations.productId, products.id)).where(productScope).orderBy(desc(quotations.createdAt)),
-    db.select().from(transactions).where(!scoped ? undefined : cooperativeId === null ? eq(transactions.orderId, -1) : inArray(transactions.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.cooperativeId, cooperativeId)))).orderBy(desc(transactions.completedAt)),
+    db.select().from(transactions).where(!scoped ? undefined : cooperativeId === null ? eq(transactions.orderId, -1) : inArray(transactions.orderId, db.select({ id: orders.id }).from(orders).where(orderScope))).orderBy(desc(transactions.completedAt)),
   ]);
   return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, quotations: quotationRows, transactions: transactionRows };
 }
@@ -273,6 +274,7 @@ export async function getConversationsForUser(userId: number, canSeeAll = false,
   if (!db) return [];
   const visibleConversations = [eq(conversations.buyerId, userId), eq(conversations.sellerId, userId)];
   if (cooperativeId !== null) {
+    visibleConversations.push(isNull(conversations.sellerId));
     visibleConversations.push(inArray(conversations.sellerId, db.select({ id: users.id }).from(users).where(eq(users.cooperativeId, cooperativeId))));
   }
   return db.select({ conversation: conversations, ownerName: users.name, productName: products.name, productUnit: products.unit, requestedQty: quotations.requestedQty })
