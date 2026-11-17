@@ -116,3 +116,11 @@ Additive indexes on `products` (category, priceCents, stockQty, cooperativeId) a
 | LCP (mobile, LH 13.5) | Prior After table **3.1s** (LH 12.6) | Lab **4.9s** under LH 13 Slow-4G (FCP 3.8s, TBT 20ms); methodology differs from LH 12.6 baseline — no H1 opacity animation reintroduced; badge fetch deferred via `requestIdleCallback` |
 
 Playwright home (prod): overflow / padding / badge placement / axe serious+critical = **0** at 360, 1280, 1920.
+
+## Mobile menu overlay (2026-11-17)
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Menu open CLS / content push | In-flow drawer grew header → heading `y` shifted | Fixed overlay; Playwright asserts heading `getBoundingClientRect` unchanged (±2px) |
+| Body scroll while open | Page could still scroll behind | `position: fixed` lock + restore; scrollbar gap compensated |
+| Desktop CLS (home) | **0.001** (prior hero pass) | Unchanged expectation (menu is `lg:hidden`) |

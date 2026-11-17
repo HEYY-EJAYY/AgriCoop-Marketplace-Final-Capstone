@@ -38,6 +38,7 @@ There is **no** `/cart` route; basket state lives on `/marketplace` in the `#ord
 | Fix | Where it shows up in UX |
 |-----|-------------------------|
 | **Full-width shell** `agri-shell` / `--agri-content-max: 1600px` + full-bleed bands | Shared `.agri-shell`; hero is true 2-col grid; glass badge bottom-right; marketplace banner is viewport-wide without negative-margin hacks |
+| **Mobile menu overlay** (was in-flow drawer under header) | Shared `MobileMenuOverlay`: fixed `dvh` panel, no content push, scroll lock, focus trap; used by `PublicHeader` + `WorkspaceHeader` for all roles |
 | **Header marketplace search** | `MarketplaceSearch` in `PublicHeader` (desktop inline, mobile second row); syncs `?q=` on `/marketplace` |
 | **Mobile bottom navigation** | `MobileBottomNav` on `PageFrame` only (`md:hidden`, 5 tabs) |
 | **`toUserFacingErrorMessage`** (no raw SQL) | `shared/userFacingErrors.ts`; `Marketplace` load failure, `Dashboard` `QueryErrorState`, `RoleConflictsPanel` reconcile errors |

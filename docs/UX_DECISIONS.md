@@ -28,7 +28,13 @@ Dashboard · Users & Roles · Moderation · Orders · System · Audit Logs | not
 
 Profile menu (all roles): My Profile · My Workspace · Messages · Support · Log Out (last).
 
-Mobile: hamburger drawer + bottom nav (role-aware). Guests get Home / Browse / Join.
+Mobile: hamburger **overlay** + bottom nav (role-aware). Guests get Home / Browse / Join.
+
+### Mobile menu (overlay) — root cause
+
+**Cause:** `MobileNavDrawer` rendered as an in-flow block under the sticky header (`border-t` panel inside `<header>`). Opening it grew the header and pushed page content down (layout shift).
+
+**Fix:** One shared `MobileMenuOverlay` for logged-out and all four roles (also wired into `WorkspaceHeader`). `position: fixed` + `100dvh` backdrop/panel, body scroll lock with scrollbar-gap compensation, Esc / backdrop / link / resize-to-desktop close, focus trap + return to toggle, `aria-expanded` / `aria-controls`. Page under the menu does not reflow.
 
 ## Messaging vs Support vs Tickets
 

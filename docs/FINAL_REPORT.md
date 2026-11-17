@@ -80,18 +80,21 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 
 ---
 
+## Mobile menu overlay
+
+| Item | Detail |
+|------|--------|
+| Root cause | In-flow `MobileNavDrawer` inside sticky header pushed page content |
+| Fix | Shared fixed `MobileMenuOverlay` (`100dvh`) for public + workspace headers |
+| Tests | `e2e/mobile-menu.spec.ts` (375/768) + unit role menus for buyer/seller/admin/superadmin |
+
 ## Deploy
 
 | Item | Value |
 |------|-------|
-| Commit | `6b49478` |
-| Production | `dpl_EHa7tGmgKfkv27aizfkx8Yjrt7aK` |
-| readyState | **READY** |
+| Prior READY | `dpl_EHa7tGmgKfkv27aizfkx8Yjrt7aK` @ `6b49478` |
+| Follow-up | Mobile menu overlay deploy (see latest push) |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/`, `/marketplace` **200**; `/api/health` ok |
-| Playwright | Hero layout + axe **6/6** (360/1280/1920) on production |
-| Desktop CLS | **0.001** (was 0.243 before Fraunces optional + fallback metrics) |
-| Runtime logs | No errors on this deployment window |
 
 ---
 

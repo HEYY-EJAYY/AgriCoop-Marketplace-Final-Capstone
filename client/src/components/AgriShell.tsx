@@ -12,6 +12,7 @@ import {
   type MobileNavItem,
   type NavItem,
 } from "@/navigation/roleNav";
+import { MobileMenuOverlay, MobileMenuToggle } from "@/components/MobileMenuOverlay";
 import {
   Bell,
   ChevronDown,
@@ -19,15 +20,13 @@ import {
   LayoutDashboard,
   LayoutGrid,
   LogOut,
-  Menu,
   MessageSquare,
   Package,
   ShoppingBasket,
   Ticket,
   UserRound,
-  X,
 } from "lucide-react";
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -292,21 +291,19 @@ function MobileBottomNav() {
   );
 }
 
-function HeaderRightActions({ drawerOpen, setDrawerOpen }: { drawerOpen: boolean; setDrawerOpen: (open: boolean) => void }) {
+function HeaderRightActions({
+  menuOpen,
+  onToggleMenu,
+  toggleRef,
+}: {
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  toggleRef: React.RefObject<HTMLButtonElement | null>;
+}) {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return (
-      <button
-        type="button"
-        className="grid h-11 w-11 place-items-center rounded-xl text-[#1f5a3c] hover:bg-[#edf3e9] lg:hidden"
-        onClick={() => setDrawerOpen(!drawerOpen)}
-        aria-label={drawerOpen ? "Close menu" : "Open menu"}
-        aria-expanded={drawerOpen}
-      >
-        {drawerOpen ? <X size={20} /> : <Menu size={20} />}
-      </button>
-    );
+    return <MobileMenuToggle open={menuOpen} onToggle={onToggleMenu} toggleRef={toggleRef} />;
   }
 
   if (user) {
@@ -325,15 +322,7 @@ function HeaderRightActions({ drawerOpen, setDrawerOpen }: { drawerOpen: boolean
           <NotificationBell />
           <ProfileMenu />
         </div>
-        <button
-          type="button"
-          className="grid h-11 w-11 place-items-center rounded-xl text-[#1f5a3c] hover:bg-[#edf3e9] lg:hidden"
-          onClick={() => setDrawerOpen(!drawerOpen)}
-          aria-label={drawerOpen ? "Close menu" : "Open menu"}
-          aria-expanded={drawerOpen}
-        >
-          {drawerOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
+        <MobileMenuToggle open={menuOpen} onToggle={onToggleMenu} toggleRef={toggleRef} />
       </>
     );
   }
@@ -355,87 +344,19 @@ function HeaderRightActions({ drawerOpen, setDrawerOpen }: { drawerOpen: boolean
           Join AgriCoop
         </Button>
       </div>
-      <button
-        type="button"
-        className="grid h-11 w-11 place-items-center rounded-xl text-[#1f5a3c] hover:bg-[#edf3e9] lg:hidden"
-        onClick={() => setDrawerOpen(!drawerOpen)}
-        aria-label={drawerOpen ? "Close menu" : "Open menu"}
-        aria-expanded={drawerOpen}
-      >
-        {drawerOpen ? <X size={20} /> : <Menu size={20} />}
-      </button>
+      <MobileMenuToggle open={menuOpen} onToggle={onToggleMenu} toggleRef={toggleRef} />
     </>
   );
 }
 
-function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, logout } = useAuth();
-  const centerItems = user ? centerNavForRole(user.role) : LOGGED_OUT_CENTER;
-  const drawerLinkClass =
-    "flex min-h-11 items-center rounded-xl px-3 text-sm font-bold text-[#315640] no-underline hover:bg-[#edf3e9]";
-
-  if (!open) return null;
-
-  return (
-    <div className="border-t border-[#e4e7da] bg-[#fffdf8] lg:hidden">
-      <div className={`${SHELL} flex flex-col gap-1 py-3`}>
-        <NavLinks items={centerItems} className="flex flex-col gap-1" onNavigate={onClose} />
-        {user ? (
-          <>
-            <MenuDivider />
-            <Link href="/profile" onClick={onClose} className={drawerLinkClass}>
-              My Profile
-            </Link>
-            <Link href="/dashboard" onClick={onClose} className={drawerLinkClass}>
-              My Workspace
-            </Link>
-            <Link href="/messages" onClick={onClose} className={drawerLinkClass}>
-              Messages
-            </Link>
-            <Link href="/support" onClick={onClose} className={drawerLinkClass}>
-              Support
-            </Link>
-            <button
-              type="button"
-              className={`${drawerLinkClass} text-left text-[#a34838]`}
-              onClick={() => {
-                onClose();
-                void logout();
-              }}
-            >
-              Log Out
-            </button>
-          </>
-        ) : (
-          <>
-            <MenuDivider />
-            <Link href="/auth" onClick={onClose} className={drawerLinkClass}>
-              Login
-            </Link>
-            <button
-              type="button"
-              className="mt-1 min-h-11 rounded-xl bg-[#1f4f36] px-3 text-sm font-bold text-white"
-              onClick={() => {
-                onClose();
-                goToAuth("PublicHeader.drawer");
-              }}
-            >
-              Join AgriCoop
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function PublicHeader() {
-  const { user, loading } = useAuth();
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { user, loading, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
   const centerItems = !loading && user ? centerNavForRole(user.role) : LOGGED_OUT_CENTER;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#e4e7da] bg-[#fffdf8]">
+    <header className="sticky top-0 z-50 border-b border-[#e4e7da] bg-[#fffdf8]" data-testid="site-header">
       <div className={`${SHELL} relative flex h-16 flex-nowrap items-center gap-3 lg:h-[4.25rem] lg:gap-4`}>
         <div className="flex shrink-0 items-center gap-2">
           <BrandMark />
@@ -452,10 +373,21 @@ export function PublicHeader() {
         />
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <HeaderRightActions drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
+          <HeaderRightActions
+            menuOpen={menuOpen}
+            onToggleMenu={() => setMenuOpen(value => !value)}
+            toggleRef={toggleRef}
+          />
         </div>
       </div>
-      <MobileNavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <MobileMenuOverlay
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        navItems={centerItems}
+        user={user ? { name: user.name, role: user.role } : null}
+        onLogout={() => void logout()}
+        toggleRef={toggleRef}
+      />
     </header>
   );
 }
@@ -491,11 +423,13 @@ export function PageFrame({ children }: { children: ReactNode }) {
 }
 
 export function WorkspaceHeader({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const compactNav = centerNavForRole(user?.role);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
 
   return (
-    <header className="border-b border-[#dde4d9] bg-[#fffdf8]">
+    <header className="sticky top-0 z-50 border-b border-[#dde4d9] bg-[#fffdf8]" data-testid="site-header">
       <div className={`${SHELL} flex flex-col gap-4 py-4 lg:flex-row lg:items-center lg:justify-between lg:gap-5`}>
         <div className="flex min-w-0 items-start gap-3">
           <BrandMark compact />
@@ -503,19 +437,30 @@ export function WorkspaceHeader({ title, description, children }: { title: strin
             <p className="font-display text-2xl font-bold text-[#174a31]">{title}</p>
             <p className="mt-1 max-w-xl text-sm text-[#627266]">{description}</p>
           </div>
+          <div className="ml-auto lg:hidden">
+            <MobileMenuToggle open={menuOpen} onToggle={() => setMenuOpen(value => !value)} toggleRef={toggleRef} />
+          </div>
         </div>
 
         <NavLinks
           items={compactNav}
-          className="flex flex-wrap items-center gap-0.5 lg:justify-center"
+          className="hidden flex-wrap items-center gap-0.5 lg:flex lg:justify-center"
         />
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="hidden shrink-0 flex-wrap items-center gap-2 lg:flex">
           <NotificationBell />
           <ProfileMenu />
           {children}
         </div>
       </div>
+      <MobileMenuOverlay
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        navItems={compactNav}
+        user={user ? { name: user.name, role: user.role } : null}
+        onLogout={() => void logout()}
+        toggleRef={toggleRef}
+      />
     </header>
   );
 }
