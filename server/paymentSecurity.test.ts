@@ -46,6 +46,13 @@ describe("seller online payment secrecy", () => {
 });
 
 describe("receipt path ownership", () => {
+  it("rejects online checkout without a receipt at order create", () => {
+    const routers = readFileSync(fileURLToPath(new URL("./routers.ts", import.meta.url)), "utf8");
+    expect(routers).toContain('if (!input.receiptStoragePath)');
+    expect(routers).toContain("Upload your payment receipt before placing an online payment order.");
+    expect(routers).toContain("assertBuyerOwnsReceiptPath(input.receiptStoragePath, buyer.id)");
+  });
+
   it("accepts checkout and order-scoped buyer paths only", () => {
     expect(() => assertBuyerOwnsReceiptPath("payment-proofs/7/checkout/receipt.png", 7)).not.toThrow();
     expect(() => assertBuyerOwnsReceiptPath("payment-proofs/7/19/receipt.png", 7, 19)).not.toThrow();
