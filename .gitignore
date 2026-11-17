@@ -132,3 +132,7 @@ client/public/__manus__/version.json
 .env*
 !.env.example
 supabase/.temp/
+
+# Local agent snapshots/backups (never commit)
+.local/
+

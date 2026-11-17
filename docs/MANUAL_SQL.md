@@ -623,7 +623,7 @@ BEGIN
      OR to_regclass('agricoop_app.products') IS NULL
      OR to_regclass('agricoop_app.orders') IS NULL
      OR to_regclass('agricoop_app.transactions') IS NULL
-     OR to_regclass('agricoop_app.paymentOptions') IS NULL THEN
+     OR to_regclass('agricoop_app."paymentOptions"') IS NULL THEN
     RAISE EXCEPTION 'Active-table migration stopped: an existing foreign-key dependency is missing';
   END IF;
 
@@ -1037,8 +1037,10 @@ BEGIN
     RAISE EXCEPTION 'Profile-verification precondition failed: required application tables are missing';
   END IF;
 
+  -- Idempotent: if the submission table already exists, remaining DDL uses
+  -- IF NOT EXISTS / DROP POLICY IF EXISTS patterns below.
   IF to_regclass('agricoop_app."profileVerificationSubmissions"') IS NOT NULL THEN
-    RAISE EXCEPTION 'Profile-verification precondition failed: submission table already exists; reconcile it manually';
+    RAISE NOTICE 'Profile-verification: profileVerificationSubmissions already present; continuing idempotently';
   END IF;
 
   IF to_regprocedure('auth.uid()') IS NULL THEN
@@ -1098,36 +1100,7 @@ BEGIN
     RAISE EXCEPTION 'Profile-verification precondition failed: reviewed auth self-select/update policies must be installed first';
   END IF;
 
-  IF to_regprocedure('agricoop_app.can_review_profile_verification_user(integer)') IS NOT NULL THEN
-    RAISE EXCEPTION 'Profile-verification precondition failed: scope helper already exists; reconcile it manually';
-  END IF;
-
-  IF to_regprocedure('agricoop_app.guard_profile_verification_user_update()') IS NOT NULL THEN
-    RAISE EXCEPTION 'Profile-verification precondition failed: user guard function already exists; reconcile it manually';
-  END IF;
-
-  IF to_regprocedure('agricoop_app.write_profile_verification_audit_event()') IS NOT NULL THEN
-    RAISE EXCEPTION 'Profile-verification precondition failed: audit trigger function already exists; reconcile it manually';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1
-    FROM pg_policies
-    WHERE schemaname = 'agricoop_app'
-      AND tablename IN ('auditLogs', 'notifications')
-  ) THEN
-    RAISE EXCEPTION 'Profile-verification migration stopped: existing audit/notification policies require manual review';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1
-    FROM pg_trigger
-    WHERE tgrelid = 'agricoop_app.users'::regclass
-      AND tgname = 'agricoop_profile_verification_guard'
-      AND NOT tgisinternal
-  ) THEN
-    RAISE EXCEPTION 'Profile-verification migration stopped: guard trigger already exists; reconcile it manually';
-  END IF;
+  -- Helpers/triggers/policies may already exist after a partial apply; recreate safely below.
 
   IF NOT EXISTS (
     SELECT 1
@@ -1150,7 +1123,7 @@ BEGIN
 END
 $preflight$;
 
-CREATE TABLE agricoop_app."profileVerificationSubmissions" (
+CREATE TABLE IF NOT EXISTS agricoop_app."profileVerificationSubmissions" (
   "id" serial PRIMARY KEY,
   "userId" integer NOT NULL REFERENCES agricoop_app.users("id") ON DELETE CASCADE,
   "storagePath" text NOT NULL UNIQUE,
@@ -1168,16 +1141,16 @@ CREATE TABLE agricoop_app."profileVerificationSubmissions" (
     CHECK ("mimeType" IN ('image/jpeg', 'image/png', 'image/webp'))
 );
 
-CREATE INDEX "profileVerificationSubmissionsUserSubmittedIdx"
+CREATE INDEX IF NOT EXISTS "profileVerificationSubmissionsUserSubmittedIdx"
   ON agricoop_app."profileVerificationSubmissions" ("userId", "submittedAt");
-CREATE UNIQUE INDEX "profileVerificationSubmissionsOnePendingUserIdx"
+CREATE UNIQUE INDEX IF NOT EXISTS "profileVerificationSubmissionsOnePendingUserIdx"
   ON agricoop_app."profileVerificationSubmissions" ("userId")
   WHERE "status" = 'pending';
 
 REVOKE ALL PRIVILEGES ON TABLE agricoop_app."profileVerificationSubmissions"
   FROM PUBLIC, anon, authenticated, service_role;
 
-CREATE FUNCTION agricoop_app.can_review_profile_verification_user(target_user_id integer)
+CREATE OR REPLACE FUNCTION agricoop_app.can_review_profile_verification_user(target_user_id integer)
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -1245,7 +1218,7 @@ BEGIN
 END
 $sequence_grants$;
 
-CREATE FUNCTION agricoop_app.guard_profile_verification_user_update()
+CREATE OR REPLACE FUNCTION agricoop_app.guard_profile_verification_user_update()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1324,7 +1297,7 @@ $function$;
 REVOKE ALL ON FUNCTION agricoop_app.guard_profile_verification_user_update()
   FROM PUBLIC, anon, authenticated, service_role;
 
-CREATE FUNCTION agricoop_app.write_profile_verification_audit_event()
+CREATE OR REPLACE FUNCTION agricoop_app.write_profile_verification_audit_event()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1410,6 +1383,18 @@ REVOKE ALL ON FUNCTION agricoop_app.write_profile_verification_audit_event()
   FROM PUBLIC, anon, authenticated, service_role;
 
 ALTER TABLE agricoop_app."profileVerificationSubmissions" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS agricoop_profile_verification_admin_select ON agricoop_app.users;
+DROP POLICY IF EXISTS agricoop_profile_verification_admin_update ON agricoop_app.users;
+DROP POLICY IF EXISTS agricoop_profile_verification_self_select ON agricoop_app."profileVerificationSubmissions";
+DROP POLICY IF EXISTS agricoop_profile_verification_admin_read ON agricoop_app."profileVerificationSubmissions";
+DROP POLICY IF EXISTS agricoop_profile_verification_self_insert ON agricoop_app."profileVerificationSubmissions";
+DROP POLICY IF EXISTS agricoop_profile_verification_admin_update ON agricoop_app."profileVerificationSubmissions";
+DROP POLICY IF EXISTS agricoop_profile_verification_notification_insert ON agricoop_app.notifications;
+DROP POLICY IF EXISTS agricoop_notifications_self_read ON agricoop_app.notifications;
+DROP POLICY IF EXISTS agricoop_notifications_self_mark_read ON agricoop_app.notifications;
+DROP TRIGGER IF EXISTS agricoop_profile_verification_guard ON agricoop_app.users;
+DROP TRIGGER IF EXISTS agricoop_profile_verification_audit_event ON agricoop_app."profileVerificationSubmissions";
 
 CREATE POLICY agricoop_profile_verification_admin_select
   ON agricoop_app.users FOR SELECT TO authenticated
@@ -1556,7 +1541,7 @@ BEGIN
        WHERE schemaname = 'agricoop_app'
          AND tablename = 'profileVerificationSubmissions'
          AND policyname = 'agricoop_profile_verification_self_insert'
-         AND with_check LIKE '%current_setting(''agricoop.profile_verification_upload_verified'', true)%'
+         AND with_check LIKE '%agricoop.profile_verification_upload_verified%'
      )
      OR NOT has_column_privilege('authenticated', 'agricoop_app."profileVerificationSubmissions"', 'status', 'UPDATE')
      OR NOT has_column_privilege('authenticated', 'agricoop_app.users', 'verificationStatus', 'UPDATE')

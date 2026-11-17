@@ -21,7 +21,7 @@ BEGIN
      OR to_regclass('agricoop_app.products') IS NULL
      OR to_regclass('agricoop_app.orders') IS NULL
      OR to_regclass('agricoop_app.transactions') IS NULL
-     OR to_regclass('agricoop_app.paymentOptions') IS NULL THEN
+     OR to_regclass('agricoop_app."paymentOptions"') IS NULL THEN
     RAISE EXCEPTION 'Active-table migration stopped: an existing foreign-key dependency is missing';
   END IF;
 
