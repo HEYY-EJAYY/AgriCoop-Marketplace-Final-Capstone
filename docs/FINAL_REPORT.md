@@ -98,7 +98,15 @@ Earlier blocks 1–9 remain as previously recorded in this report’s prior revi
 
 ## 6. Deploy
 
-Push `finish/agricoop-complete` and deploy Production until READY (see deploy section updated after push). Target project: `agricoop-marketplace-final-capstone` (`prj_LCxJgY2qeXdRNBgOnTeXvJbgXXDI`), region `sin1`.
+| Item | Value |
+|------|-------|
+| Branch | `finish/agricoop-complete` @ `6bf8ff5` |
+| Production deployment | `dpl_GbU4kkrduiodfWjoaj1pkz1AK1AK` |
+| readyState | **READY** |
+| Alias | https://agricoop-marketplace-final-capstone.vercel.app |
+| Region | `sin1` |
+| Smoke | `/` 200, `/marketplace` 200, `/api/health` ok, `marketplace.list` returns listings |
+| Playwright (live) | 6/6 passed on mobile-360 + desktop-1920 after deploy |
 
 ---
 
