@@ -1,0 +1,398 @@
+import { sql } from "drizzle-orm";
+import {
+  type AnyPgColumn,
+  bigint,
+  boolean,
+  check,
+  index,
+  integer,
+  pgSchema,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+
+const appSchema = pgSchema("agricoop_app");
+
+const cooperativeStatus = appSchema.enum("cooperative_status", ["active", "inactive"]);
+const conversationStatus = appSchema.enum("conversation_status", ["open", "closed"]);
+const orderType = appSchema.enum("order_type", ["regular", "bulk"]);
+const orderStatus = appSchema.enum("order_status", ["submitted", "confirmed", "ready", "completed", "cancelled", "processing", "shipped", "delivered"]);
+const orderPaymentStatus = appSchema.enum("order_payment_status", ["pending", "paid", "failed", "F2F-pending-confirmation", "awaiting_verification", "verified", "refunded", "expired"]);
+const productQualityGrade = appSchema.enum("product_quality_grade", ["premium", "standard", "imperfect"]);
+const productStatus = appSchema.enum("product_status", ["published", "archived"]);
+const productVerificationStatus = appSchema.enum("product_verification_status", ["draft", "pending", "approved", "rejected", "pending_review"]);
+const productVisibility = appSchema.enum("product_visibility", ["hidden", "visible"]);
+const quotationStatus = appSchema.enum("quotation_status", ["requested", "responded", "accepted", "declined"]);
+const transactionStatus = appSchema.enum("transaction_status", ["recorded", "payment_coordinated", "pending", "paid", "failed"]);
+const userRole = appSchema.enum("user_role", ["buyer", "seller", "admin", "superadmin"]);
+const userApprovalStatus = appSchema.enum("user_approval_status", ["approved", "pending", "suspended"]);
+const userVerificationStatus = appSchema.enum("user_verification_status", ["unverified", "pending", "approved", "rejected"]);
+const associationRequestStatus = appSchema.enum("association_request_status", ["pending", "approved", "rejected"]);
+
+export const profiles = pgTable("profiles", {
+  userId: uuid("user_id").primaryKey(),
+  fullName: text("full_name").notNull(),
+  email: text("email").notNull(),
+  roleId: integer("role_id").notNull(),
+  cooperativeId: uuid("cooperative_id"),
+  accountStatus: text("account_status").default("pending"),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow(),
+}, table => [
+  // Catalog assumes FK to public.roles / auth.users / public.cooperatives; modeled as docs for Drizzle only.
+  index("profiles_role_id_idx").on(table.roleId),
+]);
+
+export const roles = pgTable("roles", {
+  roleId: integer("role_id").primaryKey(),
+  roleName: text("role_name").notNull(),
+}, table => [
+  uniqueIndex("roles_role_name_uidx").on(table.roleName),
+]);
+
+export const cooperatives = appSchema.table("cooperatives", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 180 }).notNull(),
+  normalizedName: varchar("normalizedName", { length: 180 }).notNull(),
+  description: text("description"),
+  location: varchar("location", { length: 180 }).notNull(),
+  status: cooperativeStatus("status").default("active").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [uniqueIndex("cooperatives_normalized_name_idx").on(table.normalizedName)]);
+
+export const users = appSchema.table("users", {
+  id: serial("id").primaryKey(),
+  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  name: text("name"),
+  email: varchar("email", { length: 320 }),
+  loginMethod: varchar("loginMethod", { length: 64 }),
+  role: userRole("role").default("buyer").notNull(),
+  approvalStatus: userApprovalStatus("approvalStatus").default("approved").notNull(),
+  verificationStatus: userVerificationStatus("verificationStatus").default("unverified").notNull(),
+  verificationNote: text("verificationNote"),
+  verifiedBy: integer("verifiedBy").references((): AnyPgColumn => users.id),
+  verifiedAt: timestamp("verifiedAt", { mode: "date" }),
+  profileImageUrl: varchar("profileImageUrl", { length: 1000 }),
+  birthdate: timestamp("birthdate", { mode: "date" }),
+  phone: varchar("phone", { length: 40 }),
+  address: text("address"),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
+  contactNumber: varchar("contactNumber", { length: 40 }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+  lastSignedIn: timestamp("lastSignedIn", { mode: "date" }).defaultNow().notNull(),
+}, table => [index("users_cooperative_id_idx").on(table.cooperativeId)]);
+
+export const cooperativeAssociationRequests = appSchema.table("cooperativeAssociationRequests", {
+  id: serial("id").primaryKey(),
+  sellerId: integer("sellerId").notNull().references(() => users.id),
+  cooperativeId: integer("cooperativeId").notNull().references(() => cooperatives.id),
+  status: associationRequestStatus("status").default("pending").notNull(),
+  message: text("message"),
+  reviewNote: text("reviewNote"),
+  reviewedBy: integer("reviewedBy").references(() => users.id),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  reviewedAt: timestamp("reviewedAt", { mode: "date" }),
+}, table => [
+  index("cooperativeAssociationRequests_seller_status_idx").on(table.sellerId, table.status),
+  index("cooperativeAssociationRequests_cooperative_status_idx").on(table.cooperativeId, table.status),
+  uniqueIndex("cooperativeAssociationRequests_one_pending_seller_idx")
+    .on(table.sellerId)
+    .where(sql`${table.status} = 'pending'`),
+]);
+
+export const products = appSchema.table("products", {
+  id: serial("id").primaryKey(),
+  sellerId: integer("sellerId").notNull().references(() => users.id),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
+  name: varchar("name", { length: 160 }).notNull(),
+  category: varchar("category", { length: 80 }).notNull(),
+  variety: varchar("variety", { length: 180 }).notNull(),
+  description: text("description"),
+  unit: varchar("unit", { length: 40 }).notNull(),
+  priceCents: integer("priceCents").notNull(),
+  stockQty: integer("stockQty").notNull().default(0),
+  minOrderQty: integer("minOrderQty").notNull().default(1),
+  qualityGrade: productQualityGrade("qualityGrade").default("standard").notNull(),
+  status: productStatus("status").default("published").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+  verificationStatus: productVerificationStatus("verificationStatus").default("draft").notNull(),
+  visibility: productVisibility("visibility").default("hidden").notNull(),
+  rejectionReason: text("rejectionReason"),
+  primaryImageUrl: varchar("primaryImageUrl", { length: 1000 }),
+}, table => [index("products_seller_id_idx").on(table.sellerId)]);
+
+export const productImages = appSchema.table("productImages", {
+  id: serial("id").primaryKey(),
+  productId: integer("productId").notNull().references(() => products.id, { onDelete: "cascade" }),
+  imageUrl: varchar("imageUrl", { length: 1000 }).notNull(),
+  displayOrder: integer("displayOrder").notNull().default(0),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [index("productImages_product_order_idx").on(table.productId, table.displayOrder)]);
+
+export const quotations = appSchema.table("quotations", {
+  id: serial("id").primaryKey(),
+  productId: integer("productId").notNull().references(() => products.id),
+  buyerId: integer("buyerId").notNull().references(() => users.id),
+  sellerId: integer("sellerId").notNull().references(() => users.id),
+  requestedQty: integer("requestedQty").notNull(),
+  buyerNote: text("buyerNote"),
+  quotedPriceCents: integer("quotedPriceCents"),
+  sellerNote: text("sellerNote"),
+  status: quotationStatus("status").default("requested").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+  respondedAt: timestamp("respondedAt", { mode: "date" }),
+}, table => [index("quotations_product_id_idx").on(table.productId)]);
+
+export const orders = appSchema.table("orders", {
+  id: serial("id").primaryKey(),
+  buyerId: integer("buyerId").notNull().references(() => users.id),
+  sellerId: integer("sellerId").notNull().references(() => users.id),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
+  orderType: orderType("orderType").notNull(),
+  status: orderStatus("status").default("submitted").notNull(),
+  paymentStatus: orderPaymentStatus("paymentStatus").default("pending").notNull(),
+  paymentMethod: varchar("paymentMethod", { length: 64 }),
+  totalCents: integer("totalCents").notNull(),
+  buyerNote: text("buyerNote"),
+  demoSeedKey: varchar("demoSeedKey", { length: 80 }),
+  completedAt: timestamp("completedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+}, table => [
+  index("orders_buyer_id_idx").on(table.buyerId),
+  index("orders_cooperative_id_idx").on(table.cooperativeId),
+  index("orders_seller_id_idx").on(table.sellerId),
+  uniqueIndex("orders_demo_seed_key_idx").on(table.demoSeedKey),
+]);
+
+export const orderEvents = appSchema.table("orderEvents", {
+  id: serial("id").primaryKey(),
+  orderId: integer("orderId").notNull().references(() => orders.id),
+  actorUserId: integer("actorUserId").notNull().references(() => users.id),
+  action: varchar("action", { length: 80 }).notNull(),
+  fromStatus: varchar("fromStatus", { length: 32 }),
+  toStatus: varchar("toStatus", { length: 32 }),
+  note: text("note"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const orderItems = appSchema.table("orderItems", {
+  id: serial("id").primaryKey(),
+  orderId: integer("orderId").notNull().references(() => orders.id),
+  productId: integer("productId").notNull().references(() => products.id),
+  quantity: integer("quantity").notNull(),
+  unitPriceCents: integer("unitPriceCents").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+}, table => [index("orderitems_order_id_idx").on(table.orderId)]);
+
+export const paymentOptions = appSchema.table("paymentOptions", {
+  id: serial("id").primaryKey(),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id, { onDelete: "restrict" }),
+  paymentMethod: varchar("paymentMethod", { length: 50 }).notNull().default("gcash"),
+  displayName: varchar("displayName", { length: 150 }).notNull(),
+  accountName: varchar("accountName", { length: 150 }),
+  accountNumber: varchar("accountNumber", { length: 100 }),
+  qrImagePath: text("qrImagePath"),
+  instructions: text("instructions"),
+  isActive: boolean("isActive").notNull().default(true),
+  createdBy: integer("createdBy").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [
+  index("paymentOptionsCooperativeIdIdx").on(table.cooperativeId),
+  index("paymentOptionsIsActiveIdx").on(table.isActive),
+]);
+
+export const transactions = appSchema.table("transactions", {
+  id: serial("id").primaryKey(),
+  orderId: integer("orderId").notNull().references(() => orders.id),
+  buyerId: integer("buyerId").notNull().references(() => users.id),
+  sellerId: integer("sellerId").notNull().references(() => users.id),
+  amountCents: integer("amountCents").notNull(),
+  paymentReferenceNote: text("paymentReferenceNote"),
+  paymentOptionId: integer("paymentOptionId").references(() => paymentOptions.id, { onDelete: "set null" }),
+  status: transactionStatus("status").default("recorded").notNull(),
+  paymentMethod: varchar("paymentMethod", { length: 64 }),
+  externalId: varchar("externalId", { length: 128 }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+  completedAt: timestamp("completedAt", { mode: "date" }),
+}, table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)]);
+
+export const paymentProofs = appSchema.table("paymentProofs", {
+  id: integer("id").primaryKey(),
+  orderId: integer("orderId").notNull().references(() => orders.id, { onDelete: "restrict" }),
+  transactionId: integer("transactionId").references(() => transactions.id, { onDelete: "set null" }),
+  uploadedBy: integer("uploadedBy").notNull().references(() => users.id, { onDelete: "restrict" }),
+  storagePath: text("storagePath").notNull(),
+  originalFileName: varchar("originalFileName", { length: 255 }),
+  mimeType: varchar("mimeType", { length: 100 }),
+  fileSizeBytes: bigint("fileSizeBytes", { mode: "number" }),
+  verificationStatus: varchar("verificationStatus", { length: 30 }).notNull().default("pending"),
+  reviewNote: text("reviewNote"),
+  reviewedBy: integer("reviewedBy").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [
+  check("paymentProofsVerificationStatusCheck", sql`${table.verificationStatus} in ('pending', 'verified', 'rejected')`),
+  check("paymentProofsFileSizeBytesCheck", sql`${table.fileSizeBytes} is null or ${table.fileSizeBytes} between 1 and 5242880`),
+  check("paymentProofsMimeTypeCheck", sql`${table.mimeType} is null or ${table.mimeType} in ('image/jpeg', 'image/png', 'image/webp')`),
+  index("paymentProofsOrderIdIdx").on(table.orderId),
+  index("paymentProofsUploadedByIdx").on(table.uploadedBy),
+  index("paymentProofsVerificationStatusIdx").on(table.verificationStatus),
+]);
+
+export const payments = appSchema.table("payments", {
+  id: serial("id").primaryKey(),
+  orderId: integer("orderId").notNull().references(() => orders.id),
+  buyerId: integer("buyerId").notNull().references(() => users.id),
+  sellerId: integer("sellerId").notNull().references(() => users.id),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
+  amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+  currency: varchar("currency", { length: 8 }).notNull().default("PHP"),
+  paymentMethod: varchar("paymentMethod", { length: 64 }).notNull().default("f2f"),
+  paymentOptionId: integer("paymentOptionId").references(() => paymentOptions.id),
+  status: text("status").$type<"pending" | "awaiting_verification" | "verified" | "failed" | "cancelled" | "refunded" | "expired">().default("pending").notNull(),
+  verifiedByUserId: integer("verifiedByUserId").references((): AnyPgColumn => users.id),
+  paymentReference: text("paymentReference"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+  paidAt: timestamp("paidAt", { mode: "date" }),
+  verifiedAt: timestamp("verifiedAt", { mode: "date" }),
+}, table => [
+  uniqueIndex("payments_order_id_idx").on(table.orderId),
+  index("payments_payment_option_id_idx").on(table.paymentOptionId),
+]);
+
+export const paymentEvents = appSchema.table("paymentEvents", {
+  id: serial("id").primaryKey(),
+  paymentId: integer("paymentId").notNull().references(() => payments.id),
+  actorUserId: integer("actorUserId").references(() => users.id),
+  eventType: varchar("eventType", { length: 80 }).notNull(),
+  fromStatus: varchar("fromStatus", { length: 32 }),
+  toStatus: varchar("toStatus", { length: 32 }),
+  reason: text("reason"),
+  metadata: text("metadata"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [index("payment_events_payment_id_created_at_idx").on(table.paymentId, table.createdAt)]);
+
+export const paymentAttempts = appSchema.table("paymentAttempts", {
+  id: serial("id").primaryKey(),
+  paymentId: integer("paymentId").notNull().references(() => payments.id),
+  attemptNumber: integer("attemptNumber").notNull().default(1),
+  paymentMethod: varchar("paymentMethod", { length: 64 }).notNull().default("f2f"),
+  referenceNumber: varchar("referenceNumber", { length: 160 }),
+  externalId: varchar("externalId", { length: 128 }),
+  evidenceUrl: varchar("evidenceUrl", { length: 1000 }),
+  status: text("status").$type<"pending" | "submitted" | "under_review" | "approved" | "rejected" | "failed" | "expired" | "cancelled">().default("pending").notNull(),
+  submittedAt: timestamp("submittedAt", { mode: "date" }).defaultNow().notNull(),
+  reviewedByUserId: integer("reviewedByUserId").references((): AnyPgColumn => users.id),
+  rejectionReason: text("rejectionReason"),
+  metadata: text("metadata"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+}, table => [uniqueIndex("payment_attempts_payment_id_attempt_number_idx").on(table.paymentId, table.attemptNumber)]);
+
+export const conversations = appSchema.table("conversations", {
+  id: serial("id").primaryKey(),
+  subject: varchar("subject", { length: 180 }).notNull(),
+  buyerId: integer("buyerId").notNull().references(() => users.id),
+  sellerId: integer("sellerId").references(() => users.id),
+  productId: integer("productId").references(() => products.id),
+  orderId: integer("orderId").references(() => orders.id),
+  quotationId: integer("quotationId").references(() => quotations.id),
+  status: conversationStatus("status").default("open").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+});
+
+export const conversationMessages = appSchema.table("conversationMessages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversationId").notNull().references(() => conversations.id),
+  senderId: integer("senderId").notNull().references(() => users.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+}, table => [index("conversationmessages_conversation_id_idx").on(table.conversationId)]);
+
+export const notifications = appSchema.table("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  type: varchar("type", { length: 50 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  content: text("content").notNull(),
+  link: varchar("link", { length: 255 }),
+  isRead: integer("isRead").notNull().default(0),
+  relatedEntityId: integer("relatedEntityId"),
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const supportTickets = appSchema.table("supportTickets", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  category: varchar("category", { length: 100 }).notNull(),
+  description: text("description").notNull(),
+  priority: varchar("priority", { length: 20 }).notNull().default("medium"),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  assignedToUserId: integer("assignedToUserId").references(() => users.id),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+});
+
+export const supportTicketMessages = appSchema.table("supportTicketMessages", {
+  id: serial("id").primaryKey(),
+  ticketId: integer("ticketId").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
+  senderId: integer("senderId").notNull().references(() => users.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [index("supportTicketMessages_ticket_created_idx").on(table.ticketId, table.createdAt)]);
+
+export const auditLogs = appSchema.table("auditLogs", {
+  id: serial("id").primaryKey(),
+  actorUserId: integer("actorUserId").notNull().references(() => users.id),
+  action: varchar("action", { length: 100 }).notNull(),
+  entityType: varchar("entityType", { length: 50 }).notNull(),
+  entityId: integer("entityId"),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
+  metadata: text("metadata"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const profileVerificationSubmissions = appSchema.table("profileVerificationSubmissions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  storagePath: text("storagePath").notNull().unique(),
+  mimeType: varchar("mimeType", { length: 100 }).notNull(),
+  fileSizeBytes: bigint("fileSizeBytes", { mode: "number" }).notNull(),
+  submissionNote: text("submissionNote"),
+  status: userVerificationStatus("status").default("pending").notNull(),
+  submittedAt: timestamp("submittedAt", { mode: "date" }).defaultNow().notNull(),
+  reviewedBy: integer("reviewedBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewedAt", { mode: "date" }),
+  reviewNote: text("reviewNote"),
+}, table => [
+  index("profileVerificationSubmissionsUserSubmittedIdx").on(table.userId, table.submittedAt),
+  uniqueIndex("profileVerificationSubmissionsOnePendingUserIdx")
+    .on(table.userId)
+    .where(sql`${table.status} = 'pending'`),
+  check("profileVerificationSubmissionsFileSizeCheck", sql`${table.fileSizeBytes} BETWEEN 1 AND 5242880`),
+  check("profileVerificationSubmissionsMimeTypeCheck", sql`${table.mimeType} IN ('image/jpeg', 'image/png', 'image/webp')`),
+]);
+
+export type User = typeof users.$inferSelect;
+export type InsertUser = typeof users.$inferInsert;
+export type Cooperative = typeof cooperatives.$inferSelect;
+export type Product = typeof products.$inferSelect;
+export type Order = typeof orders.$inferSelect;

@@ -1,5 +1,6 @@
 import {
   int,
+  index,
   mysqlEnum,
   mysqlTable,
   text,
@@ -103,10 +104,11 @@ export const orders = mysqlTable("orders", {
   paymentMethod: varchar("paymentMethod", { length: 64 }),
   totalCents: int("totalCents").notNull(),
   buyerNote: text("buyerNote"),
+  demoSeedKey: varchar("demoSeedKey", { length: 80 }),
   completedAt: timestamp("completedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => [uniqueIndex("orders_demo_seed_key_idx").on(table.demoSeedKey)]);
 
 export const orderEvents = mysqlTable("orderEvents", {
   id: int("id").autoincrement().primaryKey(),
@@ -154,6 +156,86 @@ export const transactions = mysqlTable(
     completedAt: timestamp("completedAt"),
   },
   table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)],
+);
+
+export const payments = mysqlTable(
+  "payments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    orderId: int("orderId").notNull().references(() => orders.id),
+    buyerId: int("buyerId").notNull().references(() => users.id),
+    sellerId: int("sellerId").notNull().references(() => users.id),
+    cooperativeId: int("cooperativeId").references(() => cooperatives.id),
+    amountCents: int("amountCents").notNull(),
+    currency: varchar("currency", { length: 8 }).notNull().default("PHP"),
+    paymentMethod: varchar("paymentMethod", { length: 64 }).notNull().default("f2f"),
+    status: mysqlEnum("status", [
+      "pending",
+      "awaiting_verification",
+      "verified",
+      "failed",
+      "cancelled",
+      "refunded",
+      "expired",
+    ])
+      .default("pending")
+      .notNull(),
+    verifiedByUserId: int("verifiedByUserId").references((): any => users.id),
+    paymentReference: text("paymentReference"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    paidAt: timestamp("paidAt"),
+    verifiedAt: timestamp("verifiedAt"),
+  },
+  table => [uniqueIndex("payments_order_id_idx").on(table.orderId)],
+);
+
+export const paymentEvents = mysqlTable(
+  "paymentEvents",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    paymentId: int("paymentId").notNull().references(() => payments.id),
+    actorUserId: int("actorUserId").references(() => users.id),
+    eventType: varchar("eventType", { length: 80 }).notNull(),
+    fromStatus: varchar("fromStatus", { length: 32 }),
+    toStatus: varchar("toStatus", { length: 32 }),
+    reason: text("reason"),
+    metadata: text("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("payment_events_payment_id_created_at_idx").on(table.paymentId, table.createdAt)],
+);
+
+export const paymentAttempts = mysqlTable(
+  "paymentAttempts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    paymentId: int("paymentId").notNull().references(() => payments.id),
+    attemptNumber: int("attemptNumber").notNull().default(1),
+    paymentMethod: varchar("paymentMethod", { length: 64 }).notNull().default("f2f"),
+    referenceNumber: varchar("referenceNumber", { length: 160 }),
+    externalId: varchar("externalId", { length: 128 }),
+    evidenceUrl: varchar("evidenceUrl", { length: 1000 }),
+    status: mysqlEnum("status", [
+      "pending",
+      "submitted",
+      "under_review",
+      "approved",
+      "rejected",
+      "failed",
+      "expired",
+      "cancelled",
+    ])
+      .default("pending")
+      .notNull(),
+    submittedAt: timestamp("submittedAt").defaultNow().notNull(),
+    reviewedByUserId: int("reviewedByUserId").references((): any => users.id),
+    rejectionReason: text("rejectionReason"),
+    metadata: text("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("payment_attempts_payment_id_attempt_number_idx").on(table.paymentId, table.attemptNumber)],
 );
 
 export const conversations = mysqlTable("conversations", {

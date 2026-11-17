@@ -3,15 +3,16 @@ import dotenv from "dotenv";
 
 dotenv.config({ path: ".env.local", quiet: true });
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString = process.env.MIGRATION_DATABASE_URL;
 if (!connectionString) {
-  throw new Error("DATABASE_URL is required to run drizzle commands");
+  throw new Error("MIGRATION_DATABASE_URL is required to run Drizzle migration commands");
 }
 
 export default defineConfig({
-  schema: "./drizzle/schema.ts",
-  out: "./drizzle",
-  dialect: "mysql",
+  schema: "./drizzle/pg-schema.ts",
+  out: "./drizzle/postgres-migrations",
+  dialect: "postgresql",
+  schemaFilter: ["agricoop_app"],
   dbCredentials: {
     url: connectionString,
   },

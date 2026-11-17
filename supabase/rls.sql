@@ -1,5 +1,9 @@
--- AgriCoop RLS baseline for the eventual Supabase/Postgres cutover.
--- Assumes local profiles have auth_user_id UUID references to auth.users(id).
+-- DO NOT EXECUTE: this is an obsolete, unsafe planning draft.
+-- It assumes public.users(auth_user_id), but the canonical identity is
+-- public.profiles.user_id -> auth.users.id and marketplace users are in
+-- agricoop_app.users("openId"). Its public table names and policies do not
+-- match the current PostgreSQL Drizzle schema. Replace only after the target
+-- schema, grants, RLS behavior, and identity crosswalk are verified in staging.
 
 create or replace function public.current_app_role()
 returns text language sql stable security definer set search_path = public as $$
