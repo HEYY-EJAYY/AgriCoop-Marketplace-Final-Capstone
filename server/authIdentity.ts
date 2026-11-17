@@ -41,6 +41,7 @@ export type AuthenticatedApplicationUser = Pick<
   | "phone"
   | "address"
   | "profileImageUrl"
+  | "onlinePaymentQrPath"
 >;
 
 export type PublicRegistrationIdentity = {

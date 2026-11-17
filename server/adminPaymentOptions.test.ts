@@ -393,10 +393,34 @@ describe("admin payment option router authorization", () => {
     );
   });
 
-  it("does not allow a Seller to verify a payment proof", async () => {
+  it("does not allow a Seller to verify another seller's payment proof", async () => {
+    const proof = {
+      id: 4,
+      orderId: 14,
+      transactionId: 90,
+      uploadedBy: 50,
+      storagePath: "payment-proofs/50/14/receipt.png",
+      verificationStatus: "pending",
+    };
+    const order = {
+      id: 14,
+      buyerId: 50,
+      sellerId: 20,
+      cooperativeId: 99,
+      status: "confirmed",
+      paymentStatus: "awaiting_verification",
+      paymentMethod: "gcash",
+      totalCents: 500,
+    };
+    const db = createDb([
+      [{ orderId: 14 }],
+      [order],
+      [proof],
+      [{ id: 90, orderId: 14, buyerId: 50, sellerId: 20, amountCents: 500, paymentMethod: "gcash", status: "pending" }],
+    ]);
+    mocks.getDb.mockResolvedValueOnce(db.db);
     await expect(caller("seller", 12).payments.reviewProof({ proofId: 4, decision: "verified" }))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.getDb).not.toHaveBeenCalled();
   });
 
   it("allows SuperAdmin review across cooperatives and updates proof, order, and transaction atomically", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkoutCartSchema, hasMinimumOrderStock } from "../shared/checkoutCart";
+import { checkoutCartSchema, groupCartItemsBySeller, hasMinimumOrderStock } from "../shared/checkoutCart";
+import { methodsForListings, normalizePaymentMethodInput, paymentMethodLabel } from "../shared/paymentMethods";
 
 describe("checkout cart session payload", () => {
   const item = {
@@ -14,34 +15,36 @@ describe("checkout cart session payload", () => {
     sellerName: "Farm seller",
   };
 
-  it("accepts valid order display data and defaults the selected cash method", () => {
-    expect(checkoutCartSchema.parse({
-      cooperativeId: 4,
-      items: [item],
-    })).toMatchObject({
-      cooperativeId: 4,
-      paymentMethod: "cash_pickup",
-      items: [item],
+  it("accepts multi-seller cart items without requiring a cart-level payment method", () => {
+    const parsed = checkoutCartSchema.parse({
+      items: [
+        item,
+        { ...item, productId: 8, sellerId: 10, sellerName: "Other seller" },
+      ],
     });
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.paymentMethod).toBeUndefined();
+    expect(groupCartItemsBySeller(parsed.items).size).toBe(2);
+  });
+
+  it("accepts optional legacy paymentMethod including online/gcash for old sessions", () => {
+    expect(checkoutCartSchema.parse({
+      paymentMethod: "gcash",
+      items: [item],
+    }).paymentMethod).toBe("gcash");
+    expect(checkoutCartSchema.parse({
+      paymentMethod: "online",
+      items: [item],
+      sellerGroups: [{ sellerId: 9, paymentMethod: "online", fulfillmentMethod: "pickup", receiptStoragePath: "1/order-temp/a.jpg" }],
+    }).sellerGroups?.[0]?.paymentMethod).toBe("online");
   });
 
   it("rejects malformed or out-of-range client cart data", () => {
     expect(checkoutCartSchema.safeParse({
-      cooperativeId: 4,
       items: [{ ...item, quantity: 0 }],
     }).success).toBe(false);
     expect(checkoutCartSchema.safeParse({
-      cooperativeId: 4,
       items: [{ ...item, quantity: 9 }],
-    }).success).toBe(false);
-    expect(checkoutCartSchema.safeParse({
-      cooperativeId: -1,
-      items: [item],
-    }).success).toBe(false);
-    expect(checkoutCartSchema.safeParse({
-      cooperativeId: 4,
-      paymentMethod: "gcash",
-      items: [item],
     }).success).toBe(false);
   });
 
@@ -50,5 +53,23 @@ describe("checkout cart session payload", () => {
     expect(hasMinimumOrderStock(1, 2)).toBe(false);
     expect(hasMinimumOrderStock(0, 1)).toBe(false);
     expect(hasMinimumOrderStock(4, 1.5)).toBe(false);
+  });
+});
+
+describe("payment method helpers", () => {
+  it("maps legacy gcash to online and labels consistently", () => {
+    expect(normalizePaymentMethodInput("gcash")).toBe("online");
+    expect(paymentMethodLabel("gcash")).toBe("Online Payment");
+    expect(paymentMethodLabel("f2f")).toBe("Face-to-face (legacy)");
+  });
+
+  it("intersects listing flags for a seller group", () => {
+    expect(methodsForListings([
+      { allowsPickup: true, allowsDelivery: true, acceptsOnlinePayment: true },
+      { allowsPickup: true, allowsDelivery: false, acceptsOnlinePayment: true },
+    ], true)).toEqual(["cash_pickup", "online"]);
+    expect(methodsForListings([
+      { allowsPickup: true, allowsDelivery: true, acceptsOnlinePayment: true },
+    ], false)).toEqual(["cash_pickup", "cash_delivery"]);
   });
 });

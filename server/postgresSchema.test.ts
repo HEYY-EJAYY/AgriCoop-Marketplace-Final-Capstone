@@ -30,7 +30,9 @@ describe("PostgreSQL identity lookup schema", () => {
       "id", "openId", "name", "email", "loginMethod", "role", "approvalStatus",
       "verificationStatus", "verificationNote", "verifiedBy", "verifiedAt",
       "profileImageUrl", "birthdate", "phone", "address", "cooperativeId",
-      "contactNumber", "createdAt", "updatedAt", "lastSignedIn",
+      "contactNumber", "onlinePaymentQrPath", "onlinePaymentAccountName",
+      "onlinePaymentAccountNumber", "onlinePaymentLabel",
+      "createdAt", "updatedAt", "lastSignedIn",
     ]);
     expect(getTableConfig(profiles).columns.map(column => column.name)).toEqual([
       "user_id", "full_name", "email", "role_id", "cooperative_id", "account_status", "created_at",

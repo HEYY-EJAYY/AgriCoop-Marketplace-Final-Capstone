@@ -21,6 +21,8 @@ const SupportTickets = lazy(() => import("@/pages/SupportTickets"));
 const Messages = lazy(() => import("@/pages/Messages"));
 const Profile = lazy(() => import("@/pages/Profile"));
 const ProductDetails = lazy(() => import("@/pages/ProductDetails"));
+const OrderDetail = lazy(() => import("@/pages/OrderDetail"));
+const CooperativePage = lazy(() => import("@/pages/CooperativePage"));
 
 const LazyFallback = <div className="grid min-h-screen place-items-center bg-[#f8f5ee] text-sm text-[#647568]">Loading AgriCoop…</div>;
 
@@ -37,6 +39,8 @@ function Router() {
       <Route path="/checkout">{() => <LazyPage><Checkout/></LazyPage>}</Route>
       <Route path="/marketplace" component={Marketplace}/>
       <Route path="/products/:id">{() => <LazyPage><ProductDetails/></LazyPage>}</Route>
+      <Route path="/orders/:id">{() => <LazyPage><OrderDetail/></LazyPage>}</Route>
+      <Route path="/cooperatives/:slug">{() => <LazyPage><CooperativePage/></LazyPage>}</Route>
       <Route path="/activity">{() => <LazyPage><Activity/></LazyPage>}</Route>
       <Route path="/messages">{() => <LazyPage><Messages/></LazyPage>}</Route>
       <Route path="/profile">{() => <LazyPage><Profile/></LazyPage>}</Route>

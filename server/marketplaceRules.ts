@@ -247,9 +247,13 @@ export function latestPaymentReviewNotes(events: Array<{
   return notes;
 }
 
+function isOnlineOrderPaymentMethod(method: string | null | undefined) {
+  return method === "gcash" || method === "online";
+}
+
 export function assertPaymentCanAcceptProof(payment: { paymentMethod: string; status: string }) {
-  if (payment.paymentMethod !== "gcash") {
-    throw new Error("Online proof can only be submitted for an explicit GCash payment.");
+  if (!isOnlineOrderPaymentMethod(payment.paymentMethod)) {
+    throw new Error("Online proof can only be submitted for an online payment.");
   }
   if (payment.status !== "pending" && payment.status !== "failed") {
     throw new Error("Only pending or previously rejected payments can accept new proof.");
@@ -260,14 +264,14 @@ export function assertOrderCanAcceptPaymentProof(
   order: { status: string; paymentStatus: string; paymentMethod: string | null },
   latestProof: { verificationStatus: string } | undefined,
 ) {
-  if (order.paymentMethod !== "gcash") {
-    throw new Error("Online proof can only be submitted for an explicit GCash order.");
+  if (!isOnlineOrderPaymentMethod(order.paymentMethod)) {
+    throw new Error("Online proof can only be submitted for an online payment order.");
   }
   if (!["submitted", "confirmed", "ready"].includes(order.status)) {
     throw new Error("Cancelled or completed orders cannot accept payment proof.");
   }
   if (order.paymentStatus !== "pending" && order.paymentStatus !== "failed") {
-    throw new Error("Only unpaid or rejected GCash orders can accept payment proof.");
+    throw new Error("Only unpaid or rejected online payment orders can accept payment proof.");
   }
   if (latestProof && latestProof.verificationStatus !== "rejected") {
     throw new Error("A payment proof is already awaiting review or has been verified.");

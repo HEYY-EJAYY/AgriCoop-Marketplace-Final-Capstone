@@ -3311,3 +3311,19 @@ Verification (2026-11-17):
 - `storage.buckets` contains `avatars` (public, 2 MB, jpeg/png/webp)
 - Policies `avatars_%` present on `storage.objects`
 - Column privileges: `authenticated` UPDATE/INSERT on `profileImageUrl`
+
+## BLOCK 14: `20261117210000_payment_fulfillment_coop_orders.sql` (applied via MCP as `payment_fulfillment_coop_orders`)
+
+**Preview (2026-11-17):** sellers with null coop = 0; products with null coop = 0.
+Existing coop id=2 is named `Sutafaco (Sumilihon-Taguibo Cooperative` — left unchanged. Inserted exact name `SUTAFACO Cooperative` (normalizedName `sutafacocooperative`).
+
+`sql
+-- PURPOSE: listing pickup/delivery/online flags; orders.fulfillmentMethod;
+-- seller QR columns; orderHistory + RLS; SUTAFACO Cooperative; seller-payment-qr bucket.
+-- IDEMPOTENT / ADDITIVE ONLY. See supabase/migrations/20261117210000_payment_fulfillment_coop_orders.sql
+`
+
+Verification:
+- `orderHistory` present; product flags default pickup+delivery true, online false
+- `SUTAFACO Cooperative` row present; null coop backfill was no-op (0 rows)
+- bucket `seller-payment-qr` private

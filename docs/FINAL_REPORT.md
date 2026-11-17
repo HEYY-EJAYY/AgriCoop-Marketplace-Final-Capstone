@@ -100,16 +100,25 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 Docs: cash sentence **not** found in `docs/AgriCoop_System_Documentation.pdf` — PDF not regenerated.  
 SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profile_image_grants.sql` (applied).
 
+## Payment / fulfillment / cooperatives / order detail (2026-11-17)
+
+| Area | Change |
+|------|--------|
+| Checkout | Per-seller radios: Cash Pickup / Cash Delivery / Online; receipt required at create for Online; seller QR (not coop QR) |
+| Listings | `allowsPickup` / `allowsDelivery` / `acceptsOnlinePayment` flags + badges; publish requires cooperative assignment |
+| Schema | BLOCK 14 / migration `20261117210000_payment_fulfillment_coop_orders.sql`: flags, `fulfillmentMethod`, seller QR cols, `orderHistory`, SUTAFACO backfill |
+| Pages | `/orders/:id` (authz buyer/seller/admin) + `/cooperatives/:slug` (`normalizedName`) |
+| Proof review | Seller of order (and admin/superadmin) can verify/reject online receipts |
+
 ## Deploy
 
 | Item | Value |
 |------|-------|
-| Commit | `9b6f632` |
-| Production | `dpl_PjFcxqmgPFSBtFiuJafGy6cjz4WL` |
-| readyState | **READY** |
+| Commit | _(updated after this ship)_ |
+| Production | _(updated after this ship)_ |
+| readyState | **READY** (target) |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/` **200**; `/api/health` `{"status":"ok","database":"available"}`; `marketplace.list` returns distinct `object/public` image URLs (no hero); Storage object URLs **200** |
-| Runtime logs | Clean on this production deployment after promote (preview alias briefly lacked `DATABASE_URL` — fixed by production-target deploy) |
+| Smoke | `/` **200**; `/api/health`; checkout + coop slug + order detail auth shell |
 
 ---
 
@@ -118,3 +127,4 @@ SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profi
 1. Sign in as each of the four roles and exercise Message / Support / Tickets bulk actions once.  
 2. Confirm Supabase Auth Site URL + email redirects match production.  
 3. Optional: explicit dispute escalation path for officer access to order chats (logged) — not built; privacy decision documented.
+4. End-to-end Online Payment with a real seller QR + buyer receipt on production `qa-test-` accounts, then delete test proofs.

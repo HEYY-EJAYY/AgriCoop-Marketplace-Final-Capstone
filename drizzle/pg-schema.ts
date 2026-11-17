@@ -82,6 +82,10 @@ export const users = appSchema.table("users", {
   address: text("address"),
   cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
   contactNumber: varchar("contactNumber", { length: 40 }),
+  onlinePaymentQrPath: text("onlinePaymentQrPath"),
+  onlinePaymentAccountName: varchar("onlinePaymentAccountName", { length: 150 }),
+  onlinePaymentAccountNumber: varchar("onlinePaymentAccountNumber", { length: 100 }),
+  onlinePaymentLabel: varchar("onlinePaymentLabel", { length: 150 }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
   lastSignedIn: timestamp("lastSignedIn", { mode: "date" }).defaultNow().notNull(),
@@ -125,6 +129,9 @@ export const products = appSchema.table("products", {
   visibility: productVisibility("visibility").default("hidden").notNull(),
   rejectionReason: text("rejectionReason"),
   primaryImageUrl: varchar("primaryImageUrl", { length: 1000 }),
+  allowsPickup: boolean("allowsPickup").notNull().default(true),
+  allowsDelivery: boolean("allowsDelivery").notNull().default(true),
+  acceptsOnlinePayment: boolean("acceptsOnlinePayment").notNull().default(false),
 }, table => [index("products_seller_id_idx").on(table.sellerId)]);
 
 export const productImages = appSchema.table("productImages", {
@@ -159,6 +166,7 @@ export const orders = appSchema.table("orders", {
   status: orderStatus("status").default("submitted").notNull(),
   paymentStatus: orderPaymentStatus("paymentStatus").default("pending").notNull(),
   paymentMethod: varchar("paymentMethod", { length: 64 }),
+  fulfillmentMethod: varchar("fulfillmentMethod", { length: 32 }),
   totalCents: integer("totalCents").notNull(),
   buyerNote: text("buyerNote"),
   demoSeedKey: varchar("demoSeedKey", { length: 80 }),
@@ -171,6 +179,17 @@ export const orders = appSchema.table("orders", {
   index("orders_seller_id_idx").on(table.sellerId),
   uniqueIndex("orders_demo_seed_key_idx").on(table.demoSeedKey),
 ]);
+
+export const orderHistory = appSchema.table("orderHistory", {
+  id: serial("id").primaryKey(),
+  orderId: integer("orderId").notNull().references(() => orders.id),
+  actorUserId: integer("actorUserId").references(() => users.id),
+  eventType: varchar("eventType", { length: 64 }).notNull(),
+  fromValue: varchar("fromValue", { length: 64 }),
+  toValue: varchar("toValue", { length: 64 }),
+  note: text("note"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [index("order_history_order_id_idx").on(table.orderId, table.createdAt)]);
 
 export const orderEvents = appSchema.table("orderEvents", {
   id: serial("id").primaryKey(),

@@ -89,9 +89,9 @@ describe("Payment foundation authorization and legacy mapping", () => {
     expect(() => assertPaymentCanAcceptProof({ paymentMethod: "gcash", status: "pending" })).not.toThrow();
     expect(() => assertPaymentCanAcceptProof({ paymentMethod: "gcash", status: "failed" })).not.toThrow();
     expect(() => assertPaymentCanAcceptProof({ paymentMethod: "f2f", status: "pending" }))
-      .toThrow("Online proof can only be submitted for an explicit GCash payment.");
+      .toThrow("Online proof can only be submitted for an online payment.");
     expect(() => assertPaymentCanAcceptProof({ paymentMethod: "cash_pickup", status: "pending" }))
-      .toThrow("Online proof can only be submitted for an explicit GCash payment.");
+      .toThrow("Online proof can only be submitted for an online payment.");
     expect(() => assertPaymentCanAcceptProof({ paymentMethod: "gcash", status: "verified" }))
       .toThrow("Only pending or previously rejected payments can accept new proof.");
   });
@@ -129,7 +129,7 @@ describe("Payment foundation authorization and legacy mapping", () => {
         .toThrow("Cancelled or completed orders cannot accept payment proof.");
     }
     expect(() => assertOrderCanAcceptPaymentProof({ ...order, paymentMethod: "cash_pickup" }, undefined))
-      .toThrow("Online proof can only be submitted for an explicit GCash order.");
+      .toThrow("Online proof can only be submitted for an online payment order.");
   });
 
   it("prevents duplicate review and review after order completion or payment", () => {

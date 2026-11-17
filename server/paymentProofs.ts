@@ -41,6 +41,91 @@ export function createPaymentProofUploadIntent(
   return `${payload}.${signPayload(payload).toString("base64url")}`;
 }
 
+export type CheckoutReceiptUploadIntent = {
+  buyerId: number;
+  sellerId: number;
+  storagePath: string;
+  originalFileName: string;
+  mimeType: (typeof PAYMENT_PROOF_CONTENT_TYPES)[number];
+  fileSizeBytes: number;
+  expiresAt: number;
+};
+
+export function createCheckoutReceiptUploadIntent(
+  intent: Omit<CheckoutReceiptUploadIntent, "expiresAt">,
+  now = Date.now(),
+) {
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    kind: "checkout_receipt",
+    ...intent,
+    expiresAt: now + PAYMENT_PROOF_UPLOAD_INTENT_TTL_MS,
+  })).toString("base64url");
+  return `${payload}.${signPayload(payload).toString("base64url")}`;
+}
+
+export function verifyCheckoutReceiptUploadIntent(
+  token: string,
+  buyerId: number,
+  sellerId: number,
+  now = Date.now(),
+): CheckoutReceiptUploadIntent | null {
+  const [payload, encodedSignature, extra] = token.split(".");
+  if (!payload || !encodedSignature || extra !== undefined) return null;
+
+  let actualSignature: Buffer;
+  try {
+    actualSignature = Buffer.from(encodedSignature, "base64url");
+  } catch {
+    return null;
+  }
+  const expectedSignature = signPayload(payload);
+  if (actualSignature.length !== expectedSignature.length
+    || !timingSafeEqual(actualSignature, expectedSignature)) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+
+  const candidate = parsed as Record<string, unknown>;
+  if (candidate.version !== 1
+    || candidate.kind !== "checkout_receipt"
+    || candidate.buyerId !== buyerId
+    || candidate.sellerId !== sellerId
+    || typeof candidate.storagePath !== "string"
+    || !isCheckoutReceiptStorageKey(candidate.storagePath, buyerId)
+    || typeof candidate.originalFileName !== "string"
+    || !candidate.originalFileName
+    || candidate.originalFileName.length > 255
+    || typeof candidate.mimeType !== "string"
+    || !PAYMENT_PROOF_CONTENT_TYPES.includes(candidate.mimeType as (typeof PAYMENT_PROOF_CONTENT_TYPES)[number])
+    || typeof candidate.fileSizeBytes !== "number"
+    || !Number.isInteger(candidate.fileSizeBytes)
+    || candidate.fileSizeBytes < 1
+    || candidate.fileSizeBytes > PAYMENT_PROOF_MAX_BYTES
+    || typeof candidate.expiresAt !== "number"
+    || !Number.isSafeInteger(candidate.expiresAt)
+    || candidate.expiresAt <= now) {
+    return null;
+  }
+
+  return {
+    buyerId,
+    sellerId,
+    storagePath: candidate.storagePath,
+    originalFileName: candidate.originalFileName,
+    mimeType: candidate.mimeType as CheckoutReceiptUploadIntent["mimeType"],
+    fileSizeBytes: candidate.fileSizeBytes,
+    expiresAt: candidate.expiresAt,
+  };
+}
+
 export function verifyPaymentProofUploadIntent(
   token: string,
   buyerId: number,
@@ -114,6 +199,38 @@ export function isPaymentProofStorageKey(key: string, buyerId: number, orderId: 
     && fileName !== "..";
 }
 
+/** Pre-order checkout receipt path: payment-proofs/{buyerId}/checkout/{file} */
+export function isCheckoutReceiptStorageKey(key: string, buyerId: number) {
+  const prefix = `${PAYMENT_PROOF_BUCKET}/${buyerId}/checkout/`;
+  if (!key.startsWith(prefix)) return false;
+  const fileName = key.slice(prefix.length);
+  return Boolean(fileName)
+    && !fileName.includes("/")
+    && !fileName.includes("\\")
+    && !fileName.includes("\0")
+    && fileName !== "."
+    && fileName !== "..";
+}
+
 export function sanitizePaymentProofFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "payment-proof";
+}
+
+export const SELLER_PAYMENT_QR_BUCKET = "product-images";
+export const SELLER_PAYMENT_QR_PREFIX = "seller-payment-qr";
+
+export function sellerPaymentQrPrefix(userId: number) {
+  return `${SELLER_PAYMENT_QR_PREFIX}/${userId}/`;
+}
+
+export function isSellerPaymentQrKey(key: string, userId: number) {
+  const prefix = sellerPaymentQrPrefix(userId);
+  if (!key.startsWith(prefix)) return false;
+  const fileName = key.slice(prefix.length);
+  return Boolean(fileName)
+    && !fileName.includes("/")
+    && !fileName.includes("\\")
+    && !fileName.includes("\0")
+    && fileName !== "."
+    && fileName !== "..";
 }

@@ -4,6 +4,7 @@ import { goToAuth } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { ProductImage } from "@/components/ProductImage";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { ListingOptionBadges } from "@/components/ListingOptionBadges";
 import { CHECKOUT_CART_STORAGE_KEY, hasMinimumOrderStock } from "../../../shared/checkoutCart";
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
 import {
@@ -36,6 +37,12 @@ type CartItem = {
   sellerId: number;
   sellerName: string;
   cooperativeId: number | null;
+  cooperativeName?: string | null;
+  cooperativeSlug?: string | null;
+  sellerHasOnlineQr?: boolean;
+  allowsPickup: boolean;
+  allowsDelivery: boolean;
+  acceptsOnlinePayment: boolean;
 };
 
 type SortOption = "price_asc" | "price_desc" | "stock_desc" | "cooperative" | "category";
@@ -107,9 +114,14 @@ type ListingRow = {
     minOrderQty: number;
     primaryImageUrl: string | null;
     imageUrls: string[];
+    allowsPickup?: boolean;
+    allowsDelivery?: boolean;
+    acceptsOnlinePayment?: boolean;
   };
   sellerName: string | null;
   cooperativeName: string | null;
+  cooperativeSlug?: string | null;
+  sellerHasOnlineQr?: boolean;
 };
 
 function filterListings(listings: ListingRow[], params: MarketplaceParams): ListingRow[] {
@@ -260,7 +272,6 @@ export default function Marketplace() {
   const params = useMemo(() => parseMarketplaceParams(searchString), [searchString]);
 
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<"cash_pickup" | "cash_delivery">("cash_pickup");
   const [quoteProduct, setQuoteProduct] = useState<{
     id: number;
     name: string;
@@ -346,9 +357,6 @@ export default function Marketplace() {
       );
     }
     if (user.id === product.sellerId) return toast.error("You cannot place an order for your own listing.");
-    if (cart.length && cart[0].sellerId !== product.sellerId) {
-      return toast.error("Bulk orders must contain products from one farmer. Finish this basket first.");
-    }
     if (!hasMinimumOrderStock(product.stockQty, product.minOrderQty)) {
       return toast.error("This listing does not currently have enough stock to meet its minimum order.");
     }
@@ -374,6 +382,12 @@ export default function Marketplace() {
           sellerId: product.sellerId,
           sellerName: listing.sellerName || "Verified seller",
           cooperativeId: product.cooperativeId,
+          cooperativeName: listing.cooperativeName,
+          cooperativeSlug: listing.cooperativeSlug ?? null,
+          sellerHasOnlineQr: listing.sellerHasOnlineQr ?? false,
+          allowsPickup: product.allowsPickup ?? true,
+          allowsDelivery: product.allowsDelivery ?? true,
+          acceptsOnlinePayment: product.acceptsOnlinePayment ?? false,
         },
       ];
     });
@@ -420,8 +434,6 @@ export default function Marketplace() {
       sessionStorage.setItem(
         CHECKOUT_CART_STORAGE_KEY,
         JSON.stringify({
-          cooperativeId: cart[0]?.cooperativeId ?? null,
-          paymentMethod,
           items: cart,
         }),
       );
@@ -639,7 +651,7 @@ export default function Marketplace() {
             ) : pageListings.length ? (
               <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                 {pageListings.map((listing, index) => {
-                  const { product, sellerName, cooperativeName } = listing;
+                  const { product, sellerName, cooperativeName, cooperativeSlug } = listing;
                   return (
                     <article key={product.id} className="agri-card flex flex-col overflow-hidden">
                       <ListingCardImage product={product} eager={index < 6} />
@@ -661,6 +673,12 @@ export default function Marketplace() {
                         <p className="mt-1 line-clamp-2 min-h-8 text-xs leading-5 text-[#66766b]">
                           {product.description}
                         </p>
+                        <ListingOptionBadges
+                          className="mt-2"
+                          allowsPickup={product.allowsPickup}
+                          allowsDelivery={product.allowsDelivery}
+                          acceptsOnlinePayment={product.acceptsOnlinePayment}
+                        />
                         <div className="mt-3 border-t border-[#edf0e9] pt-3">
                           <p className="font-display text-xl font-bold text-[#1d5639]">
                             {peso(product.priceCents)}{" "}
@@ -668,7 +686,21 @@ export default function Marketplace() {
                           </p>
                           <p className="mt-1 line-clamp-1 text-[10px] text-[#718174]">
                             By {sellerName || "Verified seller"}
-                            {cooperativeName ? ` · ${cooperativeName}` : ""}
+                            {cooperativeName && cooperativeSlug ? (
+                              <>
+                                {" · "}
+                                <Link
+                                  href={`/cooperatives/${encodeURIComponent(cooperativeSlug)}`}
+                                  className="text-inherit no-underline hover:text-[#1f5a3c]"
+                                >
+                                  {cooperativeName}
+                                </Link>
+                              </>
+                            ) : cooperativeName ? (
+                              ` · ${cooperativeName}`
+                            ) : (
+                              ""
+                            )}
                           </p>
                         </div>
                         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -806,21 +838,9 @@ export default function Marketplace() {
                     <span>Total</span>
                     <span>{peso(cart.reduce((sum, item) => sum + item.priceCents * item.quantity, 0))}</span>
                   </div>
-                  <label className="field-label mt-4">
-                    Payment method
-                    <select
-                      className="field-control"
-                      value={paymentMethod}
-                      onChange={e => setPaymentMethod(e.target.value as typeof paymentMethod)}
-                    >
-                      <option value="cash_pickup">Cash on pickup</option>
-                      <option value="cash_delivery">Cash on delivery</option>
-                    </select>
-                  </label>
-                  <div className="mt-3 rounded-xl bg-[#edf3e9] p-3 text-xs leading-5 text-[#4d6854]">
-                    The seller records cash only after it is actually received. Order fulfillment and payment status are
-                    tracked separately.
-                  </div>
+                  <p className="mt-3 text-xs leading-5 text-[#4d6854]">
+                    Choose payment per seller on the checkout page.
+                  </p>
                   <button type="button" className="agri-button mt-4 w-full text-sm" onClick={submitCart}>
                     <ShoppingBag size={16} aria-hidden /> Continue to checkout
                   </button>
@@ -830,7 +850,7 @@ export default function Marketplace() {
               <div className="py-8 text-center">
                 <ClipboardList className="mx-auto text-[#a1b594]" size={30} aria-hidden />
                 <p className="mt-3 text-sm leading-6 text-[#718074]">
-                  Add products from one farmer to make a regular or bulk order.
+                  Add products from one or more farmers. Checkout creates one order per seller.
                 </p>
               </div>
             )}

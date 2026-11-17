@@ -21,6 +21,10 @@
 | `/marketplace` | `Marketplace` | `PageFrame` |
 | `/products/:id` | `ProductDetails` | `WorkspaceHeader` only (no `PageFrame`) |
 | `/checkout` | `Checkout` | `PageFrame` |
+| `/orders/:id` | `OrderDetail` | `WorkspaceHeader` |
+| `/cooperatives/:slug` | `CooperativePage` | `WorkspaceHeader` |
+| `/profile` | `Profile` | `WorkspaceHeader` |
+| `/messages` | `Messages` | `WorkspaceHeader` |
 | `/activity` | `Activity` | `WorkspaceHeader` |
 | `/dashboard` | `Dashboard` (role branch) | `WorkspaceHeader` / `AuthGate` |
 | `/support` | `Support` | `WorkspaceHeader` |
@@ -123,7 +127,7 @@ There is **no** `/cart` route; basket state lives on `/marketplace` in the `#ord
 | Screen | Element | Expected | Actual | Verdict | Fix applied |
 |--------|---------|----------|--------|---------|-------------|
 | Checkout | Cart persistence | Survive navigation | `sessionStorage` + `checkoutCartSchema` | Makes sense | — |
-| Checkout | Payment methods | Cash + optional digital | Cash pickup/delivery + GCash with cooperative QR options | Makes sense | Accepted constraint (manual GCash verification) |
+| Checkout | Payment methods | Cash + optional digital | Per-seller Cash Pickup / Delivery / Online (seller QR + receipt at create) | Makes sense | Online uses seller QR; coop QR remains admin tooling |
 | Checkout | Success path | Order confirmation view | Toast + redirect to `/dashboard` (not dedicated confirmation page) | Makes sense (coop) | — |
 | Checkout | Empty cart | Recovery | Message + link back to marketplace | Makes sense | — |
 

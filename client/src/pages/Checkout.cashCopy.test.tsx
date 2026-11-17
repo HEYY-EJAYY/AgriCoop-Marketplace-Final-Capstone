@@ -13,6 +13,7 @@ describe("Checkout cash copy", () => {
     expect(source).not.toContain("Sellers record cash received");
     expect(source).toContain("Cash on pickup");
     expect(source).toContain("Cash on delivery");
+    expect(source).not.toContain("adminPayment.checkoutOptions");
   });
 
   it("does not include the removed sentence in Marketplace cart UI source", () => {

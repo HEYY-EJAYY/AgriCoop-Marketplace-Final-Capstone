@@ -9,6 +9,7 @@ import {
   conversations,
   type InsertUser,
   orderEvents,
+  orderHistory,
   orderItems,
   orders,
   paymentProofs,
@@ -250,6 +251,7 @@ async function loadAuthIdentityRecords(authUserId: string) {
       phone: users.phone,
       address: users.address,
       profileImageUrl: users.profileImageUrl,
+      onlinePaymentQrPath: users.onlinePaymentQrPath,
     }).from(users)
       .where(eq(users.openId, authUserId))
       .limit(2));
@@ -356,8 +358,13 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
       verificationStatus: products.verificationStatus,
       visibility: products.visibility,
       primaryImageUrl: products.primaryImageUrl,
+      allowsPickup: products.allowsPickup,
+      allowsDelivery: products.allowsDelivery,
+      acceptsOnlinePayment: products.acceptsOnlinePayment,
       sellerName: users.name,
       cooperativeName: cooperatives.name,
+      cooperativeNormalizedName: cooperatives.normalizedName,
+      sellerHasOnlineQr: sql<boolean>`(${users.onlinePaymentQrPath} is not null and length(${users.onlinePaymentQrPath}) > 0)`,
     })
     .from(products)
     .innerJoin(users, eq(products.sellerId, users.id))
@@ -384,12 +391,23 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
   }
   return listings.map(listing => {
     const storedImages = imagesByProduct.get(listing.id) ?? [];
-    const { sellerName, cooperativeName, ...productFields } = listing;
+    const {
+      sellerName,
+      cooperativeName,
+      cooperativeNormalizedName,
+      sellerHasOnlineQr,
+      ...productFields
+    } = listing;
     return {
       sellerName,
       cooperativeName,
+      cooperativeSlug: cooperativeNormalizedName ?? null,
+      sellerHasOnlineQr: Boolean(sellerHasOnlineQr),
       product: {
         ...productFields,
+        allowsPickup: listing.allowsPickup ?? true,
+        allowsDelivery: listing.allowsDelivery ?? true,
+        acceptsOnlinePayment: listing.acceptsOnlinePayment ?? false,
         imageUrls: storedImages.length
           ? storedImages
           : listing.primaryImageUrl ? [listing.primaryImageUrl] : [],
@@ -522,7 +540,7 @@ export async function getOrderDetail(orderId: number) {
   const [orderRow] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (!orderRow) return undefined;
 
-  const [buyer, seller] = await Promise.all([
+  const [buyer, seller, cooperativeRows] = await Promise.all([
     db.select({
       id: users.id,
       name: users.name,
@@ -539,11 +557,37 @@ export async function getOrderDetail(orderId: number) {
       phone: users.phone,
       address: users.address,
     }).from(users).where(eq(users.id, orderRow.sellerId)).limit(1),
+    orderRow.cooperativeId == null
+      ? Promise.resolve([] as Array<{ id: number; name: string; location: string; normalizedName: string | null }>)
+      : db.select({
+          id: cooperatives.id,
+          name: cooperatives.name,
+          location: cooperatives.location,
+          normalizedName: cooperatives.normalizedName,
+        }).from(cooperatives).where(eq(cooperatives.id, orderRow.cooperativeId)).limit(1),
   ]);
   const [payment] = await db.select().from(transactions).where(eq(transactions.orderId, orderId)).limit(1);
+  const [proof] = await db.select({
+    id: paymentProofs.id,
+    storagePath: paymentProofs.storagePath,
+    verificationStatus: paymentProofs.verificationStatus,
+    reviewNote: paymentProofs.reviewNote,
+    reviewedAt: paymentProofs.reviewedAt,
+    createdAt: paymentProofs.createdAt,
+  }).from(paymentProofs)
+    .where(eq(paymentProofs.orderId, orderId))
+    .orderBy(desc(paymentProofs.createdAt), desc(paymentProofs.id))
+    .limit(1);
 
   const items = await db
-    .select({ item: orderItems, productName: products.name, unit: products.unit, priceCents: products.priceCents, stockQty: products.stockQty })
+    .select({
+      item: orderItems,
+      productName: products.name,
+      unit: products.unit,
+      priceCents: products.priceCents,
+      stockQty: products.stockQty,
+      primaryImageUrl: products.primaryImageUrl,
+    })
     .from(orderItems)
     .innerJoin(products, eq(orderItems.productId, products.id))
     .where(eq(orderItems.orderId, orderId));
@@ -555,13 +599,40 @@ export async function getOrderDetail(orderId: number) {
     .where(eq(orderEvents.orderId, orderId))
     .orderBy(desc(orderEvents.createdAt));
 
+  const history = await db
+    .select({
+      id: orderHistory.id,
+      eventType: orderHistory.eventType,
+      fromValue: orderHistory.fromValue,
+      toValue: orderHistory.toValue,
+      note: orderHistory.note,
+      createdAt: orderHistory.createdAt,
+      actorName: users.name,
+    })
+    .from(orderHistory)
+    .leftJoin(users, eq(orderHistory.actorUserId, users.id))
+    .where(eq(orderHistory.orderId, orderId))
+    .orderBy(asc(orderHistory.createdAt), asc(orderHistory.id));
+
+  const cooperative = cooperativeRows[0]
+    ? {
+        id: cooperativeRows[0].id,
+        name: cooperativeRows[0].name,
+        location: cooperativeRows[0].location,
+        slug: cooperativeRows[0].normalizedName,
+      }
+    : null;
+
   return {
     order: orderRow,
-    buyer: buyer[0],
-    seller: seller[0],
+    buyer: buyer[0] ?? null,
+    seller: seller[0] ?? null,
+    cooperative,
     payment: payment ?? null,
+    proof: proof ?? null,
     items,
     events,
+    history,
   };
 }
 

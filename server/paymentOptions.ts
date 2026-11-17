@@ -18,18 +18,19 @@ export function getPaymentQrStoragePrefix(cooperativeId: number | null): string 
 }
 
 export function assertPaymentOptionSelection(
-  paymentMethod: "cash_pickup" | "cash_delivery" | "gcash",
+  paymentMethod: "cash_pickup" | "cash_delivery" | "gcash" | "online",
   paymentOptionId: number | undefined,
   activeOptionMatchesOrder: boolean,
 ): void {
-  if (paymentMethod === "gcash") {
-    if (paymentOptionId === undefined || !activeOptionMatchesOrder) {
-      throw new Error("Choose an active GCash option for this seller's cooperative.");
+  // Online payment uses the seller's own QR; optional legacy coop paymentOptionId is allowed when present.
+  if (paymentMethod === "gcash" || paymentMethod === "online") {
+    if (paymentOptionId !== undefined && !activeOptionMatchesOrder) {
+      throw new Error("The selected online payment option is not available for this seller.");
     }
     return;
   }
   if (paymentOptionId !== undefined) {
-    throw new Error("Cash orders cannot include a GCash payment option.");
+    throw new Error("Cash orders cannot include an online payment option.");
   }
 }
 

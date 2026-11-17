@@ -29,13 +29,12 @@ describe("payment option storage scope", () => {
     expect(getPaymentQrStoragePrefix(12)).toBe("payment-options/cooperative-12/");
   });
 
-  it("requires a matching active option for GCash and rejects options on cash orders", () => {
+  it("allows online/gcash without a coop option when seller QR is used, and rejects options on cash orders", () => {
     expect(() => assertPaymentOptionSelection("gcash", 4, true)).not.toThrow();
-    expect(() => assertPaymentOptionSelection("gcash", undefined, true)).toThrow(
-      "Choose an active GCash option",
-    );
+    expect(() => assertPaymentOptionSelection("gcash", undefined, true)).not.toThrow();
+    expect(() => assertPaymentOptionSelection("online", undefined, false)).not.toThrow();
     expect(() => assertPaymentOptionSelection("gcash", 4, false)).toThrow(
-      "Choose an active GCash option",
+      "The selected online payment option is not available",
     );
     expect(() => assertPaymentOptionSelection("cash_pickup", 4, true)).toThrow(
       "Cash orders cannot include",

@@ -89,3 +89,21 @@ Solid `#f8f5ee` / `#fffdf8` backgrounds (no translucent fade). Workspace mains u
 
 Storage upload via service role could succeed, but `UPDATE agricoop_app.users SET "profileImageUrl"` failed because `authenticated` previously had **SELECT-only** on that column.  
 **Fix:** GRANT UPDATE/INSERT on `profileImageUrl`; public `avatars` bucket (2 MB, jpeg/png/webp) + owner-folder policies; client resize ≤512px + compress; server validates ≤2 MB after compression; nav + profile show the new URL immediately with initials fallback.
+
+## Payment / fulfillment unification (2026-11-17)
+
+### Step 0 — Conflicting flow (before fix)
+
+1. **Marketplace cart** offered only `cash_pickup` / `cash_delivery` in a dropdown; `checkoutCartSchema` rejected `gcash`.
+2. **Checkout** re-offered payment including **GCash** as a third radio and loaded coop `paymentOptions` QR — a second phase that could override the cart choice.
+3. **After place order**, GCash buyers uploaded receipts from the Dashboard (third phase). Quoted orders stayed cash-only while the API accepted `gcash`.
+4. Pickup/delivery were **conflated into cash method names**; there was no `fulfillmentMethod` column. Legacy ledger/`Activity` still showed `f2f`.
+
+### Locked assumptions
+
+- New orders store `cash_pickup` | `cash_delivery` | `online`. Display map: `online`/`gcash` → “Online Payment”; `f2f` → “Face-to-face (legacy)”. Never rewrite existing method values.
+- Fulfillment is separate (`pickup` | `delivery` on the order). Listing flags: `allowsPickup`, `allowsDelivery` (default true), `acceptsOnlinePayment` (default false).
+- Online Payment at checkout uses the **seller’s QR** (user columns), not coop admin QR options (those remain for admin tooling).
+- Multi-seller cart allowed; one order per seller group; payment/fulfillment chosen per group. Online groups require a receipt path at create (private `payment-proofs`, buyer-prefixed).
+- Timeline: additive `orderHistory` (+ keep `orderEvents` for stock/fulfillment). Cooperative page slug = `normalizedName`. Backfill NULL coop assignments to **SUTAFACO Cooperative** (exact name).
+- Removed cash disclaimer sentence must not return. Design freeze: soft cards / existing tokens only.

@@ -11,6 +11,7 @@ type OperationalUser = {
   approvalStatus: "approved" | "pending" | "suspended";
   verificationStatus?: VerificationStatus;
   cooperativeId: number | null;
+  onlinePaymentQrPath?: string | null;
 };
 
 export function hasRole(role: string, allowed: readonly AppRole[]) {
