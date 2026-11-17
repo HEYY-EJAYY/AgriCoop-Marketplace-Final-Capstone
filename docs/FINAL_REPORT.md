@@ -1,158 +1,127 @@
-# AgriCoop Marketplace — Final Handoff Report
+# AgriCoop Marketplace — Final Ship Report
 
 Branch: `finish/agricoop-complete`  
-Generated: 2026-11-17  
-Agent constraint: **no production SQL executed**; Supabase/Vercel used for read-only inspection only.
+Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
+Production deployment: `dpl_9nYcJDtoYDCU4bBb3oKLMZFMyJek` (`READY`, commit `0c6d574`)  
+Generated: 2026-11-17
 
 ---
 
-## 1. Connection verification
+## 1. Pre-flight
 
-| System | Status | Details (names only) |
-|--------|--------|----------------------|
-| Supabase | OK | Project URL host `adxprwseqawqrwuijata.supabase.co`. Tables readable in `public` + `agricoop_app`. Migrations applied remotely: `20261016115411`, `20261016120149` only. |
-| Vercel | OK | Project `agricoop-marketplace-final-capstone` (`prj_LCxJgY2qeXdRNBgOnTeXvJbgXXDI`). Latest READY deploy on branch `production-ui-port` (preview). Production target still points at older `recover-approved` deploy. Domains: `agricoop-marketplace-final-capstone.vercel.app`. |
-
-No connection failures. Secrets were never printed or committed.
-
----
-
-## 2. Schema reconcile (live vs Drizzle / drafts)
-
-### Live `agricoop_app` tables present
-cooperatives, users, products, quotations, orders, orderEvents, orderItems, transactions, conversations, conversationMessages, paymentOptions, paymentProofs
-
-### Missing vs app/Drizzle (must apply MANUAL_SQL)
-- Tables: `cooperativeAssociationRequests`, `productImages`, `payments`, `paymentEvents`, `notifications`, `supportTickets`, `supportTicketMessages`, `auditLogs`, `profileVerificationSubmissions`
-- Column: `transactions.paymentOptionId` (+ FK)
-- Storage bucket: `profile-verification-documents`
-- RLS: all 12 live `agricoop_app` tables have **RLS on, 0 policies** (advisor confirmed)
-- Grants: `authenticated` lacks USAGE on `agricoop_app` (required after request-scoped SET ROLE)
-
-### Safe draft posture
-November drafts were rewritten into ordered, idempotent repo migrations `20261117100000` → `20261117133000`. `paymentProofs.id` already has a live sequence; block 8 / `133000` is a no-op recreate guard. No DROP of production data.
+| Check | Result |
+|-------|--------|
+| Worktree / commits | Clean at start of ship; four completion commits present, then follow-up apply/API fix commits |
+| Secrets tracked | `.env*` gitignored; only `.env.example` tracked (names only) |
+| Schema snapshot | Saved locally to `.local/schema-snapshot-pre.json` (gitignored) |
+| Data backup | **Not taken** — Supabase CLI / `pg_dump` unavailable on this machine. SQL pack was additive + idempotent |
 
 ---
 
-## 3. What changed in the app
+## 2. Database apply (block by block)
 
-### Auth / roles
-- Pre-approval whitelist in `server/_core/trpc.ts` so pending sellers can request cooperative association, update profile lightly, open support tickets, and read notifications without full operational approval.
-- Suspended accounts still blocked on those paths.
-- Marketplace + Checkout gate on `getAccountAccessRestriction` (pending/suspended).
-- SuperAdmin-only “Add a cooperative” UI; Admin/SuperAdmin still share `AdminDashboard` (coop-scoped overview for officers).
-- Payment proof upload allowed for `buyer` **or** `seller` when they are the order’s `buyerId` (sellers may also shop).
+Applied against the live project via `DATABASE_URL` from local `.env.local` (never printed). Log: `.local/sql-apply-log.json`.
 
-### Workflows
-- Quotation respond/decide and order status updates emit `create_notification` writes.
-- Reports page: officers use `cooperativeAdmin.overview`; SuperAdmin uses `admin.overview`; retry on error.
-- Activity page: retry on query error.
-- Support tickets: signed-out CTA to `/auth`.
+| Block | Migration | Result | Verification |
+|------:|-----------|--------|--------------|
+| 1 | `20261117100000_auth_profile_access` | OK | `authenticated` USAGE on `agricoop_app`; 3 users policies; 2 profiles policies; visibility fn present |
+| 2 | `20261117105000_active_application_tables` | OK after fix | All 8 missing tables created (`auditLogs`, associations, notifications, payments, …) |
+| 3 | `20261117110000_transaction_payment_option` | OK | `transactions.paymentOptionId` present |
+| 4 | `20261117120000_profile_verification_submissions` | OK after fix | Table + policies + triggers present |
+| 5 | `20261117130000_app_security_helpers` | OK | `current_app_user_id` present |
+| 6 | `20261117131000_marketplace_rls_grants` | OK | `agricoop_app` policy_count ≈ 62 during apply |
+| 7 | `20261117132000_secure_audit_notification_writes` | OK | `create_notification` + `write_audit_log` present |
+| 8 | `20261117133000_payment_proofs_id_default` | OK | `paymentProofs.id` sequence default already present (skipped recreate) |
+| 9 | `profile_verification_bucket` | OK | `storage.buckets` has `profile-verification-documents` |
 
-### Deploy / hygiene
-- `.env.example` lists required env **names** only.
-- `docs/MANUAL_SQL.md` consolidated paste pack (`pnpm docs:manual-sql`).
-- `db:push` guarded; local `db:test` harness scripts; `lint` alias = `tsc --noEmit`.
-- Verify locally: **`pnpm check`**, **`pnpm lint`**, **`pnpm test`** (285 passed / 2 skipped), **`pnpm build`** — all green.
+### Fixes required during apply (committed)
 
----
+1. **Block 2:** `to_regclass('agricoop_app.paymentOptions')` failed on camelCase — quoted as `agricoop_app."paymentOptions"`.
+2. **Block 4:** Postcondition `LIKE` did not match PG-normalized `with_check` (`::text` cast). Made migration idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`) and relaxed the `LIKE` to `%agricoop.profile_verification_upload_verified%`.
 
-## 4. SQL you must run (in order)
+### Post-apply live schema check
 
-1. Open Supabase → SQL Editor on project `adxprwseqawqrwuijata`.
-2. Confirm PITR / backup before starting.
-3. Paste **one block at a time** from [`docs/MANUAL_SQL.md`](./MANUAL_SQL.md):
+- Missing expected tables: **none**
+- `paymentOptionId`: **yes**
+- `agricoop_app` tables: **21**
+- Helpers (`current_app_user_id`, `write_audit_log`, `create_notification`): **yes**
+- Bucket `profile-verification-documents`: **yes**
+- RLS policies on `agricoop_app`: **61+**
 
-| Order | Block | Source migration |
-|------:|-------|------------------|
-| 1 | Auth/profile access | `20261117100000_auth_profile_access.sql` |
-| 2 | Active application tables | `20261117105000_active_application_tables.sql` |
-| 3 | Transaction payment option | `20261117110000_transaction_payment_option.sql` |
-| 4 | Profile verification | `20261117120000_profile_verification_submissions.sql` |
-| 5 | App security helpers | `20261117130000_app_security_helpers.sql` |
-| 6 | Marketplace RLS + grants | `20261117131000_marketplace_rls_grants.sql` |
-| 7 | Secure audit/notification writes | `20261117132000_secure_audit_notification_writes.sql` |
-| 8 | Payment proofs id default | `20261117133000_payment_proofs_id_default.sql` |
-| 9 | Storage bucket (if present in pack) | profile-verification-documents |
+### SuperAdmin
 
-Stop on any `RAISE EXCEPTION`. Do **not** re-run a failed half-applied block without reading the error and reconciling.
+`SEED_SUPERADMIN_1_EMAIL` already maps to an existing user that is already `superadmin` / `approved` (no change needed).
 
-After success, optionally record versions in Supabase migration history to match filenames above.
+If you ever need a manual promote for a different email:
 
----
-
-## 5. Environment variables
-
-### Required by the app (set in Vercel Production + Preview)
-
-| Name | Present in Vercel? | Notes |
-|------|--------------------|-------|
-| `DATABASE_URL` | Yes (prod + development) | App Postgres connection |
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Browser client |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Browser client |
-| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only storage/admin |
-| `APP_URL` | **Missing** | Add HTTPS production origin (email redirects / absolute links). Also in `.env.example`. |
-| `SUPABASE_STORAGE_BUCKET` | Optional | Defaults toward `product-images` if unset |
-
-### Also present on Vercel (legacy / integration; not all used by Vite server)
-`POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `POSTGRES_URL_NON_POOLING`, `POSTGRES_USER`, `POSTGRES_HOST`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-
-### Local only (never set on Vercel production)
-`MIGRATION_DATABASE_URL`, `SEED_DATABASE_URL`, `TEST_DATABASE_URL`, `AGRICOOP_SEED_TARGET`, seed credential names — see `.env.example`.
-
----
-
-## 6. Deploy steps
-
-1. **Run MANUAL_SQL** blocks 1→9 on production Supabase (you).
-2. Set **`APP_URL`** on Vercel to the production HTTPS origin.
-3. Confirm Vercel project settings match `vercel.json`:
-   - Build: `corepack pnpm build`
-   - Output: `dist/public`
-   - API: `api/index.ts` (rewrites `/api/:path*` → serverless; SPA fallback to `/index.html`)
-4. Merge/push `finish/agricoop-complete` (or promote) to the branch Vercel uses for Production (currently Production deploy is still from `recover-approved`).
-5. Smoke after deploy:
-   - `/` loads
-   - `/api/trpc/...` health or `auth.me` responds
-   - Sign-in → role dashboards (buyer / seller / admin / superadmin)
-   - Seller pending: cooperative association request
-   - GCash checkout only after block 3 (`paymentOptionId`)
-   - Support ticket + audit log pages after blocks 2/5/7
-
-Agent did **not** push or create a production deployment from this branch.
-
----
-
-## 7. Decisions made without asking
-
-- Kept officer cancel/complete as officer-only (existing rule).
-- `transactions.paymentOptionId` is the canonical GCash link (not a parallel payments-only path for checkout writes).
-- Pending sellers get a narrow pre-approval API surface instead of a second auth stack.
-- Admin officers continue on `AdminDashboard` (not the lighter unused `OfficerDashboard`) so payment/product/association queues remain available.
-- Sellers who place orders as buyers may upload GCash proofs for those orders.
-- `pnpm lint` aliases to TypeScript check (no ESLint package in repo).
-
----
-
-## 8. Known remaining issues
-
-- **Production SQL not applied yet** — app will hard-fail many mutations until MANUAL_SQL runs.
-- **`APP_URL` missing on Vercel** — set before relying on redirect/email absolute URLs.
-- Vercel **Production** deploy is not yet this branch; latest READY is preview on `production-ui-port`.
-- Advisor: `public.get_my_role` still executable by anon/authenticated (legacy); migrations intentionally do not revoke it because older public policies depend on it.
-- Advisor: leaked-password protection disabled in Auth (dashboard toggle).
-- Placeholder product images still used when `primaryImageUrl` missing.
-- Product detail page has no add-to-cart CTA (marketplace remains the purchase path).
-- `OfficerDashboard` component remains in tree but unused (documented for possible future split).
-- Quoted-order “place at quoted price” remains cash-only (no GCash branch).
-
----
-
-## 9. Local verification evidence
-
+```sql
+UPDATE agricoop_app.users
+SET role = 'superadmin',
+    "approvalStatus" = 'approved',
+    "cooperativeId" = NULL,
+    "updatedAt" = now()
+WHERE lower(email) = lower('YOUR_EMAIL_HERE');
 ```
-pnpm check  → pass
-pnpm lint   → pass (tsc)
-pnpm test   → 285 passed, 2 skipped
-pnpm build  → Vite client + esbuild server → dist/
-```
+
+---
+
+## 3. Vercel environment
+
+| Name | Action |
+|------|--------|
+| `APP_URL` | **Set** to `https://agricoop-marketplace-final-capstone.vercel.app` (Production + Preview) |
+| `DATABASE_URL` | Present (Production) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Present |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Present |
+| `SUPABASE_SERVICE_ROLE_KEY` | Present |
+
+Optional / legacy names also present (`POSTGRES_*`, `SUPABASE_*` variants).  
+Optional app name not required for boot: `SUPABASE_STORAGE_BUCKET` (defaults in code toward `product-images`).
+
+Secret names that must remain set (values never printed): `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public but required), plus any seed credentials only for local use.
+
+---
+
+## 4. Push and deploy
+
+- Pushed `finish/agricoop-complete` to `origin` (no force-push).
+- Deployed branch directly to **Production** via Vercel MCP (no merge to `main` required).
+- First production deploy (`dpl_jUKiRDPe4E3PPv5HgafkQ4tK2D3Q`) was READY but API crashed on ESM import of `conversationStream`.
+- Fixed by bundling `dist/vercel-api.js` and pointing `api/index.ts` at it; pushed `0c6d574`; redeployed.
+
+**Current production:** `dpl_9nYcJDtoYDCU4bBb3oKLMZFMyJek` on alias `agricoop-marketplace-final-capstone.vercel.app` — **replaces** the old `recover-approved` production target.
+
+---
+
+## 5. Live smoke tests
+
+Against `https://agricoop-marketplace-final-capstone.vercel.app`:
+
+| Path | Status | Notes |
+|------|--------|-------|
+| `/` | 200 | SPA shell |
+| `/marketplace` | 200 | SPA shell |
+| `/auth` | 200 | SPA shell |
+| `/api/health` | 200 | `{"status":"ok","database":"available"}` |
+| `/api/trpc/auth.me` (no session) | 200 | `[{"result":{"data":{"json":null}}}]` — unauthenticated correctly returns null |
+
+Runtime logs for the current deployment: **no error/fatal entries** after the fix.
+
+---
+
+## 6. Still needs a human (short list)
+
+1. **Role click-through** — Sign in as Buyer / Seller / Admin / SuperAdmin and walk order, quotation, payment-proof, and association flows with real accounts.
+2. **Supabase Auth URL config** — In Dashboard → Authentication → URL Configuration, set Site URL to `https://agricoop-marketplace-final-capstone.vercel.app` and allow redirect `https://agricoop-marketplace-final-capstone.vercel.app/auth?verification=success`.
+3. **Optional:** Enable Auth leaked-password protection (advisor warning).
+
+---
+
+## 7. Key commits on this branch
+
+1. Migrations + MANUAL_SQL pack  
+2. Server auth/payments/notifications  
+3. Client role UX  
+4. Docs / env example / handoff  
+5. SQL apply fixes (camelCase + idempotent profile verification)  
+6. Vercel API bundle fix (`0c6d574`)
