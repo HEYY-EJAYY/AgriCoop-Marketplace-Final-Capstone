@@ -1,73 +1,58 @@
 # AgriCoop Marketplace
 
-AgriCoop is a cooperative-centered agricultural marketplace for Buyers, Sellers/Farmers, Admins, and SuperAdmins. It supports product discovery, quotation requests, regular/bulk F2F orders, inventory updates, product moderation, CSV reporting, and Buyer↔Seller support conversations.
+Cooperative-centered agricultural marketplace for Buyers, Sellers, Admins (coop officers), and SuperAdmins.
 
-## Current stack
+## Stack
 
-- React 19 + Vite + Wouter
-- Tailwind CSS 4 and shadcn-style UI components
-- Express 4 + tRPC 11
-- Drizzle ORM with MySQL/TiDB at runtime
-- Supabase Auth bearer-token verification
-- Authenticated Server-Sent Events for conversation updates
-- Vitest, TypeScript, Vite/esbuild production build
-- **Payments are intentionally F2F-only**; online gateway/webhook code is not active
+- React 19 + Vite 7 + Wouter + Tailwind 4
+- Express 4 + tRPC 11 (Vercel serverless adapter in `api/index.ts`, `maxDuration` 30s)
+- Drizzle ORM 0.44 + **PostgreSQL** (`drizzle/pg-schema.ts`, schema `agricoop_app`)
+- Supabase Auth, Storage; Vitest; pnpm
 
-> This repository is currently a Vite/Express + MySQL runtime, not yet a native Next.js + Supabase Postgres deployment. `supabase/rls.sql` is the target migration/security artifact and must be applied and verified only after the Postgres cutover.
+> MySQL-era files under `drizzle/0000–0011_*.sql` and `drizzle/schema.ts` are **LEGACY**. Do not run them against Supabase. `supabase/rls.sql` is **DEPRECATED**.
 
 ## Roles
 
-- **Buyer:** browse approved visible listings, request quotations, place regular/bulk orders, and message Sellers.
-- **Seller/Farmer:** save and submit listings, manage inventory, respond to quotations, fulfill orders, and message Buyers.
-- **Admin:** manage users/cooperatives and review Seller product submissions.
-- **SuperAdmin:** platform-level administrative access; cannot be created through public registration.
-
-Seller listings are hidden until submitted and approved. Rejected listings retain a reason for correction and resubmission.
+- **Buyer:** browse approved+visible products, cart/checkout, GCash proof upload, quotations, messaging, support
+- **Seller:** products/images, association request, orders (confirm/ready), quotations, cash receipt on own ready cash orders
+- **Admin:** cooperative-scoped members, product review, payment verification, payment options, support, audit logs
+- **SuperAdmin:** platform-wide admin plus cooperatives create/update/deactivate
 
 ## Local setup
 
-Start a local MySQL/MariaDB server first and create the database named by `DATABASE_URL`. Copy the required local configuration into `.env.local` (see [docs/ENVIRONMENT.md](./docs/ENVIRONMENT.md)); keep database and Supabase service-role credentials private.
+1. Copy `.env.example` → `.env.local` and fill **names only documented there** (never commit secrets).
+2. `corepack pnpm install`
+3. Point `DATABASE_URL` at a **local** Postgres only for `pnpm dev`. Never use production credentials for seeds or `db:push`.
+4. `corepack pnpm check` / `corepack pnpm test` / `corepack pnpm build`
+5. `corepack pnpm dev` (loads `.env.local`)
+
+### Database scripts (safety)
+
+- `pnpm db:generate` — Drizzle SQL generate only
+- `pnpm db:push` — **blocked by default** (B12). Production migrations are owner-run SQL in `supabase/migrations/` (see `docs/PRODUCTION_MIGRATION_RUNBOOK.md`)
+- Seeds require `AGRICOOP_SEED_TARGET=local` and localhost `SEED_DATABASE_URL`
+
+### Local RLS / concurrency harness
 
 ```powershell
-corepack pnpm install
-if (-not (Test-Path .env.local)) { New-Item -ItemType File .env.local }
-notepad .env.local
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS agricoop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-corepack pnpm db:push
-corepack pnpm seed:defaults
-corepack pnpm dev
-```
-
-The development server prints its URL when ready (normally `http://localhost:3000/`; it selects the next available port if that port is occupied). `seed:defaults` creates or updates only the five configured default accounts and the ten requested visible crop listings. It requires valid Supabase Auth admin settings and all `SEED_*` values in `.env.local`.
-
-Useful validation commands:
-
-```bash
-corepack pnpm check
+docker compose -f scripts/db-test/docker-compose.yml up -d
+$env:TEST_DATABASE_URL = "postgresql://agricoop_login:agricoop_test_password@127.0.0.1:55432/agricoop_test"
+node scripts/db-test/setup.mjs
 corepack pnpm test
-corepack pnpm build
 ```
 
-`pnpm seed:demo` is a separate legacy demo-data seeder that creates additional users and marketplace activity; do not run it when using the five-account default dataset. For a production server, run `corepack pnpm build` followed by `corepack pnpm start`.
+Harness refuses non-localhost URLs. If Docker/`TEST_DATABASE_URL` is unavailable, DB-backed harness tests skip and are **NOT VERIFIED**.
 
-## Database changes
+## Production migrations
 
-1. Edit `drizzle/schema.ts`.
-2. Run `corepack pnpm exec drizzle-kit generate`.
-3. Review the SQL migration, especially enum changes.
-4. Apply it with `corepack pnpm exec drizzle-kit migrate`.
-5. Run `corepack pnpm check`, `corepack pnpm test`, and `corepack pnpm build`.
+Owner-only, in Supabase SQL Editor, after backup/PITR. Ordered files and SKIP list: [`docs/PRODUCTION_MIGRATION_RUNBOOK.md`](docs/PRODUCTION_MIGRATION_RUNBOOK.md). Policy matrix: [`docs/RLS_POLICY_MATRIX.md`](docs/RLS_POLICY_MATRIX.md).
 
-The current role/product migration normalizes legacy `user` and `officer` records before narrowing the role enum.
+## Realtime note
 
-## Conversations
+Conversation SSE is process-local and unsuitable as the sole mechanism on multi-instance Vercel (30s cap). UI polling is the reliable primary path; SSE is a best-effort enhancement.
 
-Quotation and order submissions automatically create a Buyer↔Seller conversation. Signed-in participants can access only their own threads. Admin/SuperAdmin can oversee all threads. The support page uses tRPC for data and an authenticated SSE stream at `/api/conversations/:conversationId/stream` for immediate updates.
+## Docs
 
-## F2F payment policy
-
-Orders store `paymentMethod: f2f` and `F2F-pending-confirmation` until the Seller records handover/payment notes. There are no active online payment intents, QR flows, or webhooks.
-
-## Deployment limitation
-
-A true Vercel-independent Next.js + Supabase Postgres cutover remains outstanding. It requires migrating the MySQL schema, adding `auth_user_id` profile links, applying/testing the RLS artifact, replacing Express/Vite routes with Next.js routes/server actions, and using Supabase Realtime or an equivalent hosted stream.
+- [`docs/COMPLETION_INVENTORY.md`](docs/COMPLETION_INVENTORY.md) — running checklist
+- [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) — env var **names**
+- [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) — deploy notes (update alongside Gate 2 `DEPLOYMENT.md`)

@@ -1,6 +1,24 @@
-# AgriCoop Marketplace — Current Project Summary
+# AgriCoop Marketplace — Project Summary
 
-**Evidence scope:** this summary describes the repository as inspected on 2026-10-19. Statements about implemented behavior are based on current source, not the original phase plan or stale generated documentation. “NOT VERIFIED” means the behavior could not be established from the checked-in code. No `.env` file was opened or used as evidence.
+**Historical baseline:** the detailed feature and permissions inventory below describes source as inspected on 2026-10-19. It predates the PostgreSQL runtime conversion and the email-verification/storage-proxy remediations summarized in the current progress and acceptance reports. Do not treat other historical role/feature rows below as current without checking the active code. “NOT VERIFIED” means the behavior could not be established from the checked-in code.
+
+## PostgreSQL runtime conversion status
+
+The application runtime now uses Drizzle's PostgreSQL adapter (`postgres-js`) and `DATABASE_URL`; MySQL Drizzle definitions and numbered MySQL migrations remain historical artifacts. Authenticated requests establish a transaction-local PostgreSQL role and JWT claims, then look up the application account by exact Supabase Auth UUID in `agricoop_app.users."openId"`. The canonical `public.profiles`/`public.roles` mapping is checked independently and must agree with the application role. Missing, duplicate, hidden, or conflicting identity records fail closed; login never creates an account or assigns a role. Runtime access does not fall back to a privileged database connection.
+
+This conversion is **not ready for staging**. Read-only inspection found no `USAGE` on `agricoop_app` and no authenticated `SELECT` privilege on its `users` table; all ten legacy tables have RLS enabled but no policies. `public.roles` also has no RLS policy, so its assignments are not visible to authenticated requests. One exact identity match has a `seller` legacy role but canonical role ID 4 (`system_admin`), and sign-in is deliberately blocked for that disagreement. `payments`, `paymentEvents`, and `paymentAttempts` are absent from the current database, as is `orders.demoSeedKey`, although the runtime model and code use them. Existing marketplace primary/foreign keys remain integer IDs; the proposed UUID standard and old-to-new ID crosswalk are not implemented. Current registration attempts to provision both the exact-UUID application user and `public.profiles` row, but the previously inspected grants rejected application-user access; this code path has not been validated against a database. Least-privilege grants/RLS and isolated staging verification remain blockers. No migrations, seeds, or database writes were run. Existing money columns remain integer cents and legacy timestamps are without time zone; the proposed BIGINT/TIMESTAMPTZ standards still need an approved migration and data interpretation.
+
+## Current database stack
+
+| Layer | Current implementation |
+|---|---|
+| Persistence | Drizzle ORM ^0.44.5, PostgreSQL dialect, `postgres` driver |
+| Runtime database access | `DATABASE_URL`, transaction-scoped `authenticated`/`anon` role and JWT claims |
+| Migration access | Separate `MIGRATION_DATABASE_URL`; no migration was executed |
+| Seed access | Separate `SEED_DATABASE_URL`; seed scripts were not executed |
+| Legacy artifacts | [`drizzle/schema.ts`](../drizzle/schema.ts) and numbered SQL migrations remain MySQL-specific |
+
+Supabase Auth remains the identity provider. `public.profiles.user_id` is the canonical Auth UUID; legacy application account lookup requires exact UUID-text equality with `agricoop_app.users."openId"`. The live grants and RLS policies currently prevent ordinary authenticated application reads, so this architecture must not be treated as operational until the database-side access design is approved and validated.
 
 ## 1. OVERVIEW
 
@@ -11,12 +29,12 @@ AgriCoop is a cooperative-oriented agricultural marketplace for Buyers, Sellers/
 | Package manager | pnpm 10.4.1 (declared package manager in [`package.json`](../package.json)) |
 | UI/runtime | React ^19.2.1, Vite ^7.1.7, Wouter ^3.3.5, Tailwind CSS ^4.1.14 |
 | API/runtime | Express ^4.21.2, tRPC ^11.6.0, TypeScript 5.9.3 |
-| Persistence | Drizzle ORM ^0.44.5, MySQL dialect, mysql2 ^3.15.0 |
+| Persistence | Historical baseline: Drizzle ORM ^0.44.5, MySQL dialect, mysql2 ^3.15.0 |
 | Identity/storage SDK | Supabase JS ^2.116.0; Supabase Auth is used for identity. Supabase Storage is used by the product image upload helper. |
 | UI/data utilities | TanStack React Query ^5.90.2, Radix UI packages, Lucide React ^0.453.0, date-fns ^4.1.0 |
 | Build/test | Vitest ^2.1.4, drizzle-kit ^0.31.4, esbuild ^0.25.0 |
 
-This is **not** a Next.js application and the active database is MySQL, not Supabase Postgres. There is no checked-in live PostgreSQL migration. See [`client/src/App.tsx`](../client/src/App.tsx), [`server/_core/index.ts`](../server/_core/index.ts), [`drizzle/schema.ts`](../drizzle/schema.ts), and [`drizzle.config.ts`](../drizzle.config.ts).
+The frontend/server framework remains React/Vite, Express, and tRPC, not Next.js. The MySQL statements in the historical inventory below describe the pre-conversion baseline. The current PostgreSQL runtime model is [`drizzle/pg-schema.ts`](../drizzle/pg-schema.ts), and [`drizzle.config.ts`](../drizzle.config.ts) requires the separate migration URL.
 
 ## 2. ARCHITECTURE
 
@@ -49,7 +67,7 @@ Supabase Auth is therefore an identity provider; application roles, approvals, c
 | `product-images` (or the `SUPABASE_STORAGE_BUCKET` override) | Public | The only Supabase bucket currently referenced by a live upload call. `server/storage.ts` defaults it to public, checks/creates/updates the bucket, uploads, and returns a public URL. `products.uploadImage` uses the default options. |
 | `verification-docs` | NOT VERIFIED / not implemented | No such bucket name or upload/review procedure was found. |
 | `chat-images` | NOT VERIFIED / not implemented | No such bucket name or upload/message procedure was found. |
-| `/manus-storage/*` | Legacy external proxy; not a Supabase bucket | Express registers `registerStorageProxy` in `server/_core/index.ts`; `server/_core/storageProxy.ts` obtains a signed external URL from the Manus-compatible service. The route has no user/owner check. |
+| `/manus-storage/*` | Legacy external proxy; not a Supabase bucket | The package-server entry registers `registerStorageProxy`; the Vercel app does not. The route now requires a verified Auth identity and operational account, and only signs exact product-image paths referenced by products after public-visibility, seller-ownership, cooperative-Admin, or SuperAdmin checks. Payment-proof and arbitrary paths are denied. These rules are unit/route tested, not live-service verified. |
 
 `storagePut` accepts an optional bucket and `{ bucket, public, expiresIn }` configuration. Private upload URLs are signed for a default of 300 seconds. This helper does not itself authorize the caller or establish ownership; a future private-file endpoint must do so. No current verification/chat workflow invokes it. Evidence: [`server/storage.ts`](../server/storage.ts) (`ensureBucket`, `storagePut`, `storageGet`, `storageGetSignedUrl`) and [`server/routers.ts`](../server/routers.ts) (`products.uploadImage`).
 
@@ -64,7 +82,7 @@ Runtime roles are `buyer`, `seller`, `admin`, and `superadmin` in [`drizzle/sche
 | Procedure / feature group | SuperAdmin | Admin/Officer | Seller | Buyer | Enforcement / tests |
 |---|---|---|---|---|---|
 | `auth.me`, `auth.logout` | Allowed | Allowed | Allowed | Allowed | Public procedures in [`server/routers.ts`](../server/routers.ts); logout test in [`server/auth.logout.test.ts`](../server/auth.logout.test.ts). |
-| `auth.register` | Denied as selectable role | Allowed to request `admin`, pending | Allowed to register, pending | Allowed to register, approved | Public schema accepts buyer/seller/admin, not superadmin; account creation in `auth.register`. No route-level registration authorization test. |
+| `auth.register` | Denied as selectable role | Not selectable | Allowed to register, approved | Allowed to register, pending | Current active procedure accepts only Buyer/Seller and assigns role/approval server-side; email confirmation is required before request context maps an Auth identity. See [`server/registration.test.ts`](../server/registration.test.ts). Other rows in this historical matrix may not reflect the current router. |
 | `cooperatives.list` | Allowed | Allowed | Allowed | Allowed | Public procedure and active cooperative query (`getCooperatives`). |
 | `cooperatives.create` | Allowed | Allowed | Denied | Denied | `requireOperationalRole(["admin","superadmin"])`; `cooperatives.create`. |
 | `marketplace.list`, `categories`, `byId` | Allowed | Allowed | Allowed | Allowed | Public procedures and public eligibility filters in `getMarketplace` / `getMarketplaceProduct`. |
@@ -94,7 +112,7 @@ Status terms: **DONE** means the code provides the described core workflow; **PA
 
 | Feature | Status | What current code actually does |
 |---|---|---|
-| Sign-up/login and account approval | PARTIAL | `/auth` supports Supabase email/password sign-in and registration for Buyer, Seller, and Admin Officer. `auth.register` creates confirmed Auth users (`email_confirm: true`); Buyers get `approvalStatus: approved`, Sellers/Admins `pending`. No email confirmation step. Operational role checks enforce approval. [`client/src/pages/Auth.tsx`](../client/src/pages/Auth.tsx), [`server/routers.ts`](../server/routers.ts) (`auth.register`), [`server/authz.ts`](../server/authz.ts). |
+| Sign-up/login and account approval | IMPLEMENTED LOCALLY; NOT INTEGRATION-VERIFIED | `/auth` supports Supabase email/password sign-in and Buyer/Seller registration. The active `auth.register` uses Supabase email confirmation without auto-confirm; server context rejects identities missing `email_confirmed_at`. Buyer approval and Seller pending/cooperative-association workflows remain server-controlled. The resend limiter is process-local, so Supabase Auth rate limits are also required. Historical auto-confirmed accounts cannot be distinguished from legitimately confirmed accounts using the current Auth confirmation timestamp alone and require owner review. [`client/src/pages/Auth.tsx`](../client/src/pages/Auth.tsx), [`server/routers.ts`](../server/routers.ts) (`auth.register`, `auth.resendVerification`), [`server/context.test.ts`](../server/context.test.ts). |
 | Cooperative picker / add new cooperative | PARTIAL | Cooperative Seller registration can choose an active cooperative or submit a new name; names are normalized and duplicate-matched. The option is not shown for an individual Seller. `cooperatives.create` is a separate Admin/SuperAdmin operation. [`Auth.tsx`](../client/src/pages/Auth.tsx), [`cooperativeNames.ts`](../server/cooperativeNames.ts), [`routers.ts`](../server/routers.ts) (`cooperatives`). |
 | Listings and listing verification | DONE (basic) | Seller can create/edit/archive/submit a listing; new listings default to hidden and pending (or draft if not submitted). Admin can approve/reject; approved listings become published/visible, rejected ones hidden/archived with reason. Public query requires published + approved + visible. [`Dashboard.tsx`](../client/src/pages/Dashboard.tsx) (`SellerDashboard`), [`routers.ts`](../server/routers.ts) (`products`, `admin.reviewProduct`), [`db.ts`](../server/db.ts) (`getMarketplace`). |
 | Price sort, category and text filter | DONE | Marketplace supports price ascending/descending, category selection, and client-side search across product/category/Seller/cooperative names. [`Marketplace.tsx`](../client/src/pages/Marketplace.tsx), [`db.ts`](../server/db.ts) (`getMarketplace`). |
@@ -226,7 +244,7 @@ Current `users` data includes name, email, Supabase identity ID (`openId`), logi
 
 Only product imagery uses Supabase Storage in the current app, via the public default `product-images` bucket. Private `verification-docs` and `chat-images` use is absent. Signed URL generation defaults to 300 seconds when a private bucket is configured, but no endpoint performs owner/reviewer authorization before returning one. No data-retention/deletion schedule is implemented (**NOT IMPLEMENTED**). No verification consent text exists to quote. [`server/storage.ts`](../server/storage.ts), [`server/routers.ts`](../server/routers.ts).
 
-### Weak spots requiring remediation
+### Historical audit findings with current security status for this task
 
 | Priority | File and lines | Finding |
 |---|---|---|
@@ -237,10 +255,10 @@ Only product imagery uses Supabase Storage in the current app, via the public de
 | High | [`server/routers.ts`](../server/routers.ts#L400), [`server/db.ts`](../server/db.ts#L224) | Completion checks stock then decrements with an unconditional `stockQty - quantity` update. The check and decrement are not protected by a transaction/conditional update; concurrent completions can oversell, and multi-item completion can partially apply if an intermediate write fails. |
 | Medium | [`server/routers.ts`](../server/routers.ts#L334), [`server/routers.ts`](../server/routers.ts#L377) | Quotation and order creation check listing status but do not re-check the Seller's current account approval status. A listing hidden from marketplace queries after Seller suspension may still be acted on through a direct mutation with its product ID. |
 | High | [`supabase/rls.sql`](../supabase/rls.sql#L24), [`supabase/rls.sql`](../supabase/rls.sql#L44), [`drizzle/schema.ts`](../drizzle/schema.ts) | RLS is only a target SQL file, assumes `auth_user_id` and snake_case columns/tables not present in the current Drizzle schema, and is not a functioning enforcement layer for the live MySQL database. Several policies grant Admin/SuperAdmin broad access and do not encode cooperative scope or explicit conversation participants. |
-| Medium | [`server/routers.ts`](../server/routers.ts#L160) | Public registration creates Auth accounts with `email_confirm: true`; email ownership is not confirmed by this flow. |
+| Medium | [`server/routers.ts`](../server/routers.ts#L172) | **Resolved locally in the active router:** public signup now uses Supabase email confirmation without auto-confirm, only allows Buyer/Seller, and the request context rejects unconfirmed identities. Rate limiting is process-local; Supabase email confirmation, delivery, and Auth rate limits remain deployment requirements. Previously auto-confirmed identities cannot be distinguished from genuinely confirmed users by the current confirmation timestamp alone and require owner review. |
 | Medium | [`server/_core/index.ts`](../server/_core/index.ts#L35), [`client/src/pages/Support.tsx`](../client/src/pages/Support.tsx#L20) | The SSE access token is accepted in a query parameter because `EventSource` cannot set a custom header. URLs may be captured in browser/proxy logs; consider a safer short-lived stream token or fetch-stream approach. |
-| Medium | [`server/_core/storageProxy.ts`](../server/_core/storageProxy.ts#L4), [`server/_core/index.ts`](../server/_core/index.ts#L55) | Legacy `/manus-storage/*` route has no application authentication/ownership check and redirects to an upstream signed URL for a supplied path. It should not be used for sensitive documents. |
-| Medium | [`server/storage.ts`](../server/storage.ts#L43), [`server/routers.ts`](../server/routers.ts#L279) | Bucket visibility is changed by helper options; the live product upload defaults public. Upload limits are 8 MB, not the requested 5 MB pre-compression limit, and the client does no compression/resize. |
+| Medium | [`server/_core/storageProxy.ts`](../server/_core/storageProxy.ts#L17), [`server/_core/index.ts`](../server/_core/index.ts#L44) | **Resolved locally for product images:** the package-server route requires verified Auth and operational status, exact product-image references, and public/Seller/cooperative-Admin/SuperAdmin authorization. Arbitrary paths and payment proofs are denied; the Vercel app does not mount the route. No external signing service was contacted. |
+| Medium | [`server/storage.ts`](../server/storage.ts#L43), [`server/routers.ts`](../server/routers.ts#L279) | Product images are public objects and uploads pass base64 through the Vercel function. The application now caps each image at 3 MiB and the Express JSON parser at 4,300,000 bytes to fit the serverless request budget; the client does not compress or resize images. |
 | Medium | [`server/clients.ts`](../server/clients.ts#L3), [`server/_core/env.ts`](../server/_core/env.ts#L1) | Missing Supabase values fall back to localhost/dummy anon settings or an anon client instead of failing at client construction. This is not a leaked secret, but can disguise misconfiguration and make admin/storage behavior fail unexpectedly. |
 | Medium | [`client/src/pages/Reports.tsx`](../client/src/pages/Reports.tsx#L13), [`server/routers.ts`](../server/routers.ts#L426) | CSV page is enabled only for role `admin`, while API overview also allows SuperAdmin; conversely Admin/Officer's report data is platform-wide rather than cooperative-scoped. |
 
@@ -252,19 +270,20 @@ Required/optional judgments below describe current runtime/setup dependencies; v
 
 | Name | Purpose | Requirement |
 |---|---|---|
-| `DATABASE_URL` | MySQL connection for Drizzle runtime and migrations | Required for database-backed app/setup. |
+| `DATABASE_URL` | PostgreSQL connection for the active Drizzle runtime | Required for database-backed app requests; it is separate from the migration URL. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase Auth client/server project URL; also used by storage | Required for Auth; Storage calls also require it. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser Supabase Auth client key | Required for browser Auth. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side Supabase admin Auth/storage client | Required for account creation, seed operations, and storage. Never expose to browser. |
-| `JWT_SECRET` | Mapped to `ENV.cookieSecret` | Listed as required by `docs/ENVIRONMENT.md`; exact active runtime consumer is **NOT VERIFIED**. |
+| `JWT_SECRET` | Read into a legacy environment object | No active runtime consumer was identified; not required by the current Vercel path. |
 | `PORT` | Preferred Express port; defaults to 3000 | Optional. |
 | `NODE_ENV` | Selects Vite development server or production static serving | Optional; set appropriately for mode. |
 | `SUPABASE_STORAGE_BUCKET` | Overrides default product image bucket name | Optional. |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | Alternate browser Supabase values read by `client/src/lib/supabase.ts` | Optional aliases for the `NEXT_PUBLIC_*` values. |
-| `VITE_APP_ID`, `OAUTH_SERVER_URL`, `OWNER_OPEN_ID` | Template compatibility values; `OWNER_OPEN_ID` influences local Admin role upsert | Optional/legacy. |
+| `VITE_APP_ID`, `OAUTH_SERVER_URL` | Template compatibility values | Optional/legacy; no role assignment effect. |
 | `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY` | Manus-hosted template APIs (notification, storage proxy, image/LLM/map/transcription helpers) | Optional for core marketplace; required to use those template services. |
 | `VITE_FRONTEND_FORGE_API_URL`, `VITE_FRONTEND_FORGE_API_KEY` | Frontend Manus Map component configuration | Optional; Map component is not part of active app routes. |
 | `SEED_SUPERADMIN_1_EMAIL`, `SEED_SUPERADMIN_1_PASSWORD`, `SEED_SUPERADMIN_2_EMAIL`, `SEED_SUPERADMIN_2_PASSWORD`, `SEED_OFFICER_EMAIL`, `SEED_OFFICER_PASSWORD`, `SEED_BUYER_EMAIL`, `SEED_BUYER_PASSWORD`, `SEED_SELLER_EMAIL`, `SEED_SELLER_PASSWORD` | Five-account `seed:defaults` configuration | Required by that seed script, not ordinary app startup. |
+| `SEED_DATABASE_URL`, `AGRICOOP_SEED_TARGET` | Local seed safety/connection | Seed-only; requires explicit local opt-in and loopback DB target. Auth-account seeds additionally require loopback `NEXT_PUBLIC_SUPABASE_URL`; never configure seed variables in Vercel. |
 | `SUPERADMIN_JOAN_PASSWORD`, `SUPERADMIN_EROL_PASSWORD` | Legacy `seed:superadmins` inputs | Required only for that separate script; its script also contains inline identity data. |
 
 Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core/env.ts`](../server/_core/env.ts), and `process.env`/`import.meta.env` references in runtime and seed code. No `.env` files were consulted.
@@ -280,9 +299,9 @@ Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core
 | `format` | `prettier --write .` | Formats repository files; do not run for a documentation-only task. |
 | `test` | `vitest run` | Vitest suite. |
 | `db:push` | `drizzle-kit generate && drizzle-kit migrate` | Generate and apply MySQL migrations. |
-| `seed:demo` | `cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-demo.ts` | Legacy demo-data seed; separate from default five-account seed. |
-| `seed:defaults` | `cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-defaults.ts` | Default accounts and visible listing seed. |
-| `seed:superadmins` | `tsx scripts/seed-superadmins.ts` | Separate SuperAdmin provisioning script. |
+| `seed:demo` | `cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-demo.ts` | Legacy demo-data seed; separate from default five-account seed; requires `AGRICOOP_SEED_TARGET=local`. |
+| `seed:defaults` | `cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-defaults.ts` | Default accounts and visible listing seed; requires `AGRICOOP_SEED_TARGET=local`. |
+| `seed:superadmins` | `tsx scripts/seed-superadmins.ts` | Separate SuperAdmin provisioning script; requires `AGRICOOP_SEED_TARGET=local`. |
 
 ### Windows PowerShell setup
 
@@ -297,16 +316,17 @@ Names are sourced from [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md), [`server/_core
    mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS agricoop CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
    ```
 4. Configure the required environment **names** and local secret values privately, using [`docs/ENVIRONMENT.md`](./ENVIRONMENT.md). Do not paste secret values into prompts or commit them.
-5. Generate and apply the tracked MySQL schema migrations:
+5. Before any seed command, explicitly set `AGRICOOP_SEED_TARGET=local`. Seed scripts reject production mode, but this flag does not verify the connection host; verify the target is local and disposable.
+6. Generate and apply the tracked MySQL schema migrations:
    ```powershell
    corepack pnpm db:push
    ```
-6. To load the default five role accounts and crop catalog, configure all `SEED_*` variables privately and run:
+7. To load the default five role accounts and crop catalog, configure all `SEED_*` variables privately and run:
    ```powershell
    corepack pnpm seed:defaults
    ```
    `seed:demo` is an alternative legacy demo dataset; do not mix it with defaults without first understanding the data it writes.
-7. Start the app:
+8. Start the app:
    ```powershell
    corepack pnpm dev
    ```
@@ -418,7 +438,7 @@ The checked-in Typst manuscript sources are [`docs/generated/agricoop-documentat
 | Current technology stack table | Replace any Next.js/Supabase Postgres/Vercel-as-current wording with React/Vite, Express/tRPC, MySQL/Drizzle, Supabase Auth/Storage, and process-local SSE. |
 | System architecture: Current runtime architecture / Native migration architecture | Correct active request flow and distinguish the proposed Postgres/Next architecture from current code; include current public product bucket, legacy Manus proxy, and one-process SSE limitations. |
 | Data model and persistence: Main entities / Database migrations | Replace any participant/audit/evidence entities described as present; list the nine actual tables and the seven actual migrations. |
-| Authentication and authorization: Registration, Authorization layers, Role matrix table | Document `email_confirm: true`, Buyer approved vs Seller/Admin pending, SuperAdmin registration/procedure exceptions, self-editable role/cooperative field, and current non-scoped Admin endpoints. |
+| Authentication and authorization: Registration, Authorization layers, Role matrix table | Replace the historical auto-confirm claim with the current confirmation-required flow, server-controlled Buyer/Seller assignment, account-verification gate, and required Supabase email settings. Other authorization gaps in this historical inventory still require current-code review before being treated as facts. |
 | Public user experience / Seller workflow / Buyer workflow | Add actual routes and distinguish implemented UI from missing profile, user verification, image compression, bulk price negotiation, and accepted quotation conversion. |
 | Payment and transaction policy | Clarify transaction completion timestamp default occurs on row creation; actual online transfer/card processing is absent. |
 | Conversations and real-time support | Correct Seller tRPC read/send mismatch; explain no participants table, no three-party Officer inclusion, process-local EventEmitter/SSE, and no message types besides text. |

@@ -13,6 +13,22 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+.env*
+
+# Local / sensitive dumps and diagnostics (never commit)
+users-backup.json
+*.backup.json
+docs/catalog/
+.vercel/
+check-permissions.mjs
+test-identity-resolution.ts
+test-roles.mjs
+verify-auth.js
+verify-auth.mjs
+verify-db.ts
+supabase/test.txt
+server/routers.fixed.ts
+scripts/local/
 
 # IDE and editor files
 .vscode/
