@@ -109,7 +109,10 @@ Additive indexes on `products` (category, priceCents, stockQty, cooperativeId) a
 | Glass UI | Large frosted panel over image | Compact badge ≤20rem, bottom-right inset |
 | Shell | `max-w-[1440px]` + negative-margin “full-bleed” | `--agri-content-max: 1600px` + `.agri-full-bleed` bands |
 | LCP text | Unchanged (no H1 entrance animation) | Unchanged |
-| Hero image preload / dimensions | Present | Present (`width`/`height`, `srcset`, `fetchPriority=high`) |
-| CLS risk | Absolute overflow image could shift perceived layout | Grid columns + fixed aspect reduce shift |
+| Hero image preload / dimensions | Present | Present; preload `imagesizes` aligned to `100vw / 50vw` |
+| CLS (desktop) | Interim regression **0.243** (Fraunces `display=swap` metric swap on hero) | **0.001** after `display=optional` + metric-matched Georgia fallback + `items-start` |
+| CLS (mobile) | **0** | **0** |
+| LCP (desktop, LH 13.5) | Prior After table **0.9s** (LH 12.6) | **1.1s** (parity within lab noise; Perf **0.98**) |
+| LCP (mobile, LH 13.5) | Prior After table **3.1s** (LH 12.6) | Lab **4.9s** under LH 13 Slow-4G (FCP 3.8s, TBT 20ms); methodology differs from LH 12.6 baseline — no H1 opacity animation reintroduced; badge fetch deferred via `requestIdleCallback` |
 
-Local Playwright (375–1920): no `documentElement` horizontal overflow; axe home serious/critical = 0. Re-measure Lighthouse LCP/CLS on Production after READY — target equal or better than After table (home mobile LCP **3.1s**, CLS **0**).
+Playwright home (prod): overflow / padding / badge placement / axe serious+critical = **0** at 360, 1280, 1920.

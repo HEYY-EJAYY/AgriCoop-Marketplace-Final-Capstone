@@ -84,9 +84,14 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 
 | Item | Value |
 |------|-------|
-| Prior READY | `dpl_EhM8Cgrate7mNSqmyuqLvyirwFfL` @ `4739552` |
-| Follow-up | Hero layout + shell width deploy (see latest push) |
+| Commit | `6b49478` |
+| Production | `dpl_EHa7tGmgKfkv27aizfkx8Yjrt7aK` |
+| readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
+| Smoke | `/`, `/marketplace` **200**; `/api/health` ok |
+| Playwright | Hero layout + axe **6/6** (360/1280/1920) on production |
+| Desktop CLS | **0.001** (was 0.243 before Fraunces optional + fallback metrics) |
+| Runtime logs | No errors on this deployment window |
 
 ---
 
