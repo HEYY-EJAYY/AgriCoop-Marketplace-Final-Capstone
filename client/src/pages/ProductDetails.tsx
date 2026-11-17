@@ -1,6 +1,7 @@
 import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
-import { getProductImageUrl, optimizeListingImageUrl } from "@/lib/productImages";
+import { ProductImage } from "@/components/ProductImage";
+import { resolveProductImageSrc } from "@/lib/productImages";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { ArrowLeft, Loader2, Package, ShoppingBag } from "lucide-react";
 import { Link, useParams } from "wouter";
@@ -33,8 +34,10 @@ export default function ProductDetails() {
   const { product, sellerName, cooperativeName } = listing;
   const imageUrls = (product.imageUrls?.length
     ? product.imageUrls
-    : [product.primaryImageUrl || getProductImageUrl(product.name)]
-  ).map(url => optimizeListingImageUrl(url, product.name, 960, 720));
+    : product.primaryImageUrl
+      ? [product.primaryImageUrl]
+      : [null]
+  ).map(url => resolveProductImageSrc(url, product.name));
   const selectedImageUrl = imageUrls[selectedImageIndex] ?? imageUrls[0];
   const outOfStock = product.stockQty === 0;
   return <>
@@ -49,10 +52,18 @@ export default function ProductDetails() {
       </nav>
       <article className="agri-card grid overflow-hidden md:grid-cols-2">
         <div className="p-4">
-          <img src={selectedImageUrl} alt={`${product.name} image ${selectedImageIndex + 1}`} width={960} height={720} fetchPriority="high" decoding="async" className="h-72 w-full rounded-xl object-cover md:h-[500px]"/>
+          <ProductImage
+            src={selectedImageUrl}
+            alt={`${product.name} image ${selectedImageIndex + 1}`}
+            productName={product.name}
+            width={960}
+            height={720}
+            eager
+            className="h-72 w-full rounded-xl object-cover md:h-[500px]"
+          />
           {imageUrls.length > 1 && <div className="mt-3 grid grid-cols-5 gap-2">
             {imageUrls.map((imageUrl, index) => <button key={`${imageUrl}-${index}`} type="button" aria-label={`Show product image ${index + 1}`} aria-pressed={index === selectedImageIndex} onClick={() => setSelectedImageIndex(index)} className={`min-h-11 overflow-hidden rounded-lg border-2 ${index === selectedImageIndex ? "border-[#47774e]" : "border-transparent"}`}>
-              <img src={optimizeListingImageUrl(imageUrl, product.name, 160, 160)} alt="" width={160} height={160} loading="lazy" decoding="async" className="h-16 w-full object-cover"/>
+              <ProductImage src={imageUrl} alt="" productName={product.name} width={160} height={160} className="h-16 w-full object-cover" />
             </button>)}
           </div>}
         </div>

@@ -82,4 +82,19 @@ test.describe("public marketplace journeys", () => {
     const response = await request.get("/api/health");
     expect(response.ok()).toBeTruthy();
   });
+
+  test("two marketplace listings use distinct non-hero image sources", async ({ page }) => {
+    await page.goto("/marketplace");
+    await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
+    const images = page.locator('[data-testid="product-image"]');
+    const count = await images.count();
+    test.skip(count < 2, "Need at least two marketplace listings with product images");
+    const srcA = await images.nth(0).getAttribute("data-image-src");
+    const srcB = await images.nth(1).getAttribute("data-image-src");
+    expect(srcA).toBeTruthy();
+    expect(srcB).toBeTruthy();
+    expect(srcA).not.toEqual(srcB);
+    expect(srcA).not.toMatch(/hero-banner/i);
+    expect(srcB).not.toMatch(/hero-banner/i);
+  });
 });

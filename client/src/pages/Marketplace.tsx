@@ -2,7 +2,7 @@ import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { goToAuth } from "@/const";
 import { trpc } from "@/lib/trpc";
-import { optimizeListingImageUrl } from "@/lib/productImages";
+import { ProductImage } from "@/components/ProductImage";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { CHECKOUT_CART_STORAGE_KEY, hasMinimumOrderStock } from "../../../shared/checkoutCart";
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
@@ -56,7 +56,6 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "cooperative", label: "Cooperative (A–Z)" },
   { value: "category", label: "Category (A–Z)" },
 ];
-const IMAGE_FALLBACK = "/images/hero-banner-800.webp";
 const VALID_SORT = new Set<SortOption>(SORT_OPTIONS.map(option => option.value));
 
 const peso = (cents: number) =>
@@ -155,28 +154,12 @@ function ListingCardImage({
   product: ListingRow["product"];
   eager: boolean;
 }) {
-  const initial = optimizeListingImageUrl(
-    product.primaryImageUrl ?? product.imageUrls?.[0],
-    product.name,
-  );
-  const [src, setSrc] = useState(initial);
-
-  useEffect(() => {
-    setSrc(initial);
-  }, [initial]);
-
   return (
-    <img
-      src={src}
+    <ProductImage
+      src={product.primaryImageUrl ?? product.imageUrls?.[0]}
       alt={product.name}
-      width={640}
-      height={384}
-      loading={eager ? "eager" : "lazy"}
-      decoding="async"
-      className="aspect-[4/3] w-full object-cover"
-      onError={() => {
-        if (src !== IMAGE_FALLBACK) setSrc(IMAGE_FALLBACK);
-      }}
+      productName={product.name}
+      eager={eager}
     />
   );
 }
@@ -498,10 +481,6 @@ export default function Marketplace() {
                 <p className="mt-3 max-w-2xl text-[#d8e9d6]">
                   Browse active cooperative listings, compare prices, request a quotation, or prepare a direct order.
                 </p>
-              </div>
-              <div className="rounded-xl border border-[#5c916d] bg-[#255a40] px-4 py-3 text-sm text-[#e5f2de]">
-                <strong>Cash pickup or delivery.</strong> Sellers record cash received; AgriCoop does not process cash
-                payments.
               </div>
             </div>
           </div>

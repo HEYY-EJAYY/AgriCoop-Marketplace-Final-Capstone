@@ -14,6 +14,13 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "server/**/*.spec.ts", "scripts/migration/**/*.test.ts", "client/**/*.test.tsx"],
+    include: [
+      "server/**/*.test.ts",
+      "server/**/*.spec.ts",
+      "scripts/migration/**/*.test.ts",
+      "client/**/*.test.ts",
+      "client/**/*.test.tsx",
+      "shared/**/*.test.ts",
+    ],
   },
 });
