@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "@/pages/Home";
+import Marketplace from "@/pages/Marketplace";
 import NotFound from "@/pages/NotFound";
 
 const About = lazy(() => import("@/pages/About"));
@@ -13,7 +14,6 @@ const AuditLogs = lazy(() => import("@/pages/AuditLogs"));
 const Checkout = lazy(() => import("@/pages/Checkout"));
 const Activity = lazy(() => import("@/pages/Activity"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
-const Marketplace = lazy(() => import("@/pages/Marketplace"));
 const PaymentOptions = lazy(() => import("@/pages/PaymentOptions"));
 const Reports = lazy(() => import("@/pages/Reports"));
 const Support = lazy(() => import("@/pages/Support"));
@@ -33,7 +33,7 @@ function Router() {
       <Route path="/about">{() => <LazyPage><About/></LazyPage>}</Route>
       <Route path="/auth">{() => <LazyPage><Auth/></LazyPage>}</Route>
       <Route path="/checkout">{() => <LazyPage><Checkout/></LazyPage>}</Route>
-      <Route path="/marketplace">{() => <LazyPage><Marketplace/></LazyPage>}</Route>
+      <Route path="/marketplace" component={Marketplace}/>
       <Route path="/products/:id">{() => <LazyPage><ProductDetails/></LazyPage>}</Route>
       <Route path="/activity">{() => <LazyPage><Activity/></LazyPage>}</Route>
       <Route path="/support">{() => <LazyPage><Support/></LazyPage>}</Route>
