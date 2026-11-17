@@ -76,12 +76,13 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 
 | Item | Value |
 |------|-------|
-| Commit | see latest push on `finish/agricoop-complete` |
-| Prior READY | `dpl_HF54L7wTcXo8w1yff6QnAtQYMf3U` @ `a04345e` |
-| Follow-up | redeploy after Playwright URL-filter hardening + FINAL_REPORT |
+| Commit | `4739552` |
+| Production | `dpl_EhM8Cgrate7mNSqmyuqLvyirwFfL` |
+| readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
 | Smoke | `/`, `/marketplace`, `/messages`, `/profile` **200**; `/api/health` `{"status":"ok","database":"available"}` |
-| Runtime logs | No errors on READY deployment window |
+| Playwright | **12/12** against production alias |
+| Runtime logs | No errors attributed to this deployment; older `/api/index` 30s timeouts are historical (other deploy ids) |
 
 ---
 
