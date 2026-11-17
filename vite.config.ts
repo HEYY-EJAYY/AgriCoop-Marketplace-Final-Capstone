@@ -180,15 +180,13 @@ export default defineConfig({
     cssCodeSplit: true,
     rollupOptions: {
       output: {
+        // Keep React in one graph. Splitting react vs radix/vendor caused
+        // "Cannot read properties of undefined (reading 'forwardRef')" in production.
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          if (id.includes("recharts") || id.includes("d3-") || id.includes("victory-")) return "charts";
           if (id.includes("@supabase")) return "supabase";
-          if (id.includes("@tanstack") || id.includes("@trpc") || id.includes("superjson")) return "data";
-          if (id.includes("framer-motion")) return "motion";
+          if (id.includes("recharts") || id.includes("/d3-") || id.includes("\\d3-")) return "charts";
           if (id.includes("lucide-react")) return "icons";
-          if (id.includes("react-dom") || id.includes("/react/") || id.includes("\\react\\")) return "react-vendor";
-          return "vendor";
         },
       },
     },
