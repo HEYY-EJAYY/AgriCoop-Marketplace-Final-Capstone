@@ -92,9 +92,13 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 
 | Item | Value |
 |------|-------|
-| Prior READY | `dpl_EHa7tGmgKfkv27aizfkx8Yjrt7aK` @ `6b49478` |
-| Follow-up | Mobile menu overlay deploy (see latest push) |
+| Commit | `b88b52d` |
+| Production | `dpl_CYFdiry2J3nveq1aW7ACdbsqszru` |
+| readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
+| Smoke | `/` **200**; `/api/health` ok |
+| Playwright | Mobile menu overlay **8/8** (360 + 768) on production |
+| Runtime logs | No errors on this deployment window |
 
 ---
 
