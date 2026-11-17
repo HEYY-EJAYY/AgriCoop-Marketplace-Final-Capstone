@@ -88,17 +88,26 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 | Fix | Shared fixed `MobileMenuOverlay` (`100dvh`) for public + workspace headers |
 | Tests | `e2e/mobile-menu.spec.ts` (375/768) + unit role menus for buyer/seller/admin/superadmin |
 
+## Four live issues (2026-11-17)
+
+| Issue | Root cause (evidence) | Fix |
+|-------|----------------------|-----|
+| 1. Listings show hero image | DB URLs OK (object/public **200**). Client rewrote to `/render/image/` → **403**; `onError` used hero fallback | `ProductImage` + no render rewrite; placeholder never hero |
+| 2. Cash payment sentence | UI copy only (not in thesis PDF) | Removed from UI; checkout labels kept; test asserts absence |
+| 3. Admin Moderation/Orders/Users nav | Nav items pointed at non-matching destinations | Removed from Admin/SuperAdmin nav; ARIA body tabs + `?tab=` |
+| 4. Profile photo upload fails | `authenticated` SELECT-only on `profileImageUrl` (UPDATE failed after Storage) | GRANT + `avatars` bucket/policies (BLOCK 13); compress ≤2 MB |
+
+Docs: cash sentence **not** found in `docs/AgriCoop_System_Documentation.pdf` — PDF not regenerated.  
+SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profile_image_grants.sql` (applied).
+
 ## Deploy
 
 | Item | Value |
 |------|-------|
-| Commit | `b88b52d` |
-| Production | `dpl_CYFdiry2J3nveq1aW7ACdbsqszru` |
-| readyState | **READY** |
+| Commit | _(pending this ship)_ |
+| Production | _(pending)_ |
+| readyState | _(pending)_ |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/` **200**; `/api/health` ok |
-| Playwright | Mobile menu overlay **8/8** (360 + 768) on production |
-| Runtime logs | No errors on this deployment window |
 
 ---
 

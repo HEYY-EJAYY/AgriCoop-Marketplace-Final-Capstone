@@ -104,7 +104,8 @@ There is **no** `/cart` route; basket state lives on `/marketplace` in the `#ord
 | Marketplace | Listing grid | Filter, sort, search | Category + price sort (server); client filter on `q` and local search on mobile | Makes sense | Yes — `q` from header search |
 | Marketplace | Add to cart | One-click add | Add with min qty; single-seller basket rule; auth + approval gates | Makes sense | Accepted constraint (one farmer per order) |
 | Marketplace | Quotation (B2B) | Optional pre-order pricing | Modal: qty, note, estimated total; seller responds before order | Makes sense | Accepted constraint (quotation path) |
-| Marketplace | Cart panel | Sticky cart / drawer | Right aside `#order`; payment method cash pickup/delivery; continue → checkout | Makes sense | Accepted constraint (no `/cart` route) |
+| Marketplace | Listing photos | Own photo or default icon | Was hero via render-403 + hero onError; now `ProductImage` | Fixed | Yes — never hero |
+| Marketplace | Cart panel | Sticky cart / drawer | Right aside `#order`; cash method labels only (disclaimer sentence removed); continue → checkout | Makes sense | Accepted constraint (no `/cart` route) |
 | Marketplace | Load errors | User-safe message | Dedicated error UI with `toUserFacingErrorMessage` + retry | Makes sense | Yes |
 | Marketplace | Guest browse | Browse without login | Listings visible; trade actions → `goToAuth` | Makes sense | — |
 

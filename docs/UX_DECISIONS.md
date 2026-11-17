@@ -21,12 +21,16 @@ Marketplace · My Orders · Messages · Support | cart + notifications + `Name |
 Marketplace · Seller Center · Messages · Support | notifications + `Name | Seller` menu
 
 ### Officer Admin (`admin`)
-Dashboard · Moderation · Orders · Users · Support & Tickets | notifications + `Name | Officer Admin` menu
+Dashboard · Support & Tickets | notifications + avatar/`Name | Officer Admin` menu  
+Body tabs on `/dashboard`: Moderation · Orders · Users (`?tab=`; default Moderation)
 
 ### SuperAdmin
-Dashboard · Users & Roles · Moderation · Orders · System · Audit Logs | notifications + `Name | SuperAdmin` menu
+Dashboard · System · Audit Logs | notifications + avatar/`Name | SuperAdmin` menu  
+Same body tabs on `/dashboard` (permissions unchanged; SuperAdmin still gets role/coop controls inside Users)
 
-Profile menu (all roles): My Profile · My Workspace · Messages · Support · Log Out (last).
+**Assumption:** Moderation / Orders / Users belong in the dashboard body (spreadsheet-style tabs), not the main nav — nav hash targets never matched real panels.
+
+Profile menu (all roles): My Profile · My Workspace · Messages · Support · Log Out (last). Avatar photo when set; initials fallback on error/missing.
 
 Mobile: hamburger **overlay** + bottom nav (role-aware). Guests get Home / Browse / Join.
 
@@ -54,6 +58,12 @@ Officers and SuperAdmins **cannot** read private buyer–seller order chats via 
 
 URL params: `q`, `category`, `cooperativeId`, `sort` (`price_asc` | `price_desc` | `stock_desc` | `cooperative` | `category`), `page` (24 per page). Price sorts hit the API; other sorts are client-side after fetch.
 
+### Listing images — root cause (second report)
+
+**Not bad seed data.** Live `products.primaryImageUrl` / `productImages` rows already pointed at real `product-images` object URLs (HTTP 200).  
+**Real cause:** client `optimizeListingImageUrl` rewrote object URLs to Supabase `/storage/v1/render/image/…` (Image Transformation). That endpoint returns **403** on this project, so every card `onError` fell back to the marketing **hero** asset (`IMAGE_FALLBACK` / hero path).  
+**Fix:** shared `ProductImage` + `resolveProductImageSrc` keep object/public URLs (repair any render URLs), forbid hero paths, use `/images/product-default.svg` (or catalog crop icon) only — never the hero. Cash disclaimer sentence removed from UI (method labels kept).
+
 ## Hero
 
 **Root causes fixed (2026-11-17):**
@@ -74,3 +84,8 @@ One shared token: CSS `--agri-content-max: 100rem` (1600px) + `.agri-shell` / `s
 ## Workspace
 
 Solid `#f8f5ee` / `#fffdf8` backgrounds (no translucent fade). Workspace mains use `shellContainerClass`. Profile / onboarding Save actions use sticky bars.
+
+### Profile photo upload — root cause
+
+Storage upload via service role could succeed, but `UPDATE agricoop_app.users SET "profileImageUrl"` failed because `authenticated` previously had **SELECT-only** on that column.  
+**Fix:** GRANT UPDATE/INSERT on `profileImageUrl`; public `avatars` bucket (2 MB, jpeg/png/webp) + owner-folder policies; client resize ≤512px + compress; server validates ≤2 MB after compression; nav + profile show the new URL immediately with initials fallback.
