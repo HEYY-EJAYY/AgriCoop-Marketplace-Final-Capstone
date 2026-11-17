@@ -152,7 +152,10 @@ export function MobileMenuOverlay({
         el.inert = false;
       }
       const restore = toggleRef.current ?? previouslyFocused.current;
-      restore?.focus();
+      // Defer until after React commits the closed state so the toggle is actionable.
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => restore?.focus());
+      });
     };
   }, [open, toggleRef]);
 

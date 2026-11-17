@@ -79,13 +79,17 @@ test.describe("mobile menu overlay", () => {
 
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("mobile-menu-panel")).toHaveCount(0);
-    await expect(toggle).toBeFocused();
+    await expect
+      .poll(async () => page.evaluate(() => document.activeElement?.getAttribute("data-testid")))
+      .toBe("mobile-menu-toggle");
     await expect.poll(async () => page.evaluate(() => document.body.style.position)).toBe("");
 
     await openMobileMenu(page);
     await page.getByTestId("mobile-menu-backdrop").click({ position: { x: 8, y: 8 } });
     await expect(page.getByTestId("mobile-menu-panel")).toHaveCount(0);
-    await expect(toggle).toBeFocused();
+    await expect
+      .poll(async () => page.evaluate(() => document.activeElement?.getAttribute("data-testid")))
+      .toBe("mobile-menu-toggle");
 
     await openMobileMenu(page);
     await page.getByTestId("mobile-menu-link-How It Works").click();
