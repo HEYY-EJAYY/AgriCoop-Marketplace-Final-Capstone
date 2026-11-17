@@ -528,7 +528,7 @@ export default function Checkout() {
       <PageFrame>
         <main className={`${shellContainerClass} max-w-xl py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Sign in to continue checkout</h1>
-          <p className="mt-3 text-[#647568]">Your basket is kept for this browser session.</p>
+          <p className="mt-3 text-[#5c6c60]">Your basket is kept for this browser session.</p>
           <button className="agri-button mt-6" type="button" onClick={() => goToAuth("Checkout")}>
             Sign in
           </button>
@@ -541,7 +541,7 @@ export default function Checkout() {
       <PageFrame>
         <main className={`${shellContainerClass} max-w-xl py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Marketplace checkout unavailable</h1>
-          <p className="mt-3 text-[#647568]">
+          <p className="mt-3 text-[#5c6c60]">
             {accessRestriction === "pending"
               ? "Your account is pending cooperative approval before you can place orders."
               : accessRestriction === "suspended"
@@ -560,7 +560,7 @@ export default function Checkout() {
       <PageFrame>
         <main className={`${shellContainerClass} max-w-xl py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Your checkout basket is unavailable</h1>
-          <p className="mt-3 text-[#647568]">Return to the marketplace and rebuild your basket. No order was placed.</p>
+          <p className="mt-3 text-[#5c6c60]">Return to the marketplace and rebuild your basket. No order was placed.</p>
           <Link href="/marketplace" className="agri-button mt-6 inline-flex no-underline">
             Browse marketplace
           </Link>
@@ -576,7 +576,7 @@ export default function Checkout() {
           <ArrowLeft size={16} /> Return to marketplace
         </Link>
         <h1 className="mt-5 font-display text-4xl font-bold text-[#244e36]">Review your order</h1>
-        <p className="mt-2 text-sm text-[#647568]">
+        <p className="mt-2 text-sm text-[#5c6c60]">
           {sellerMap.size > 1
             ? "Each farmer is checked out separately with its own payment choice."
             : "Order totals and item availability are verified again by the server before submission."}

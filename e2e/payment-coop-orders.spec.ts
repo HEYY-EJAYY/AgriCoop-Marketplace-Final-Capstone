@@ -24,8 +24,12 @@ test.describe("payment, cooperatives, order detail", () => {
   });
 
   test("order detail requires auth and axe is clean on checkout and order detail shells", async ({ page }) => {
+    // Unauthenticated orders.byId is a protected procedure → Auth shell (friendly gate).
+    // Authenticated callers without access get Order not found (NOT_FOUND) instead of leaking existence.
     await page.goto("/orders/1");
-    await expect(page.getByRole("heading", { name: /Order not found|Order details|Sign in/i }).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: /Welcome back|Order not found|Order details/i }).first()).toBeVisible({
+      timeout: 20_000,
+    });
     const orderAxe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
     expect(orderAxe.violations.filter(v => v.impact === "serious" || v.impact === "critical")).toEqual([]);
 
