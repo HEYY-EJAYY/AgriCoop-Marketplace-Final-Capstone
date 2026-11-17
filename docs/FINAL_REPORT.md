@@ -114,11 +114,12 @@ SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profi
 
 | Item | Value |
 |------|-------|
-| Commit | _(updated after this ship)_ |
-| Production | _(updated after this ship)_ |
-| readyState | **READY** (target) |
+| Commit | `073b361` (+ follow-up column-grant migration) |
+| Production | `dpl_4ZHc3SQMtjuxrUJCSh2YPoFF1FYz` |
+| readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/` **200**; `/api/health`; checkout + coop slug + order detail auth shell |
+| Smoke | `/` `/api/health` `/marketplace` `/checkout` `/cooperatives/sutafacocooperative` `/orders/1` all **200**; `marketplace.list` returns listings after BLOCK 15 grants |
+| Runtime | Post-deploy `marketplace.list` errors cleared by column GRANTs; unrelated historical timeouts/`conversations.send` remain outside this ship |
 
 ---
 

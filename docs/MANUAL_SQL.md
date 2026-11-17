@@ -3327,3 +3327,20 @@ Verification:
 - `orderHistory` present; product flags default pickup+delivery true, online false
 - `SUTAFACO Cooperative` row present; null coop backfill was no-op (0 rows)
 - bucket `seller-payment-qr` private
+
+## BLOCK 15: `20261117211000_payment_fulfillment_column_grants.sql` (applied via MCP as `payment_fulfillment_column_grants`)
+
+New columns from BLOCK 14 did not inherit column-level marketplace GRANTs, which broke `marketplace.list`.
+
+```sql
+GRANT SELECT ("allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
+  ON TABLE agricoop_app.products TO anon, authenticated;
+GRANT SELECT ("onlinePaymentQrPath", "onlinePaymentAccountName", "onlinePaymentAccountNumber", "onlinePaymentLabel")
+  ON TABLE agricoop_app.users TO authenticated;
+GRANT UPDATE ("onlinePaymentQrPath", "onlinePaymentAccountName", "onlinePaymentAccountNumber", "onlinePaymentLabel")
+  ON TABLE agricoop_app.users TO authenticated;
+GRANT SELECT ("onlinePaymentQrPath") ON TABLE agricoop_app.users TO anon;
+GRANT SELECT ("fulfillmentMethod") ON TABLE agricoop_app.orders TO authenticated;
+```
+
+Verification (2026-11-17): `marketplace.list` returns 200 with `sellerHasOnlineQr` + listing flags.
