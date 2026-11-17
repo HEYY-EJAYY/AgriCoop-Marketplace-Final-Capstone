@@ -3346,3 +3346,19 @@ GRANT SELECT ("fulfillmentMethod") ON TABLE agricoop_app.orders TO authenticated
 Verification (2026-11-17): `marketplace.list` returns 200 with `sellerHasOnlineQr` + listing flags.
 
 Postflight (same migration file): `has_column_privilege` asserts anon/authenticated SELECT on product flags, authenticated SELECT/UPDATE on seller QR account columns, anon SELECT only on `onlinePaymentQrPath` (not account name/number/label), and authenticated SELECT on `orders.fulfillmentMethod`.
+
+## BLOCK 16: `20261117220000_write_grants_and_profile_role_sync.sql` (applied via MCP as `write_grants_and_profile_role_sync`)
+
+Root cause of listing create/update and payment-option create failures after BLOCK 14/15: new product flag columns and Drizzle serial/default columns lacked INSERT/UPDATE grants. Role sync failed because `public.profiles` has no authenticated UPDATE policy.
+
+```sql
+GRANT INSERT ("id", "createdAt", "allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
+  ON TABLE agricoop_app.products TO authenticated;
+GRANT UPDATE ("allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
+  ON TABLE agricoop_app.products TO authenticated;
+GRANT INSERT ("id", "createdAt") ON TABLE agricoop_app."productImages" TO authenticated;
+GRANT INSERT ("id", "createdAt", "updatedAt") ON TABLE agricoop_app."paymentOptions" TO authenticated;
+-- plus SECURITY DEFINER agricoop_app.sync_profile_role_from_app(text, text)
+```
+
+Verification (2026-11-17): authenticated INSERT/UPDATE on product flags; paymentOptions id INSERT; EXECUTE on sync_profile_role_from_app.

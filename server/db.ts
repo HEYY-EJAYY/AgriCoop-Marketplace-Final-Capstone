@@ -272,19 +272,16 @@ export async function syncProfileRoleToApplicationRole(
 ) {
   const db = executor ?? await getDb();
   const publicRoleName = applicationRoleToPublicRoleName(applicationRole);
+  // SECURITY DEFINER helper: public.profiles has no authenticated UPDATE policy/grants.
+  await db.execute(sql`
+    select agricoop_app.sync_profile_role_from_app(${authUserId}, ${applicationRole})
+  `);
   const [roleRow] = await db.select({ roleId: roles.roleId })
     .from(roles)
     .where(eq(roles.roleName, publicRoleName))
     .limit(1);
   if (!roleRow) {
     throw new Error(`Canonical public role "${publicRoleName}" is missing.`);
-  }
-  const updated = await db.update(profiles)
-    .set({ roleId: roleRow.roleId })
-    .where(eq(profiles.userId, authUserId))
-    .returning({ userId: profiles.userId });
-  if (!updated.length) {
-    throw new Error("Canonical profile row is missing for this Auth identity.");
   }
   return { publicRoleName, roleId: roleRow.roleId };
 }
@@ -476,10 +473,18 @@ export async function getCategories() {
 export async function getSellerProducts(sellerId: number) {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db.select().from(products).where(eq(products.sellerId, sellerId)).orderBy(desc(products.createdAt));
+  const rows = await db
+    .select({
+      product: products,
+      cooperativeName: cooperatives.name,
+    })
+    .from(products)
+    .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
+    .where(eq(products.sellerId, sellerId))
+    .orderBy(desc(products.createdAt));
   if (!rows.length) return [];
   const imageRows = await db.select().from(productImages)
-    .where(inArray(productImages.productId, rows.map(row => row.id)))
+    .where(inArray(productImages.productId, rows.map(row => row.product.id)))
     .orderBy(asc(productImages.displayOrder), asc(productImages.id));
   const imagesByProduct = new Map<number, string[]>();
   for (const row of imageRows) {
@@ -487,10 +492,11 @@ export async function getSellerProducts(sellerId: number) {
     urls.push(row.imageUrl);
     imagesByProduct.set(row.productId, urls);
   }
-  return rows.map(product => {
+  return rows.map(({ product, cooperativeName }) => {
     const storedImages = imagesByProduct.get(product.id) ?? [];
     return {
       ...product,
+      cooperativeName: cooperativeName ?? null,
       imageUrls: storedImages.length
         ? storedImages
         : product.primaryImageUrl ? [product.primaryImageUrl] : [],

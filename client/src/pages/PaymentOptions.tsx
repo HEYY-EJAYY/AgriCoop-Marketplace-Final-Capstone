@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { MAX_PRODUCT_IMAGE_SIZE_BYTES } from "../../../shared/productOptions";
+import { toUserFacingErrorMessage } from "../../../shared/userFacingErrors";
 
 type PaymentOptionDraft = {
   methodName: string;
@@ -75,7 +76,7 @@ export default function PaymentOptions() {
       setDraft(blankDraft());
       void refresh();
     },
-    onError: error => toast.error(error.message),
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const updateOption = trpc.adminPayment.updateOption.useMutation({
     onSuccess: result => {
@@ -85,7 +86,7 @@ export default function PaymentOptions() {
       setEditing(null);
       void refresh();
     },
-    onError: error => toast.error(error.message),
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const deleteOption = trpc.adminPayment.deleteOption.useMutation({
     onSuccess: result => {
@@ -95,10 +96,10 @@ export default function PaymentOptions() {
       setDeleteTarget(null);
       void refresh();
     },
-    onError: error => toast.error(error.message),
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const uploadQrImage = trpc.adminPayment.uploadQrImage.useMutation({
-    onError: error => toast.error(error.message),
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
 
   const uploadImage = async (

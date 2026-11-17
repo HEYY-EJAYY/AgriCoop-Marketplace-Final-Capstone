@@ -182,6 +182,16 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | Runtime | Hobby ~1h; only stale `marketplace.list` grant errors on old deploy `dpl_4ZHc…` (pre-BLOCK 15). No new error clusters on post-fix production deploys in the retained window. |
 | QA cleanup | No `qa-test-` users found in live DB (none created this run) |
 
+### Hotfix — listing / payment-option / role sync (2026-11-17 night)
+
+| Symptom | Root cause | Fix |
+|---------|------------|-----|
+| Submit/edit listing → “We could not load this data…” | Missing INSERT/UPDATE on `allowsPickup`/`allowsDelivery`/`acceptsOnlinePayment` (+ serial `id`/`createdAt` for Drizzle) | BLOCK 16 column GRANTs |
+| Officer payment option create/QR save → same | Missing INSERT on `paymentOptions.id`/`createdAt`/`updatedAt` | BLOCK 16 |
+| Role change → canonical profile sync failed | `public.profiles` has no authenticated UPDATE policy/grants | `agricoop_app.sync_profile_role_from_app` SECURITY DEFINER |
+| Cooperative not visible on listing form | Form/card never showed assigned coop | Read-only Cooperative field + card coop name |
+| Submit listing not centered | Button sat beside Description in 2-col grid | Full-width centered row at bottom of form |
+
 ---
 
 ## Still needs a human
