@@ -223,7 +223,7 @@ describe("PostgreSQL identity lookup schema", () => {
 
     expect(migration).toContain(`to_regclass('agricoop_app."profileVerificationSubmissions"')`);
     expect(migration).toContain('pg_get_serial_sequence(target_table, \'id\')');
-    expect(migration).toContain("CREATE FUNCTION agricoop_app.write_profile_verification_audit_event()");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION agricoop_app.write_profile_verification_audit_event()");
     expect(migration).toMatch(/SECURITY DEFINER\s+SET search_path = pg_catalog, agricoop_app, auth/);
     expect(migration).toContain('AFTER INSERT OR UPDATE OF "status"');
     expect(migration).toContain("has_any_column_privilege('authenticated', 'agricoop_app.\"auditLogs\"', 'INSERT')");

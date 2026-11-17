@@ -1,3 +1,1 @@
-import { createApp } from "../server/_core/app.js";
-
-export default createApp({ restoreVercelFunctionPath: true });
+export { default } from "../dist/vercel-api.js";
