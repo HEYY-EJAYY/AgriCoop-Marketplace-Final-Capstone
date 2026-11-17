@@ -173,14 +173,22 @@ describe("AgriCoop role authorization", () => {
     expect(isSellerApproved(undefined)).toBe(false);
   });
 
-  it("limits conversation access to participants and the seller's cooperative officer", () => {
+  it("limits order chats to buyer and seller participants only", () => {
     const thread = { buyerId: 10, sellerId: 20 };
     expect(canAccessConversation({ id: 10, role: "buyer", cooperativeId: null }, thread, 2)).toBe(true);
     expect(canAccessConversation({ id: 20, role: "seller", cooperativeId: 2 }, thread, 2)).toBe(true);
-    expect(canAccessConversation({ id: 30, role: "admin", cooperativeId: 2 }, thread, 2)).toBe(true);
-    expect(canAccessConversation({ id: 40, role: "superadmin", cooperativeId: null }, thread, 2)).toBe(true);
+    expect(canAccessConversation({ id: 30, role: "admin", cooperativeId: 2 }, thread, 2)).toBe(false);
+    expect(canAccessConversation({ id: 40, role: "superadmin", cooperativeId: null }, thread, 2)).toBe(false);
     expect(canAccessConversation({ id: 50, role: "buyer", cooperativeId: null }, thread, 2)).toBe(false);
     expect(canAccessConversation({ id: 60, role: "admin", cooperativeId: 3 }, thread, 2)).toBe(false);
+  });
+
+  it("allows platform support inquiries for requester and officers", () => {
+    const supportThread = { buyerId: 10, sellerId: null as number | null };
+    expect(canAccessConversation({ id: 10, role: "buyer", cooperativeId: null }, supportThread, null)).toBe(true);
+    expect(canAccessConversation({ id: 30, role: "admin", cooperativeId: 2 }, supportThread, null)).toBe(true);
+    expect(canAccessConversation({ id: 40, role: "superadmin", cooperativeId: null }, supportThread, null)).toBe(true);
+    expect(canAccessConversation({ id: 50, role: "buyer", cooperativeId: null }, supportThread, null)).toBe(false);
   });
 
   it("allows Buyers and Sellers to submit verification only when unverified or rejected", () => {

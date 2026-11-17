@@ -311,9 +311,32 @@ export const conversations = appSchema.table("conversations", {
   orderId: integer("orderId").references(() => orders.id),
   quotationId: integer("quotationId").references(() => quotations.id),
   status: conversationStatus("status").default("open").notNull(),
+  archivedAt: timestamp("archivedAt", { mode: "date" }),
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
-});
+}, table => [
+  index("conversations_order_id_idx").on(table.orderId),
+  index("conversations_buyer_id_idx").on(table.buyerId),
+  index("conversations_seller_id_idx").on(table.sellerId),
+]);
+
+/** Per-user inbox metadata for conversations and tickets (pin / archive / soft-delete / read). */
+export const threadStates = appSchema.table("threadStates", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  channel: varchar("channel", { length: 32 }).notNull(),
+  threadId: integer("threadId").notNull(),
+  isRead: integer("isRead").notNull().default(0),
+  pinnedAt: timestamp("pinnedAt", { mode: "date" }),
+  archivedAt: timestamp("archivedAt", { mode: "date" }),
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+}, table => [
+  uniqueIndex("thread_states_user_channel_thread_uidx").on(table.userId, table.channel, table.threadId),
+  index("thread_states_user_channel_idx").on(table.userId, table.channel),
+]);
 
 export const conversationMessages = appSchema.table("conversationMessages", {
   id: serial("id").primaryKey(),
@@ -334,6 +357,8 @@ export const notifications = appSchema.table("notifications", {
   isRead: integer("isRead").notNull().default(0),
   relatedEntityId: integer("relatedEntityId"),
   relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  archivedAt: timestamp("archivedAt", { mode: "date" }),
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
 });
 
@@ -347,6 +372,9 @@ export const supportTickets = appSchema.table("supportTickets", {
   priority: varchar("priority", { length: 20 }).notNull().default("medium"),
   status: varchar("status", { length: 20 }).notNull().default("open"),
   assignedToUserId: integer("assignedToUserId").references(() => users.id),
+  archivedAt: timestamp("archivedAt", { mode: "date" }),
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
+  pinnedAt: timestamp("pinnedAt", { mode: "date" }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
 });

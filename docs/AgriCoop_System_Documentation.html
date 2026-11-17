@@ -301,7 +301,8 @@ Application tables are defined in `drizzle/pg-schema.ts`. The `agricoop_app` Pos
 | `agricoop_app.transactions` | Legacy F2F transaction notes linked to orders |
 | `agricoop_app.payments` / `paymentEvents` / `paymentAttempts` | Payment records and lifecycle |
 | `agricoop_app.paymentOptions` / `paymentProofs` | Checkout methods and GCash proof uploads |
-| `agricoop_app.conversations` / `conversationMessages` | Buyer support threads |
+| `agricoop_app.conversations` / `conversationMessages` | Trade messages (buyer↔seller) and platform support inquiries (separated by FK presence) |
+| `agricoop_app.threadStates` | Per-user read / pin / archive / soft-delete for conversation inboxes |
 | `agricoop_app.notifications` | In-app notifications |
 | `agricoop_app.supportTickets` / `supportTicketMessages` | Structured support tickets |
 | `agricoop_app.auditLogs` | Append-only audit trail |
@@ -594,6 +595,8 @@ Functions: `applicationRoleToPublicRoleName`, `publicRoleNameToApplicationRole`,
 ---
 
 ## 12. User Interface and Experience Design
+
+Role-based single-row navigation (see `docs/UX_DECISIONS.md`): logged-out visitors see Marketplace / How It Works / Support with Login + Join only; signed-in users see role center links, notifications, and a profile chip formatted as `Name | Role` (Officer Admin for `admin`). Separate routes: `/messages` (order inquiries), `/support` (platform help), `/support-tickets` (formal tickets), `/profile` (editable profile + photo + password). Marketplace filters and sort are URL-driven. Hero glass value card sits on the right on desktop.
 
 **Routing.** Declared in `client/src/App.tsx` (see Appendix B). Lazy-loaded pages use a unified loading fallback.
 

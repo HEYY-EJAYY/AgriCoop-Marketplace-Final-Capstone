@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+// isNull used by conversation inbox filters
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -28,7 +29,7 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { conversationMessages, conversations, cooperativeAssociationRequests, cooperatives, auditLogs, notifications, orderEvents, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, transactions, users, profiles } from "../drizzle/pg-schema";
+import { conversationMessages, conversations, cooperativeAssociationRequests, cooperatives, auditLogs, notifications, orderEvents, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import { createPublicAuthClient, supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
 import { normalizeCooperativeName } from "./cooperativeNames";
@@ -67,6 +68,7 @@ export const accountProfileInputSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   contactNumber: z.string().max(40).optional(),
   address: z.string().max(500).optional(),
+  profileImageUrl: z.string().url().max(1000).nullable().optional(),
 }).strict();
 function isValidVerificationBirthdate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -336,18 +338,27 @@ export const appRouter = router({
   }),
 
   conversations: router({
-    mine: protectedProcedure.query(({ ctx }) => getConversationsForUser(
-      ctx.user.id,
-      ctx.user.role === "superadmin",
-      ctx.user.role === "admin" ? ctx.user.cooperativeId : null,
-    )),
+    mine: protectedProcedure
+      .input(z.object({
+        kind: z.enum(["messages", "support", "all"]).default("all"),
+        archived: z.boolean().optional(),
+      }).optional())
+      .query(({ ctx, input }) => {
+        const kind = input?.kind ?? "all";
+        const staffSupportQueue = kind === "support" && (ctx.user.role === "admin" || ctx.user.role === "superadmin");
+        return getConversationsForUser(ctx.user.id, {
+          kind,
+          archived: input?.archived ?? false,
+          staffSupportQueue,
+        });
+      }),
     messages: protectedProcedure.input(z.object({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
       const seller = thread?.sellerId === null || thread?.sellerId === undefined
         ? undefined
         : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
-      if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
+      if (!thread || thread.deletedAt || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view this conversation." });
       return getConversationMessages(input.conversationId);
     }),
     create: protectedProcedure.input(z.object({ subject: z.string().min(3).max(180), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
@@ -355,16 +366,111 @@ export const appRouter = router({
       const id = await openSupportThread(db, { buyerId: ctx.user.id, subject: input.subject, body: input.body });
       return { success: true, conversationId: id };
     }),
+    openForOrder: protectedProcedure
+      .input(z.object({ orderId: z.number().int().positive(), body: z.string().min(1).max(2000).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const [order] = await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "That order could not be found." });
+        if (ctx.user.id !== order.buyerId && ctx.user.id !== order.sellerId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only the buyer or seller on this order can open its chat." });
+        }
+        const [existing] = await db.select({ id: conversations.id }).from(conversations)
+          .where(and(eq(conversations.orderId, input.orderId), isNull(conversations.deletedAt)))
+          .limit(1);
+        if (existing) return { conversationId: existing.id, created: false as const };
+        const id = await openSupportThread(db, {
+          buyerId: order.buyerId,
+          sellerId: order.sellerId,
+          orderId: order.id,
+          subject: `Order #${order.id}`,
+          body: input.body ?? `Chat opened for order #${order.id}.`,
+        });
+        return { conversationId: id, created: true as const };
+      }),
+    openForProduct: protectedProcedure
+      .input(z.object({ productId: z.number().int().positive(), body: z.string().min(1).max(2000).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const db = await dbOrThrow();
+        const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+        if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "That listing could not be found." });
+        if (product.sellerId === buyer.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot message yourself about your own listing." });
+        const id = await openSupportThread(db, {
+          buyerId: buyer.id,
+          sellerId: product.sellerId,
+          productId: product.id,
+          subject: `Inquiry: ${product.name}`,
+          body: input.body ?? `Hello, I have a question about ${product.name}.`,
+        });
+        return { conversationId: id };
+      }),
+    updateInbox: protectedProcedure
+      .input(z.object({
+        threadIds: z.array(z.number().int().positive()).min(1).max(100),
+        action: z.enum(["read", "unread", "pin", "unpin", "archive", "unarchive", "delete", "restore"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const now = new Date();
+        for (const threadId of input.threadIds) {
+          const [thread] = await db.select().from(conversations).where(eq(conversations.id, threadId)).limit(1);
+          if (!thread) continue;
+          const seller = thread.sellerId == null
+            ? undefined
+            : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
+          if (!canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) continue;
+          const [existing] = await db.select().from(threadStates).where(and(
+            eq(threadStates.userId, ctx.user.id),
+            eq(threadStates.channel, "conversation"),
+            eq(threadStates.threadId, threadId),
+          )).limit(1);
+          const patch: Partial<typeof threadStates.$inferInsert> = { updatedAt: now };
+          if (input.action === "read") patch.isRead = 1;
+          if (input.action === "unread") patch.isRead = 0;
+          if (input.action === "pin") patch.pinnedAt = now;
+          if (input.action === "unpin") patch.pinnedAt = null;
+          if (input.action === "archive") patch.archivedAt = now;
+          if (input.action === "unarchive") patch.archivedAt = null;
+          if (input.action === "delete") patch.deletedAt = now;
+          if (input.action === "restore") { patch.deletedAt = null; patch.archivedAt = null; }
+          if (existing) {
+            await db.update(threadStates).set(patch).where(eq(threadStates.id, existing.id));
+          } else {
+            await db.insert(threadStates).values({
+              userId: ctx.user.id,
+              channel: "conversation",
+              threadId,
+              isRead: patch.isRead ?? 1,
+              pinnedAt: patch.pinnedAt ?? null,
+              archivedAt: patch.archivedAt ?? null,
+              deletedAt: patch.deletedAt ?? null,
+            });
+          }
+        }
+        return { success: true };
+      }),
     send: protectedProcedure.input(z.object({ conversationId: z.number().int().positive(), body: z.string().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       const thread = (await db.select().from(conversations).where(eq(conversations.id, input.conversationId)).limit(1))[0];
       const seller = thread?.sellerId === null || thread?.sellerId === undefined
         ? undefined
         : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
-      if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
+      if (!thread || thread.deletedAt || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
       const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).returning({ id: conversationMessages.id });
       publishConversationMessage({ conversationId: input.conversationId, messageId: message.id, senderId: ctx.user.id });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
+      // Mark unread for the other participant
+      const otherId = ctx.user.id === thread.buyerId ? thread.sellerId : thread.buyerId;
+      if (otherId) {
+        const [state] = await db.select().from(threadStates).where(and(
+          eq(threadStates.userId, otherId),
+          eq(threadStates.channel, "conversation"),
+          eq(threadStates.threadId, input.conversationId),
+        )).limit(1);
+        if (state) await db.update(threadStates).set({ isRead: 0, updatedAt: new Date() }).where(eq(threadStates.id, state.id));
+        else await db.insert(threadStates).values({ userId: otherId, channel: "conversation", threadId: input.conversationId, isRead: 0 });
+      }
       return { success: true };
     }),
   }),
@@ -375,8 +481,37 @@ export const appRouter = router({
       .input(accountProfileInputSchema)
       .mutation(async ({ ctx, input }) => {
         const db = await dbOrThrow();
-        await db.update(users).set(input).where(eq(users.id, ctx.user.id));
+        const patch: Record<string, unknown> = {};
+        if (input.name !== undefined) patch.name = input.name;
+        if (input.contactNumber !== undefined) patch.contactNumber = input.contactNumber;
+        if (input.address !== undefined) patch.address = input.address;
+        if (input.profileImageUrl !== undefined) patch.profileImageUrl = input.profileImageUrl;
+        if (!Object.keys(patch).length) return { success: true };
+        await db.update(users).set(patch).where(eq(users.id, ctx.user.id));
         return { success: true };
+      }),
+    uploadProfileImage: protectedProcedure
+      .input(z.object({
+        fileName: z.string().min(1).max(255),
+        contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+        base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected image file is invalid." });
+        }
+        const bytes = Buffer.from(input.base64, "base64");
+        if (!isProductImageSizeAllowed(bytes.length)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Profile photos must be 3 MB or less." });
+        }
+        if (!matchesImageContentTypeSignature(bytes, input.contentType)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image." });
+        }
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "profile";
+        const uploaded = await storagePut(`profiles/${ctx.user.id}/${Date.now()}-${safeName}`, bytes, input.contentType);
+        const db = await dbOrThrow();
+        await db.update(users).set({ profileImageUrl: uploaded.url }).where(eq(users.id, ctx.user.id));
+        return { url: uploaded.url };
       }),
     verificationMine: protectedProcedure.query(async ({ ctx }) => {
       const db = await dbOrThrow();
@@ -2950,31 +3085,121 @@ export const appRouter = router({
         return { success: true, ticketId: ticket.id };
       });
     }),
-    myTickets: protectedProcedure.query(async ({ ctx }) => {
-      const db = await dbOrThrow();
-      return db.select().from(supportTickets).where(eq(supportTickets.userId, ctx.user.id)).orderBy(desc(supportTickets.createdAt));
-    }),
-    listAll: protectedProcedure.query(async ({ ctx }) => {
+    myTickets: protectedProcedure
+      .input(z.object({ archived: z.boolean().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const archived = input?.archived ?? false;
+        const rows = await db.select({
+          ticket: supportTickets,
+          stateIsRead: threadStates.isRead,
+          statePinnedAt: threadStates.pinnedAt,
+          stateArchivedAt: threadStates.archivedAt,
+        }).from(supportTickets)
+          .leftJoin(threadStates, and(
+            eq(threadStates.userId, ctx.user.id),
+            eq(threadStates.channel, "ticket"),
+            eq(threadStates.threadId, supportTickets.id),
+          ))
+          .where(and(
+            eq(supportTickets.userId, ctx.user.id),
+            archived ? sql`${threadStates.archivedAt} is not null` : and(isNull(threadStates.archivedAt), isNull(threadStates.deletedAt)),
+          ))
+          .orderBy(desc(threadStates.pinnedAt), desc(supportTickets.createdAt));
+        return rows.map(row => ({
+          ...row.ticket,
+          inbox: {
+            isRead: row.stateIsRead === null ? 1 : row.stateIsRead,
+            pinnedAt: row.statePinnedAt,
+            archivedAt: row.stateArchivedAt,
+          },
+        }));
+      }),
+    listAll: protectedProcedure
+      .input(z.object({ archived: z.boolean().optional() }).optional())
+      .query(async ({ ctx, input }) => {
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       const db = await dbOrThrow();
+      const archived = input?.archived ?? false;
       const rows = await db.select({
         ticket: supportTickets,
         userName: users.name,
+        stateIsRead: threadStates.isRead,
+        statePinnedAt: threadStates.pinnedAt,
+        stateArchivedAt: threadStates.archivedAt,
       }).from(supportTickets)
         .innerJoin(users, eq(supportTickets.userId, users.id))
-        .where(actor.role === "superadmin" ? undefined : eq(supportTickets.cooperativeId, actor.cooperativeId!))
-        .orderBy(desc(supportTickets.createdAt));
+        .leftJoin(threadStates, and(
+          eq(threadStates.userId, ctx.user.id),
+          eq(threadStates.channel, "ticket"),
+          eq(threadStates.threadId, supportTickets.id),
+        ))
+        .where(and(
+          archived ? sql`${threadStates.archivedAt} is not null` : and(isNull(threadStates.archivedAt), isNull(threadStates.deletedAt)),
+          actor.role === "superadmin" ? undefined : eq(supportTickets.cooperativeId, actor.cooperativeId!),
+        ))
+        .orderBy(desc(threadStates.pinnedAt), desc(supportTickets.createdAt));
       const assignedIds = Array.from(new Set(rows.flatMap(({ ticket }) => ticket.assignedToUserId === null ? [] : [ticket.assignedToUserId])));
       const assignees = assignedIds.length
         ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, assignedIds))
         : [];
       const assigneeNames = new Map(assignees.map(assignee => [assignee.id, assignee.name]));
-      return rows.map(({ ticket, userName }) => ({
+      return rows.map(({ ticket, userName, stateIsRead, statePinnedAt, stateArchivedAt }) => ({
         ticket,
         userName,
         assignedToName: ticket.assignedToUserId === null ? null : assigneeNames.get(ticket.assignedToUserId) ?? null,
+        inbox: {
+          isRead: stateIsRead === null ? 1 : stateIsRead,
+          pinnedAt: statePinnedAt,
+          archivedAt: stateArchivedAt,
+        },
       }));
     }),
+    bulkUpdate: protectedProcedure
+      .input(z.object({
+        ticketIds: z.array(z.number().int().positive()).min(1).max(100),
+        action: z.enum(["read", "unread", "pin", "unpin", "archive", "unarchive", "delete", "restore"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        const now = new Date();
+        for (const ticketId of input.ticketIds) {
+          const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.id, ticketId)).limit(1);
+          if (!ticket) continue;
+          const isOwner = ticket.userId === ctx.user.id;
+          const isStaff = ctx.user.role === "admin" || ctx.user.role === "superadmin";
+          if (!isOwner && !isStaff) continue;
+          if (isStaff && !isOwner && !canAccessSupportTicket(ctx.user, ticket)) continue;
+          // Per-user inbox state — never mutates another participant's view.
+          const [existing] = await db.select().from(threadStates).where(and(
+            eq(threadStates.userId, ctx.user.id),
+            eq(threadStates.channel, "ticket"),
+            eq(threadStates.threadId, ticketId),
+          )).limit(1);
+          const patch: Partial<typeof threadStates.$inferInsert> = { updatedAt: now };
+          if (input.action === "read") patch.isRead = 1;
+          if (input.action === "unread") patch.isRead = 0;
+          if (input.action === "pin") patch.pinnedAt = now;
+          if (input.action === "unpin") patch.pinnedAt = null;
+          if (input.action === "archive") patch.archivedAt = now;
+          if (input.action === "unarchive") patch.archivedAt = null;
+          if (input.action === "delete") patch.deletedAt = now;
+          if (input.action === "restore") { patch.deletedAt = null; patch.archivedAt = null; }
+          if (existing) await db.update(threadStates).set(patch).where(eq(threadStates.id, existing.id));
+          else {
+            await db.insert(threadStates).values({
+              userId: ctx.user.id,
+              channel: "ticket",
+              threadId: ticketId,
+              isRead: patch.isRead ?? 1,
+              pinnedAt: patch.pinnedAt ?? null,
+              archivedAt: patch.archivedAt ?? null,
+              deletedAt: patch.deletedAt ?? null,
+            });
+          }
+        }
+        return { success: true };
+      }),
     assignableUsers: protectedProcedure
       .input(z.object({ ticketId: z.number().int().positive() }).strict())
       .query(async ({ ctx, input }) => {

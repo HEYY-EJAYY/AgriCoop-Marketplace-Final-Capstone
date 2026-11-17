@@ -3238,3 +3238,12 @@ WHERE user_id = '35dcf280-c098-483a-91da-7e96662efc3b'
 
 -- After: conflicts should be 0.
 ```
+
+## BLOCK 12: `20261117180000_ux_inbox_and_indexes.sql`
+
+```sql
+-- PURPOSE: threadStates inbox metadata, soft-delete columns, marketplace indexes.
+-- Applied via Supabase apply_migration name=ux_inbox_and_indexes
+-- Verification: to_regclass('agricoop_app."threadStates"') is not null;
+-- supportTickets has archivedAt, deletedAt, pinnedAt.
+```

@@ -247,8 +247,14 @@ export function canAccessConversation(
   conversation: { buyerId: number; sellerId: number | null },
   sellerCooperativeId: number | null,
 ) {
-  if (actor.role === "superadmin" || actor.id === conversation.buyerId || actor.id === conversation.sellerId) return true;
-  return actor.role === "admin" && actor.cooperativeId !== null && actor.cooperativeId === sellerCooperativeId;
+  // Trade / order chats (seller assigned): participants only — officers do not read private buyer–seller threads.
+  if (conversation.sellerId !== null && conversation.sellerId !== undefined) {
+    return actor.id === conversation.buyerId || actor.id === conversation.sellerId;
+  }
+  // Platform support inquiries (no seller): requester + officers.
+  if (actor.id === conversation.buyerId) return true;
+  if (actor.role === "superadmin") return true;
+  return actor.role === "admin" && (sellerCooperativeId === null || actor.cooperativeId === sellerCooperativeId);
 }
 
 export function canSubmitProfileVerification(user: Pick<OperationalUser, "role" | "verificationStatus">) {

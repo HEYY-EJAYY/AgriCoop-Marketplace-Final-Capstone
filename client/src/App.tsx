@@ -18,6 +18,8 @@ const PaymentOptions = lazy(() => import("@/pages/PaymentOptions"));
 const Reports = lazy(() => import("@/pages/Reports"));
 const Support = lazy(() => import("@/pages/Support"));
 const SupportTickets = lazy(() => import("@/pages/SupportTickets"));
+const Messages = lazy(() => import("@/pages/Messages"));
+const Profile = lazy(() => import("@/pages/Profile"));
 const ProductDetails = lazy(() => import("@/pages/ProductDetails"));
 
 const LazyFallback = <div className="grid min-h-screen place-items-center bg-[#f8f5ee] text-sm text-[#647568]">Loading AgriCoop…</div>;
@@ -36,6 +38,8 @@ function Router() {
       <Route path="/marketplace" component={Marketplace}/>
       <Route path="/products/:id">{() => <LazyPage><ProductDetails/></LazyPage>}</Route>
       <Route path="/activity">{() => <LazyPage><Activity/></LazyPage>}</Route>
+      <Route path="/messages">{() => <LazyPage><Messages/></LazyPage>}</Route>
+      <Route path="/profile">{() => <LazyPage><Profile/></LazyPage>}</Route>
       <Route path="/support">{() => <LazyPage><Support/></LazyPage>}</Route>
       <Route path="/support-tickets">{() => <LazyPage><SupportTickets/></LazyPage>}</Route>
       <Route path="/reports">{() => <LazyPage><Reports/></LazyPage>}</Route>

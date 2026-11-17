@@ -40,6 +40,7 @@ export type AuthenticatedApplicationUser = Pick<
   | "birthdate"
   | "phone"
   | "address"
+  | "profileImageUrl"
 >;
 
 export type PublicRegistrationIdentity = {

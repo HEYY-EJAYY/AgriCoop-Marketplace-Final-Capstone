@@ -1,9 +1,9 @@
-import { WorkspaceHeader } from "@/components/AgriShell";
+import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
 import { SupportTicketStatusSelect } from "@/components/SupportTicketStatusSelect";
-import { Loader2, MessageSquareText, Send } from "lucide-react";
+import { Loader2, MessageSquareText, Pin, Send } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -17,14 +17,21 @@ export default function SupportTickets() {
   const [supportCooperativeId, setSupportCooperativeId] = useState<number | null>(null);
   const [supportQueueInitialized, setSupportQueueInitialized] = useState(false);
   const [reply, setReply] = useState("");
+  const [archivedView, setArchivedView] = useState(false);
+  const [selectedTicketIds, setSelectedTicketIds] = useState<number[]>([]);
   const utils = trpc.useUtils();
   const cooperatives = trpc.cooperatives.list.useQuery(undefined, {
     enabled: !!user && !isStaff,
   });
-  const mine = trpc.support.myTickets.useQuery(undefined, { enabled: !!user && !isStaff });
-  const managed = trpc.support.listAll.useQuery(undefined, { enabled: !!user && !!isStaff });
+  const mine = trpc.support.myTickets.useQuery({ archived: archivedView }, { enabled: !!user && !isStaff });
+  const managed = trpc.support.listAll.useQuery({ archived: archivedView }, { enabled: !!user && !!isStaff });
   const tickets = isStaff
-    ? (managed.data ?? []).map(({ ticket, userName, assignedToName }) => ({ ...ticket, userName: userName ?? null, assignedToName: assignedToName ?? null }))
+    ? (managed.data ?? []).map(({ ticket, userName, assignedToName, inbox }) => ({
+      ...ticket,
+      userName: userName ?? null,
+      assignedToName: assignedToName ?? null,
+      inbox,
+    }))
     : (mine.data ?? []).map(ticket => ({ ...ticket, userName: null, assignedToName: null }));
   const activeTicket = tickets.find(ticket => ticket.id === selectedId);
   const assignableUsers = trpc.support.assignableUsers.useQuery(
@@ -72,6 +79,14 @@ export default function SupportTickets() {
     },
     onError: error => toast.error(error.message),
   });
+  const bulkUpdate = trpc.support.bulkUpdate.useMutation({
+    onSuccess: async () => {
+      setSelectedTicketIds([]);
+      toast.success("Tickets updated.");
+      await Promise.all([utils.support.myTickets.invalidate(), utils.support.listAll.invalidate()]);
+    },
+    onError: error => toast.error(error.message),
+  });
 
   useEffect(() => {
     if (!tickets.some(ticket => ticket.id === selectedId)) {
@@ -86,14 +101,44 @@ export default function SupportTickets() {
     }
   }, [loading, supportQueueInitialized, user]);
 
-  if (loading) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
-  if (!user) return <><WorkspaceHeader title="Support tickets" description="Sign in to open or follow a support request."/><main className="mx-auto max-w-3xl px-4 py-10"><div className="agri-card p-8 text-center"><MessageSquareText className="mx-auto text-[#6d9852]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to view support tickets</h1><a href="/auth" className="agri-button mt-6 inline-flex no-underline">Sign in</a></div></main></>;
+  if (loading) return <div className="grid min-h-[40vh] place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
+  if (!user) return <><WorkspaceHeader title="Support tickets" description="Sign in to open or follow a support request."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-8 text-center"><MessageSquareText className="mx-auto text-[#6d9852]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to view support tickets</h1><a href="/auth" className="agri-button mt-6 inline-flex no-underline">Sign in</a></div></main></>;
 
   const ticketsLoading = isStaff ? managed.isLoading : mine.isLoading;
   const ticketError = isStaff ? managed.error : mine.error;
+  const toggleAllTickets = () => {
+    if (selectedTicketIds.length === tickets.length) setSelectedTicketIds([]);
+    else setSelectedTicketIds(tickets.map(ticket => ticket.id));
+  };
+  const runTicketBulk = (action: "pin" | "unpin" | "archive" | "unarchive" | "delete" | "restore") => {
+    if (!selectedTicketIds.length) return toast.error("Select at least one ticket.");
+    bulkUpdate.mutate({ ticketIds: selectedTicketIds, action });
+  };
   return <>
     <WorkspaceHeader title="Support tickets" description="Follow replies and status updates for marketplace support requests."/>
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[320px_1fr] lg:px-8">
+  <main className={`${shellContainerClass} grid gap-6 py-8 lg:grid-cols-[320px_1fr]`}>
+    <div className="mb-2 flex flex-wrap items-center gap-2 lg:col-span-2">
+      <button type="button" className={`min-h-11 rounded-xl px-3 text-sm font-bold ${!archivedView ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => { setArchivedView(false); setSelectedTicketIds([]); }}>Inbox</button>
+      <button type="button" className={`min-h-11 rounded-xl px-3 text-sm font-bold ${archivedView ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => { setArchivedView(true); setSelectedTicketIds([]); }}>Archived</button>
+    </div>
+    {selectedTicketIds.length > 0 && (
+      <div className="sticky top-0 z-10 mb-2 flex flex-wrap gap-2 rounded-xl border border-[#dce4d6] bg-[#fffdf8] p-3 lg:col-span-2">
+        <span className="self-center text-sm font-bold text-[#315640]">{selectedTicketIds.length} selected</span>
+        {!archivedView ? (
+          <>
+            <button type="button" className="agri-ghost min-h-11 text-xs" onClick={() => runTicketBulk("pin")}>Pin</button>
+            <button type="button" className="agri-ghost min-h-11 text-xs" onClick={() => runTicketBulk("unpin")}>Unpin</button>
+            <button type="button" className="agri-ghost min-h-11 text-xs" onClick={() => runTicketBulk("archive")}>Archive</button>
+            <button type="button" className="agri-ghost min-h-11 text-xs text-[#a34838]" onClick={() => runTicketBulk("delete")}>Delete</button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="agri-ghost min-h-11 text-xs" onClick={() => runTicketBulk("unarchive")}>Unarchive</button>
+            <button type="button" className="agri-ghost min-h-11 text-xs" onClick={() => runTicketBulk("restore")}>Restore</button>
+          </>
+        )}
+      </div>
+    )}
       <aside className="space-y-5">
         {!isStaff && <form className="agri-card p-5" onSubmit={(event: FormEvent) => {
           event.preventDefault();
@@ -118,12 +163,31 @@ export default function SupportTickets() {
           <button className="agri-button mt-4 w-full text-sm" disabled={create.isPending}>{create.isPending ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Submit ticket</button>
         </form>}
         <div className="agri-card overflow-hidden">
-          <div className="border-b border-[#e3e9de] p-4"><h2 className="font-display text-xl font-bold text-[#264f37]">{isStaff ? "Tickets in your scope" : "Your tickets"}</h2></div>
-          {ticketsLoading ? <Loader2 className="mx-auto my-8 animate-spin text-[#5d8a5e]"/> : ticketError ? <div className="p-4 text-sm text-[#a34838]"><p role="alert">{ticketError.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={isStaff ? managed.isFetching : mine.isFetching} onClick={() => void (isStaff ? managed.refetch() : mine.refetch())}>Retry</button></div> : tickets.length ? tickets.map(ticket => <button key={ticket.id} onClick={() => setSelectedId(ticket.id)} className={`w-full border-b border-[#edf0e9] p-4 text-left hover:bg-[#f1f6ee] ${ticket.id === selectedId ? "bg-[#edf4e9]" : ""}`}>
-            <p className="font-bold text-[#315640]">{ticket.subject}</p>
-            <p className="mt-1 text-xs text-[#718074]">{isStaff ? ticket.userName || "Member" : ticket.category} · {ticket.status}</p>
-            <p className="mt-1 text-xs text-[#718074]">{formatDateTimeManila(ticket.updatedAt)}</p>
-          </button>) : <p className="p-5 text-sm text-[#6d7d70]">No tickets yet.</p>}
+          <div className="flex items-center justify-between border-b border-[#e3e9de] p-4">
+            <h2 className="font-display text-xl font-bold text-[#264f37]">{isStaff ? "Tickets in your scope" : "Your tickets"}</h2>
+            <label className="flex items-center gap-2 text-xs font-bold text-[#56705c]">
+              <input type="checkbox" checked={tickets.length > 0 && selectedTicketIds.length === tickets.length} onChange={toggleAllTickets} />
+              Select all
+            </label>
+          </div>
+          {ticketsLoading ? <Loader2 className="mx-auto my-8 animate-spin text-[#5d8a5e]"/> : ticketError ? <div className="p-4 text-sm text-[#a34838]"><p role="alert">{ticketError.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={isStaff ? managed.isFetching : mine.isFetching} onClick={() => void (isStaff ? managed.refetch() : mine.refetch())}>Retry</button></div> : tickets.length ? tickets.map(ticket => {
+            const pinned = Boolean(ticket.pinnedAt);
+            return (
+              <div key={ticket.id} className={`flex items-start gap-2 border-b border-[#edf0e9] p-3 ${ticket.id === selectedId ? "bg-[#edf4e9]" : ""}`}>
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={selectedTicketIds.includes(ticket.id)}
+                  onChange={() => setSelectedTicketIds(ids => ids.includes(ticket.id) ? ids.filter(id => id !== ticket.id) : [...ids, ticket.id])}
+                />
+                <button type="button" className="min-w-0 flex-1 text-left hover:bg-[#f1f6ee]" onClick={() => setSelectedId(ticket.id)}>
+                  <p className="flex items-center gap-1 font-bold text-[#315640]">{pinned && <Pin size={12} />}{ticket.subject}</p>
+                  <p className="mt-1 text-xs text-[#718074]">{isStaff ? ticket.userName || "Member" : ticket.category} · {ticket.status}</p>
+                  <p className="mt-1 text-xs text-[#718074]">{formatDateTimeManila(ticket.updatedAt)}</p>
+                </button>
+              </div>
+            );
+          }) : <p className="p-5 text-sm text-[#6d7d70]">No tickets yet.</p>}
         </div>
       </aside>
       <section className="agri-card flex min-h-[560px] flex-col p-5 sm:p-6">

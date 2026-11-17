@@ -2,118 +2,65 @@
 
 Branch: `finish/agricoop-complete`  
 Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
-Generated: 2026-11-17 (completion pass: errors, layout, UX audit, thesis PDF)
+Updated: 2026-11-17 (UI/UX refinement pass)
 
 Companion artifacts:
 
-- `docs/UX_AUDIT.md`
-- `docs/AgriCoop_System_Documentation.pdf` (source: `docs/AgriCoop_System_Documentation.md`, build: `pnpm docs:system`)
-- `docs/PERFORMANCE.md`
+- `docs/UX_DECISIONS.md` — nav maps and product decisions  
+- `docs/UX_AUDIT.md` — journey / button audit  
+- `docs/AgriCoop_System_Documentation.pdf`  
+- `docs/PERFORMANCE.md`  
 - `docs/MANUAL_SQL.md`
 
 ---
 
-## 1. Error A — orders query failure
+## 1. UX refinement summary
 
-**Cause.** Live `agricoop_app.orders` lacked `demoSeedKey`, which Drizzle always selects. The UI previously surfaced truncated `Failed query: select …` text.
-
-**Fix.**
-
-1. Additive migration `supabase/migrations/20261117150000_orders_demo_seed_key.sql` (+ `docs/MANUAL_SQL.md` BLOCK 10).
-2. Applied to production (column present; unique index `orders_demo_seed_key_idx`).
-3. Server `errorFormatter` + `shared/userFacingErrors.ts` strip SQL from client messages; Retry buttons remain.
-
-**Verification (read-only).**
-
-```text
-orders columns include demoSeedKey (character varying)
-SELECT demoSeedKey … succeeds conceptually — column exists
-```
-
-Full-schema drift check: all actively queried `agricoop_app` tables match `drizzle/pg-schema.ts` column sets. Unused `paymentAttempts` remains intentionally absent.
+- Logged-out header: Logo | Marketplace · How It Works · Support | Login + Join — **no** search, cart, or logout.
+- Logged-in role nav + profile chip `Name | Role` (Officer Admin for admin).
+- Separate **Messages**, **Support**, and **Tickets** with select / read / pin / archive / soft-delete.
+- Order **Message** on Activity; `openForOrder` / `openForProduct`.
+- `/profile` with photo upload, password change, sticky Save.
+- Marketplace URL search / category / cooperative / sort / pagination.
+- Hero glass card on the right; workspace loaders no longer full-screen fade; solid headers.
+- Officers cannot read private buyer–seller chats (documented in UX_DECISIONS).
 
 ---
 
-## 2. Error B — role conflict on sign-in
+## 2. Database (this pass)
 
-**Sources of truth.**
+| Block | Change | Verification |
+|------:|--------|--------------|
+| 12 | `threadStates` table + RLS own-row policy | Migration `ux_inbox_and_indexes` applied |
+| 12 | `supportTickets` archivedAt / deletedAt / pinnedAt | Columns present |
+| 12 | `conversations` archivedAt / deletedAt | Applied |
+| 12 | `notifications` archivedAt / deletedAt | Applied |
+| 12 | Additive indexes on products + conversations | Applied |
 
-| Store | Role field | Role |
-|-------|------------|------|
-| **Operational (intended)** | `agricoop_app.users.role` | buyer / seller / admin / superadmin |
-| Canonical mirror | `public.profiles.role_id` → `public.roles.role_name` | buyer / seller / coop_officer / system_admin |
-
-**Divergence found.** User id `2`, email `heyyejayy1@gmail.com`: application role `seller`, profile role `system_admin` (role_id 4). Likely from SuperAdmin bootstrap / missing sync on earlier role writes.
-
-**Root-cause fix.**
-
-- `syncProfileRoleToApplicationRole` in `server/db.ts`; called from `admin.updateUser` and self-heal path in `getUserByVerifiedAuthId`.
-- SuperAdmin UI: `RoleConflictsPanel` + `admin.listRoleConflicts` / `admin.reconcileRole`.
-- Friendlier Auth/Dashboard copy pointing users to SuperAdmin reconciliation.
-- Conflict check retained; self-heal mirrors **application → profile** when safe.
-
-**Data reconciliation (narrow UPDATE; BLOCK 11).**
-
-| user id | email | before profile role_id | after |
-|--------:|-------|------------------------|-------|
-| 2 | heyyejayy1@gmail.com | 4 (`system_admin`) | 2 (`seller`) |
-
-Post-fix conflict query: **0 rows**.
-
-**Tests.** `server/authIdentity.test.ts` (26), plus registration / role mapping coverage in existing suites. Playwright public journeys: **12 passed** (360 / 768 / 1280 / 1920).
+No DROP / TRUNCATE / unscoped DELETE.
 
 ---
 
-## 3. Layout and marketplace UX
-
-- Fluid shell `max-w-[1440px]` with responsive padding; edge-to-edge marketplace hero.
-- Single-row desktop header: logo, search, category links, basket, account; hamburger below `xl`; mobile bottom nav (Home, Browse, Cart `#order`, Orders, Account).
-- Product grid 2 → 5 columns; filters sidebar (desktop) / drawer controls (mobile).
-- Activity: marketplace-style status tabs (To Pay / To Ship / To Receive / Completed / Cancelled).
-- Product detail: breadcrumbs, sticky mobile CTA, sanitized errors.
-
----
-
-## 4. Database apply (this pass)
-
-| Block | Change | Result |
-|------:|--------|--------|
-| 10 | `orders.demoSeedKey` + unique index | Applied; column verified |
-| 11 | Reconcile profiles.role_id for user 2 | Applied; conflicts = 0 |
-
-Earlier blocks 1–9 remain as previously recorded in this report’s prior revision.
-
----
-
-## 5. Quality gates (local)
+## 3. Quality gates
 
 | Gate | Result |
 |------|--------|
-| `pnpm check` / `lint` | pass |
-| `pnpm test` | 286+ passed, 2 skipped |
-| `pnpm build` | pass |
-| `pnpm test:e2e` | 12/12 passed against production URL |
+| `pnpm check` | pass |
+| `pnpm test` | 293 passed, 2 skipped |
+| `pnpm build` | (run before deploy) |
+| Playwright | public nav / marketplace / auth / profile-messages shells |
 
 ---
 
-## 6. Deploy
+## 4. Deploy
 
-| Item | Value |
-|------|-------|
-| Branch | `finish/agricoop-complete` @ `6bf8ff5` |
-| Production deployment | `dpl_GbU4kkrduiodfWjoaj1pkz1AK1AK` |
-| readyState | **READY** |
-| Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Region | `sin1` |
-| Smoke | `/` 200, `/marketplace` 200, `/api/health` ok, `marketplace.list` returns listings |
-| Playwright (live) | 6/6 passed on mobile-360 + desktop-1920 after deploy |
+Push `finish/agricoop-complete` and Production deploy until READY (updated after push). Project `agricoop-marketplace-final-capstone`, region `sin1`.
 
 ---
 
-## 7. Still needs a human
+## 5. Still needs a human
 
-1. Sign in with each of the four real role accounts and walk order / quotation / payment-proof flows once on production.
-2. Confirm Supabase Auth Site URL + email redirect match `https://agricoop-marketplace-final-capstone.vercel.app`.
-3. Optional: enable Auth leaked-password protection (advisor).
-
-No further automated blockers known after this pass.
+1. Sign in as Buyer and Seller and send a real order chat message end-to-end; confirm unread badges.
+2. Officer Admin: confirm Support queue shows only platform inquiries (not private order chats).
+3. Upload a profile photo on `/profile` and confirm it appears in the header chip.
+4. Optional: re-run Lighthouse locally and paste scores into `docs/PERFORMANCE.md` “UX refinement” section.

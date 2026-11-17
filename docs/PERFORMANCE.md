@@ -96,3 +96,7 @@ Desktop LCP is **under 1s**. Further mobile-lab gains would need deferring Supab
 - `marketplace.list` / `categories` → 200 with listings.
 - `/api/health` → `{ status: "ok" }`.
 - Browser: home hero + marketplace listing content render.
+
+## UX refinement pass (2026-11-17)
+
+Additive indexes on `products` (category, priceCents, stockQty, cooperativeId) and `conversations` (order/buyer/seller). Marketplace pagination (24/page) + URL filters reduce client work. Hero H1 has no animation; glass CTA is CSS-only. Lighthouse before numbers remain the table above; after this pass, re-check home / marketplace / product on Production once deploy `READY` — expect parity or better FCP (solid headers, no header search on public pages).

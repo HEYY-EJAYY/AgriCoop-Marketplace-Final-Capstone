@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -22,6 +22,7 @@ import {
   roles,
   supportTicketMessages,
   supportTickets,
+  threadStates,
   transactions,
   users,
 } from "../drizzle/pg-schema";
@@ -248,6 +249,7 @@ async function loadAuthIdentityRecords(authUserId: string) {
       birthdate: users.birthdate,
       phone: users.phone,
       address: users.address,
+      profileImageUrl: users.profileImageUrl,
     }).from(users)
       .where(eq(users.openId, authUserId))
       .limit(2));
@@ -653,20 +655,90 @@ export async function getProductById(productId: number) {
   return rows[0];
 }
 
-export async function getConversationsForUser(userId: number, canSeeAll = false, cooperativeId: number | null = null) {
+export type ConversationKindFilter = "messages" | "support" | "all";
+
+function conversationKindCondition(kind: ConversationKindFilter) {
+  const isTrade = or(
+    sql`${conversations.sellerId} is not null`,
+    sql`${conversations.orderId} is not null`,
+    sql`${conversations.quotationId} is not null`,
+    sql`${conversations.productId} is not null`,
+  );
+  const isSupport = and(
+    isNull(conversations.sellerId),
+    isNull(conversations.orderId),
+    isNull(conversations.quotationId),
+    isNull(conversations.productId),
+  );
+  if (kind === "messages") return isTrade;
+  if (kind === "support") return isSupport;
+  return undefined;
+}
+
+export async function getConversationsForUser(
+  userId: number,
+  options: {
+    kind?: ConversationKindFilter;
+    archived?: boolean;
+    /** Only for platform support queues — never for private trade chats. */
+    staffSupportQueue?: boolean;
+  } = {},
+) {
   const db = await getDb();
   if (!db) return [];
-  const visibleConversations = [eq(conversations.buyerId, userId), eq(conversations.sellerId, userId)];
-  if (cooperativeId !== null) {
-    visibleConversations.push(inArray(conversations.sellerId, db.select({ id: users.id }).from(users).where(eq(users.cooperativeId, cooperativeId))));
-  }
-  return db.select({ conversation: conversations, ownerName: users.name, productName: products.name, productUnit: products.unit, requestedQty: quotations.requestedQty })
+  const kind = options.kind ?? "all";
+  const archived = options.archived ?? false;
+  const kindCondition = conversationKindCondition(kind);
+
+  // Trade messages: participants only. Support: requester, or staff queue for platform threads.
+  const visibility = options.staffSupportQueue && kind === "support"
+    ? and(isNull(conversations.sellerId), isNull(conversations.orderId), isNull(conversations.quotationId), isNull(conversations.productId))
+    : or(eq(conversations.buyerId, userId), eq(conversations.sellerId, userId));
+
+  const rows = await db.select({
+    conversation: conversations,
+    ownerName: users.name,
+    productName: products.name,
+    productUnit: products.unit,
+    requestedQty: quotations.requestedQty,
+    stateIsRead: threadStates.isRead,
+    statePinnedAt: threadStates.pinnedAt,
+    stateArchivedAt: threadStates.archivedAt,
+    stateDeletedAt: threadStates.deletedAt,
+  })
     .from(conversations)
     .innerJoin(users, eq(conversations.buyerId, users.id))
     .leftJoin(products, eq(conversations.productId, products.id))
     .leftJoin(quotations, eq(conversations.quotationId, quotations.id))
-    .where(canSeeAll ? undefined : or(...visibleConversations))
-    .orderBy(desc(conversations.updatedAt));
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, userId),
+      eq(threadStates.channel, "conversation"),
+      eq(threadStates.threadId, conversations.id),
+    ))
+    .where(and(
+      isNull(conversations.deletedAt),
+      visibility,
+      kindCondition,
+      // Per-user archive/delete only (threadStates). Global conversation.deletedAt hides for everyone.
+      archived
+        ? sql`${threadStates.archivedAt} is not null`
+        : and(isNull(threadStates.archivedAt), isNull(threadStates.deletedAt)),
+    ))
+    .orderBy(desc(threadStates.pinnedAt), desc(conversations.updatedAt));
+
+  return rows.map(row => ({
+    conversation: row.conversation,
+    ownerName: row.ownerName,
+    productName: row.productName,
+    productUnit: row.productUnit,
+    requestedQty: row.requestedQty,
+    inbox: {
+      isRead: row.stateIsRead === null ? 1 : row.stateIsRead,
+      pinnedAt: row.statePinnedAt,
+      archivedAt: row.stateArchivedAt,
+      deletedAt: row.stateDeletedAt,
+    },
+  }));
 }
 
 export async function getConversationMessages(conversationId: number) {

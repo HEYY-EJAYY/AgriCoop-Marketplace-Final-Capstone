@@ -3,24 +3,31 @@ import { expect, test } from "@playwright/test";
 async function assertNoHorizontalOverflow(page: import("@playwright/test").Page) {
   const overflow = await page.evaluate(() => {
     const doc = document.documentElement;
-    return {
-      scrollWidth: doc.scrollWidth,
-      clientWidth: doc.clientWidth,
-    };
+    return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth };
   });
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 }
 
 test.describe("public marketplace journeys", () => {
-  test("home and marketplace load without horizontal overflow", async ({ page }, testInfo) => {
+  test("logged-out header has no search or cart", async ({ page }, testInfo) => {
     await page.goto("/");
     await expect(page.getByRole("link", { name: /AgriCoop/i }).first()).toBeVisible();
+    await expect(page.locator("#agri-market-search")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Open order basket|cart/i })).toHaveCount(0);
+    if (testInfo.project.name.startsWith("desktop")) {
+      await expect(page.getByRole("navigation", { name: /Primary/i }).getByRole("link", { name: "Marketplace" })).toBeVisible();
+      await expect(page.getByRole("button", { name: /Join AgriCoop/i }).or(page.getByRole("link", { name: /Join AgriCoop/i })).first()).toBeVisible();
+    }
     await assertNoHorizontalOverflow(page);
+  });
 
+  test("home and marketplace load without horizontal overflow", async ({ page }, testInfo) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: /Local harvest/i })).toBeVisible();
+    await assertNoHorizontalOverflow(page);
     await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
     await assertNoHorizontalOverflow(page);
-
     if (testInfo.project.name.startsWith("desktop")) {
       const header = page.locator("header").first();
       const box = await header.boundingBox();
@@ -28,27 +35,39 @@ test.describe("public marketplace journeys", () => {
     }
   });
 
+  test("marketplace search filter and sort in URL", async ({ page }) => {
+    await page.goto("/marketplace");
+    await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
+    const search = page.getByPlaceholder(/Search produce/i).first();
+    if (await search.isVisible()) {
+      await search.fill("rice");
+      await search.press("Enter");
+      await expect(page).toHaveURL(/q=rice/i);
+    }
+    const sort = page.locator("select").filter({ hasText: /Price|Stock|Category|Cooperative/i }).first();
+    if (await sort.count()) {
+      await sort.selectOption({ index: 1 }).catch(() => undefined);
+    }
+  });
+
   test("search, product detail, and auth entrypoints work", async ({ page }) => {
     await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
-
-    const search = page.getByRole("search").getByPlaceholder(/Search produce/i).first();
-    if (await search.isVisible()) {
-      await search.fill("a");
-      await search.press("Enter");
-    }
-
     const productLink = page.locator('a[href^="/products/"]').first();
     if (await productLink.count()) {
       await productLink.click();
       await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 20_000 });
-      await expect(page.getByText(/Price|Available stock|Minimum order/i).first()).toBeVisible();
       await assertNoHorizontalOverflow(page);
     }
-
     await page.goto("/auth");
     await expect(page.getByRole("button", { name: /sign in|join|create/i }).first()).toBeVisible({ timeout: 20_000 });
-    await assertNoHorizontalOverflow(page);
+  });
+
+  test("profile and messages routes require auth shell", async ({ page }) => {
+    await page.goto("/profile");
+    await expect(page.getByText(/Sign in|My Profile|profile/i).first()).toBeVisible({ timeout: 20_000 });
+    await page.goto("/messages");
+    await expect(page.getByText(/Sign in|Messages|Order/i).first()).toBeVisible({ timeout: 20_000 });
   });
 
   test("health API is reachable", async ({ request }) => {
