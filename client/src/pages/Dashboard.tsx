@@ -10,6 +10,7 @@ import { trpc } from "@/lib/trpc";
 import AdminRefundManagement from "@/components/AdminRefundManagement";
 import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
 import { getProductImageUrl } from "@/lib/productImages";
+import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
 import { PAYMENT_PROOF_BUCKET, PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../../../shared/paymentProofs";
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../../../shared/profileVerification";
@@ -109,7 +110,7 @@ function Empty({ icon: Icon, title, body }: { icon: LucideIcon; title: string; b
 
 function QueryErrorState({ message, onRetry, isFetching }: { message: string; onRetry: () => void; isFetching: boolean }) {
   return <div className="agri-card p-6 text-center">
-    <p role="alert" className="text-sm text-[#a34838]">{message}</p>
+    <p role="alert" className="text-sm text-[#a34838]">{toUserFacingErrorMessage(message)}</p>
     <button type="button" className="agri-ghost mt-3 text-sm" disabled={isFetching} onClick={onRetry}>
       {isFetching && <Loader2 className="animate-spin" size={15}/>} Retry
     </button>
@@ -152,7 +153,7 @@ function getAuthGateCopy(resolution: string | undefined) {
     case "application_role_mapping_conflict":
       return {
         title: "AgriCoop role conflict",
-        message: "The canonical Supabase role conflicts with the application account role. Sign-in is blocked until an administrator reconciles the records.",
+        message: "Your application role and canonical profile role disagree. AgriCoop attempts an automatic sync on sign-in. If you still see this screen, ask a SuperAdmin to use Role reconciliation in System administration.",
       };
     case "application_identity_conflict":
       return {
@@ -956,6 +957,33 @@ function AdminProfileVerificationQueue() {
   </section>;
 }
 
+function RoleConflictsPanel() {
+  const utils = trpc.useUtils();
+  const conflicts = trpc.admin.listRoleConflicts.useQuery();
+  const reconcile = trpc.admin.reconcileRole.useMutation({
+    onSuccess: () => {
+      toast.success("Role records reconciled to the application account role.");
+      void utils.admin.listRoleConflicts.invalidate();
+      void utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  return <section className="mt-8 agri-card p-5 sm:p-6">
+    <h2 className="font-display text-2xl font-bold text-[#264f37]">Role reconciliation</h2>
+    <p className="mt-1 text-sm text-[#6a796e]">Application <code className="text-xs">users.role</code> is the operational source of truth. Canonical <code className="text-xs">profiles.role_id</code> must match. Conflicts block sign-in until healed.</p>
+    {conflicts.error ? <QueryErrorState message={conflicts.error.message} isFetching={conflicts.isFetching} onRetry={() => void conflicts.refetch()}/>
+      : conflicts.isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/>
+      : conflicts.data?.length ? <div className="mt-4 space-y-3">{conflicts.data.map(row => <div key={row.userId} className="flex flex-col gap-3 rounded-xl border border-[#e9dba9] bg-[#fff8e2] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="font-bold text-[#76551b]">{row.email || `User #${row.userId}`}</p><p className="mt-1 text-xs text-[#76551b]">App role: {row.applicationRole} · Profile role: {row.profileRole}</p></div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="agri-button px-3 py-2 text-xs" disabled={reconcile.isPending} onClick={() => reconcile.mutate({ userId: row.userId, prefer: "application" })}>Align profile to app role</button>
+          <button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={reconcile.isPending} onClick={() => reconcile.mutate({ userId: row.userId, prefer: "profile" })}>Override app with profile role</button>
+        </div>
+      </div>)}</div>
+      : <p className="mt-4 text-sm text-[#6d7d70]">No role conflicts detected.</p>}
+  </section>;
+}
+
 function AdminDashboard() {
   const [sellerMode, setSellerMode] = useState(false);
   const [rejectingProductId, setRejectingProductId] = useState<number | null>(null);
@@ -971,6 +999,7 @@ function AdminDashboard() {
   <AdminProfileVerificationQueue/>
   <AdminRefundManagement/>
   <AssociationRequestsManager/>
+  {user?.role === "superadmin" && <RoleConflictsPanel/>}
   <section className="mt-8 agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Order fulfillment</h2><p className="mt-1 text-sm text-[#6a796e]">Complete ready orders with actual delivered quantities, or cancel without deducting stock.</p><div className="mt-5 space-y-3">{overview?.orders.filter(order => order.status !== "completed" && order.status !== "cancelled").map(order => <AdminOrderCard key={order.id} orderId={order.id}/>)}{!overview?.orders.some(order => order.status !== "completed" && order.status !== "cancelled") && <p className="py-5 text-center text-sm text-[#6d7d70]">No orders are waiting for fulfillment.</p>}</div></section><section className="mt-8 agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2><p className="mt-1 text-sm text-[#6a796e]">Approve Seller submissions before buyer visibility is enabled.</p></div><div className="grid gap-3 border-t border-[#e3e9de] p-5 sm:grid-cols-2 lg:grid-cols-3">{overview?.products.filter(product => product.verificationStatus === "pending").map(product => <div key={product.id} className="rounded-2xl border border-[#e2e9dd] p-4"><p className="font-display text-xl font-bold text-[#28523a]">{product.name}</p><p className="mt-1 text-xs text-[#6d7d70]">{product.category} · {peso(product.priceCents)} / {product.unit}</p><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" onClick={() => reviewProduct.mutate({ productId: product.id, decision: "approved" })}>Approve</button><button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => { setRejectingProductId(product.id); setRejectionReason(""); }}>Reject</button></div>{rejectingProductId === product.id && <form onSubmit={event => { event.preventDefault(); const reason = rejectionReason.trim(); if (reason) reviewProduct.mutate({ productId: product.id, decision: "rejected", rejectionReason: reason }); }} className="mt-4 space-y-3"><label className="field-label">Rejection reason<textarea required maxLength={600} className="field-control min-h-20" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)}/></label><div className="flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={reviewProduct.isPending || !rejectionReason.trim()}>Submit rejection</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setRejectingProductId(null)}>Keep in queue</button></div></form>}</div>)}{!overview?.products.some(product => product.verificationStatus === "pending") && <p className="col-span-full py-6 text-center text-sm text-[#6d7d70]">No products are waiting for review.</p>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-[1.3fr_.7fr]"><div className="agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2><p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p></div><div className="overflow-x-auto border-t border-[#e3e9de]"><table className="w-full min-w-[860px] text-left text-sm"><thead className="bg-[#f1f6ee] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="p-3">User</th><th className="p-3">Role</th><th className="p-3">Cooperative</th><th className="p-3">Approval</th><th className="p-3"></th></tr></thead><tbody>{overview?.users.map(row => <AdminUserRow key={row.user.id} user={row.user} cooperativeName={row.cooperativeName} cooperatives={overview.cooperatives} canAssignSuperAdmin={user?.role === "superadmin"} onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}/>)}</tbody></table>{!overview?.users.length && <p className="p-8 text-center text-sm text-[#6d7d70]">No user accounts are available yet.</p>}</div></div><div className="space-y-8">{user?.role === "superadmin" && <form onSubmit={event => { event.preventDefault(); createCooperative.mutate({ name, location }); }} className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2><label className="field-label mt-4">Cooperative name<input required className="field-control" value={name} onChange={e => setName(e.target.value)}/></label><label className="field-label mt-4">Location<input required className="field-control" value={location} onChange={e => setLocation(e.target.value)} placeholder="City, Province"/></label><button className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16}/> Create cooperative</button></form>}<div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Platform activity</h2><div className="mt-4 space-y-3">{overview?.orders.slice(0, 5).map(order => <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}><div><p className="font-bold text-[#315640]">Order #{order.id}</p><p className="text-xs text-[#6c7c70]">{peso(order.totalCents)} · {when(order.createdAt)}</p></div><Status value={order.status}/></div>)}{!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}</div></div></div></section></main></>;
 }
 

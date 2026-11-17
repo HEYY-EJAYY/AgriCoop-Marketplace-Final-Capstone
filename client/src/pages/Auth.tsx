@@ -63,7 +63,7 @@ export default function Auth() {
     }
     if (authResolution === "application_role_mapping_conflict") {
       logAuthDiagnostic("application_role_mapping_conflict_after_login", { supabaseSessionPresent: true });
-      toast.error("Your canonical Supabase role and application account role conflict. Sign-in is blocked until an administrator reconciles the role assignment.");
+      toast.error("Your account roles do not match. AgriCoop will try to sync them automatically; if this continues, ask a SuperAdmin to open Role reconciliation in System administration.");
       return false;
     }
     if (authResolution === "application_identity_conflict") {
