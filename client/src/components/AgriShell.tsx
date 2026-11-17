@@ -31,9 +31,11 @@ import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
-const SHELL = "mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-8 xl:px-10";
+/** Shared content width — see --agri-content-max / .agri-shell in index.css */
+const SHELL = "agri-shell";
 
 export const shellContainerClass = SHELL;
+export const fullBleedClass = "agri-full-bleed";
 
 const navLinkClass = (active: boolean) =>
   `inline-flex min-h-11 items-center whitespace-nowrap rounded-xl px-3 text-sm font-bold no-underline ${

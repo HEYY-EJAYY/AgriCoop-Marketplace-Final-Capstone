@@ -1,4 +1,4 @@
-import { PageFrame } from "@/components/AgriShell";
+import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { goToAuth } from "@/const";
 import { trpc } from "@/lib/trpc";
@@ -87,19 +87,19 @@ export default function Checkout() {
     return <PageFrame><div className="grid min-h-80 place-items-center"><Loader2 className="animate-spin text-[#4e8257]"/></div></PageFrame>;
   }
   if (!user) {
-    return <PageFrame><main className="mx-auto max-w-xl px-4 py-16 text-center"><h1 className="font-display text-3xl font-bold text-[#244e36]">Sign in to continue checkout</h1><p className="mt-3 text-[#647568]">Your basket is kept for this browser session.</p><button className="agri-button mt-6" onClick={() => goToAuth("Checkout")}>Sign in</button></main></PageFrame>;
+    return <PageFrame><main className={`${shellContainerClass} max-w-xl py-16 text-center`}><h1 className="font-display text-3xl font-bold text-[#244e36]">Sign in to continue checkout</h1><p className="mt-3 text-[#647568]">Your basket is kept for this browser session.</p><button className="agri-button mt-6" onClick={() => goToAuth("Checkout")}>Sign in</button></main></PageFrame>;
   }
   if (!roleCanOrder) {
-    return <PageFrame><main className="mx-auto max-w-xl px-4 py-16 text-center"><h1 className="font-display text-3xl font-bold text-[#244e36]">Marketplace checkout unavailable</h1><p className="mt-3 text-[#647568]">{accessRestriction === "pending" ? "Your account is pending cooperative approval before you can place orders." : accessRestriction === "suspended" ? "This account is suspended. Contact cooperative support for help." : "Only approved Buyer and Seller accounts can place marketplace orders."}</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></main></PageFrame>;
+    return <PageFrame><main className={`${shellContainerClass} max-w-xl py-16 text-center`}><h1 className="font-display text-3xl font-bold text-[#244e36]">Marketplace checkout unavailable</h1><p className="mt-3 text-[#647568]">{accessRestriction === "pending" ? "Your account is pending cooperative approval before you can place orders." : accessRestriction === "suspended" ? "This account is suspended. Contact cooperative support for help." : "Only approved Buyer and Seller accounts can place marketplace orders."}</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></main></PageFrame>;
   }
   if (!cart) {
-    return <PageFrame><main className="mx-auto max-w-xl px-4 py-16 text-center"><h1 className="font-display text-3xl font-bold text-[#244e36]">Your checkout basket is unavailable</h1><p className="mt-3 text-[#647568]">Return to the marketplace and rebuild your basket. No order was placed.</p><Link href="/marketplace" className="agri-button mt-6 inline-flex no-underline">Browse marketplace</Link></main></PageFrame>;
+    return <PageFrame><main className={`${shellContainerClass} max-w-xl py-16 text-center`}><h1 className="font-display text-3xl font-bold text-[#244e36]">Your checkout basket is unavailable</h1><p className="mt-3 text-[#647568]">Return to the marketplace and rebuild your basket. No order was placed.</p><Link href="/marketplace" className="agri-button mt-6 inline-flex no-underline">Browse marketplace</Link></main></PageFrame>;
   }
   if (paymentMethod === "gcash" && optionsError) {
-    return <PageFrame><main className="mx-auto max-w-xl px-4 py-16 text-center"><h1 className="font-display text-3xl font-bold text-[#244e36]">GCash options could not be loaded</h1><p role="alert" className="mt-3 text-[#647568]">{optionsError.message}</p><p className="mt-2 text-sm text-[#647568]">No order has been placed. Retry the request before continuing with GCash.</p><button type="button" className="agri-button mt-6" disabled={optionsFetching} onClick={() => void refetchOptions()}><Loader2 className={optionsFetching ? "animate-spin" : ""} size={16}/> Retry</button><button type="button" className="agri-ghost mt-3" onClick={() => setPaymentMethod("cash_pickup")}>Choose cash on pickup instead</button></main></PageFrame>;
+    return <PageFrame><main className={`${shellContainerClass} max-w-xl py-16 text-center`}><h1 className="font-display text-3xl font-bold text-[#244e36]">GCash options could not be loaded</h1><p role="alert" className="mt-3 text-[#647568]">{optionsError.message}</p><p className="mt-2 text-sm text-[#647568]">No order has been placed. Retry the request before continuing with GCash.</p><button type="button" className="agri-button mt-6" disabled={optionsFetching} onClick={() => void refetchOptions()}><Loader2 className={optionsFetching ? "animate-spin" : ""} size={16}/> Retry</button><button type="button" className="agri-ghost mt-3" onClick={() => setPaymentMethod("cash_pickup")}>Choose cash on pickup instead</button></main></PageFrame>;
   }
 
-  return <PageFrame><main className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+  return <PageFrame><main className={`${shellContainerClass} py-10`}>
     <Link href="/marketplace" className="agri-ghost text-sm no-underline"><ArrowLeft size={16}/> Return to marketplace</Link>
     <h1 className="mt-5 font-display text-4xl font-bold text-[#244e36]">Review your order</h1>
     <p className="mt-2 text-sm text-[#647568]">Order totals and item availability are verified again by the server before submission.</p>

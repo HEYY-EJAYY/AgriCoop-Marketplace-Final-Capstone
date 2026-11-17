@@ -2,7 +2,7 @@ import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { PageFrame } from "@/components/AgriShell";
+import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { authSession, logAuthDiagnostic } from "@/lib/authSession";
 import { getEmailVerificationReturn } from "@/lib/emailVerification";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
@@ -213,8 +213,8 @@ export default function Auth() {
   };
 
   return <PageFrame>
-    <main className="mx-auto max-w-lg px-4 py-16 sm:px-6">
-      <div className="agri-card p-7">
+    <main className={`${shellContainerClass} py-16`}>
+      <div className="agri-card mx-auto max-w-lg p-7">
         <p className="text-xs font-extrabold uppercase tracking-[.13em] text-[#6d9147]">AgriCoop account</p>
         <h1 className="mt-2 font-display text-3xl font-bold text-[#214b35]">{register ? "Join the cooperative market" : "Welcome back"}</h1>
         <p className="mt-2 text-sm leading-6 text-[#66766b]">

@@ -488,9 +488,9 @@ export default function Marketplace() {
 
   return (
     <PageFrame>
-      <main className={`${shellContainerClass} py-6 sm:py-8`}>
-        <section className="full-bleed -mx-4 bg-[#1f4f36] px-4 py-10 text-[#fffdf8] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 xl:-mx-10 xl:px-10">
-          <div className="mx-auto w-full max-w-[1440px]">
+      <main className="py-0 sm:py-0">
+        <section className="agri-full-bleed bg-[#1f4f36] py-10 text-[#fffdf8]" data-full-bleed>
+          <div className={shellContainerClass}>
             <p className="text-sm font-extrabold uppercase tracking-[.13em] text-[#bed99c]">Marketplace</p>
             <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
@@ -507,7 +507,8 @@ export default function Marketplace() {
           </div>
         </section>
 
-        <nav className="mt-4 text-xs font-bold text-[#66806b]" aria-label="Breadcrumb">
+        <div className={`${shellContainerClass} py-6 sm:py-8`}>
+        <nav className="mt-0 text-xs font-bold text-[#66806b]" aria-label="Breadcrumb">
           <Link href="/" className="no-underline hover:text-[#1f5a3c]">
             Home
           </Link>
@@ -985,6 +986,7 @@ export default function Marketplace() {
             </form>
           </div>
         )}
+        </div>
       </main>
     </PageFrame>
   );

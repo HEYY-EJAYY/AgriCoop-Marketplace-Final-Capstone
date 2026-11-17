@@ -6,13 +6,76 @@
   background: #f8f5ee;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  /* Shared layout tokens — one content width for nav, pages, footer */
+  --agri-content-max: 100rem; /* 1600px */
+  --agri-gutter: 1rem;
+  --agri-gutter-sm: 1.5rem;
+  --agri-gutter-lg: 2rem;
+  --agri-gutter-xl: 2.5rem;
+  --agri-hero-badge-inset: 1rem;
+  --agri-hero-badge-inset-lg: 1.5rem;
+  --agri-radius-card: 1.25rem;
+  --agri-glass-bg: rgba(255, 253, 248, 0.92);
+  --agri-glass-border: rgba(255, 255, 255, 0.65);
+  --agri-glass-text: #163b2a;
+  --agri-glass-muted: #355445;
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; background: #f8f5ee; }
+html {
+  scroll-behavior: smooth;
+  overflow-x: clip;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f8f5ee;
+  overflow-x: clip;
+  width: 100%;
+}
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
+
+/* Content column: fluid padding + wide ultrawide cap (shared by shell) */
+.agri-shell {
+  width: 100%;
+  max-width: var(--agri-content-max);
+  margin-inline: auto;
+  padding-inline: var(--agri-gutter);
+}
+@media (min-width: 640px) {
+  .agri-shell { padding-inline: var(--agri-gutter-sm); }
+}
+@media (min-width: 1024px) {
+  .agri-shell { padding-inline: var(--agri-gutter-lg); }
+}
+@media (min-width: 1280px) {
+  .agri-shell { padding-inline: var(--agri-gutter-xl); }
+}
+
+/* Full-viewport band; nest .agri-shell inside for aligned content */
+.agri-full-bleed {
+  width: 100%;
+  max-width: 100%;
+}
+
+.hero-glass-badge {
+  width: min(100%, 20rem);
+  border-radius: var(--agri-radius-card);
+  border: 1px solid var(--agri-glass-border);
+  /* Solid high-opacity fallback when backdrop-filter is unsupported */
+  background: var(--agri-glass-bg);
+  color: var(--agri-glass-text);
+  box-shadow: 0 10px 28px rgba(22, 59, 42, 0.12);
+  padding: 0.85rem 1rem;
+}
+@supports ((-webkit-backdrop-filter: blur(12px)) or (backdrop-filter: blur(12px))) {
+  .hero-glass-badge {
+    background: rgba(255, 253, 248, 0.78);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+}
 
 .font-display { font-family: "Fraunces", Georgia, serif; }
 .grain {
