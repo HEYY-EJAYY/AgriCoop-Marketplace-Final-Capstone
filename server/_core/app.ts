@@ -32,10 +32,25 @@ export function createApp(options: CreateAppOptions = {}) {
   }
 
   app.get("/api/health", async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const health = await getHealthStatus();
     res.status(health.status === "ok" ? 200 : 503).json(health);
   });
   registerConversationStreamRoute(app);
+
+  app.use("/api/trpc", (req, res, next) => {
+    const path = req.originalUrl || req.url || "";
+    const isGet = req.method === "GET" || req.method === "HEAD";
+    const isPublicMarketplace = isGet
+      && /marketplace\.(list|categories|byId)/.test(path)
+      && !/(auth\.|account\.|orders\.|payments\.|admin\.|cooperative)/.test(path);
+    if (isPublicMarketplace) {
+      res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
+    } else {
+      res.setHeader("Cache-Control", "private, no-store");
+    }
+    next();
+  });
 
   app.use(
     "/api/trpc",

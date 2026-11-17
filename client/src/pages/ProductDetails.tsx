@@ -1,6 +1,6 @@
 import { WorkspaceHeader } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
-import { getProductImageUrl } from "@/lib/productImages";
+import { getProductImageUrl, optimizeListingImageUrl } from "@/lib/productImages";
 import { ArrowLeft, Loader2, Package } from "lucide-react";
 import { Link, useParams } from "wouter";
 import { useState } from "react";
@@ -30,9 +30,10 @@ export default function ProductDetails() {
   }
 
   const { product, sellerName, cooperativeName } = listing;
-  const imageUrls = product.imageUrls?.length
+  const imageUrls = (product.imageUrls?.length
     ? product.imageUrls
-    : [product.primaryImageUrl || getProductImageUrl(product.name)];
+    : [product.primaryImageUrl || getProductImageUrl(product.name)]
+  ).map(url => optimizeListingImageUrl(url, product.name, 960, 720));
   const selectedImageUrl = imageUrls[selectedImageIndex] ?? imageUrls[0];
   return <>
     <WorkspaceHeader title="Product details" description="Review the crop, unit price, available stock, and seller before ordering."/>
@@ -40,10 +41,10 @@ export default function ProductDetails() {
       <Link href="/marketplace" className="mb-5 inline-flex items-center gap-2 text-sm font-bold text-[#456b4d] no-underline"><ArrowLeft size={16}/> Back to marketplace</Link>
       <article className="agri-card grid overflow-hidden md:grid-cols-2">
         <div className="p-4">
-          <img src={selectedImageUrl} alt={`${product.name} image ${selectedImageIndex + 1}`} className="h-72 w-full rounded-xl object-cover md:h-[500px]"/>
+          <img src={selectedImageUrl} alt={`${product.name} image ${selectedImageIndex + 1}`} width={960} height={720} fetchPriority="high" decoding="async" className="h-72 w-full rounded-xl object-cover md:h-[500px]"/>
           {imageUrls.length > 1 && <div className="mt-3 grid grid-cols-5 gap-2">
             {imageUrls.map((imageUrl, index) => <button key={`${imageUrl}-${index}`} type="button" aria-label={`Show product image ${index + 1}`} aria-pressed={index === selectedImageIndex} onClick={() => setSelectedImageIndex(index)} className={`overflow-hidden rounded-lg border-2 ${index === selectedImageIndex ? "border-[#47774e]" : "border-transparent"}`}>
-              <img src={imageUrl} alt="" className="h-16 w-full object-cover"/>
+              <img src={optimizeListingImageUrl(imageUrl, product.name, 160, 160)} alt="" width={160} height={160} loading="lazy" decoding="async" className="h-16 w-full object-cover"/>
             </button>)}
           </div>}
         </div>

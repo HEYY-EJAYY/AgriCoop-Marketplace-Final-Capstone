@@ -150,7 +150,13 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+const isProdBuild = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
+// Manus/jsx-loc inject huge runtime into index.html — keep them for local debug only.
+const plugins = [
+  react(),
+  tailwindcss(),
+  ...(isProdBuild ? [] : [jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()]),
+];
 
 export default defineConfig({
   plugins,
@@ -171,6 +177,21 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    cssCodeSplit: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("recharts") || id.includes("d3-") || id.includes("victory-")) return "charts";
+          if (id.includes("@supabase")) return "supabase";
+          if (id.includes("@tanstack") || id.includes("@trpc") || id.includes("superjson")) return "data";
+          if (id.includes("framer-motion")) return "motion";
+          if (id.includes("lucide-react")) return "icons";
+          if (id.includes("react-dom") || id.includes("/react/") || id.includes("\\react\\")) return "react-vendor";
+          return "vendor";
+        },
+      },
+    },
   },
   server: {
     host: true,
