@@ -1,6 +1,6 @@
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { WorkspaceHeader } from "@/components/AgriShell";
+import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, ImagePlus, Loader2, Pencil, QrCode, Trash2, Upload, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useState } from "react";
@@ -173,7 +173,7 @@ export default function PaymentOptions() {
 
   return <>
     <WorkspaceHeader title="Payment Options" description="Manage checkout instructions and QR images for your platform or cooperative."/>
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+    <main className={`${shellContainerClass} py-8`}>
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link href="/dashboard" className="agri-ghost text-sm no-underline"><ArrowLeft size={16}/> Return to dashboard</Link>
         <button className="agri-button text-sm" disabled={Boolean(optionsError)} onClick={() => { setCreating(value => !value); setDraft(blankDraft()); }}>

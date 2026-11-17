@@ -526,7 +526,7 @@ export default function Checkout() {
   if (!user) {
     return (
       <PageFrame>
-        <main className={`${shellContainerClass} max-w-xl py-16 text-center`}>
+        <main className={`${shellContainerClass} py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Sign in to continue checkout</h1>
           <p className="mt-3 text-[#5c6c60]">Your basket is kept for this browser session.</p>
           <button className="agri-button mt-6" type="button" onClick={() => goToAuth("Checkout")}>
@@ -539,7 +539,7 @@ export default function Checkout() {
   if (!roleCanOrder) {
     return (
       <PageFrame>
-        <main className={`${shellContainerClass} max-w-xl py-16 text-center`}>
+        <main className={`${shellContainerClass} py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Marketplace checkout unavailable</h1>
           <p className="mt-3 text-[#5c6c60]">
             {accessRestriction === "pending"
@@ -558,7 +558,7 @@ export default function Checkout() {
   if (!cart) {
     return (
       <PageFrame>
-        <main className={`${shellContainerClass} max-w-xl py-16 text-center`}>
+        <main className={`${shellContainerClass} py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Your checkout basket is unavailable</h1>
           <p className="mt-3 text-[#5c6c60]">Return to the marketplace and rebuild your basket. No order was placed.</p>
           <Link href="/marketplace" className="agri-button mt-6 inline-flex no-underline">

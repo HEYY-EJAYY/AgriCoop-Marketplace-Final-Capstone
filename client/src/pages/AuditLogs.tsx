@@ -1,4 +1,4 @@
-import { WorkspaceHeader } from "@/components/AgriShell";
+import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
@@ -31,7 +31,7 @@ export default function AuditLogs() {
         ? "Platform-wide append-only activity for SuperAdmin review."
         : "Cooperative-scoped append-only activity for your assigned cooperative."}
     />
-    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <main className={`${shellContainerClass} py-8`}>
       <form
         className="mb-6 flex flex-wrap gap-3 agri-card p-4"
         onSubmit={event => {

@@ -454,7 +454,7 @@ export default function Marketplace() {
     const isFetching = listingsQuery.isFetching || categoriesQuery.isFetching;
     return (
       <PageFrame>
-        <main className="mx-auto max-w-3xl px-4 py-16 text-center">
+        <main className={`${shellContainerClass} py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Marketplace data could not be loaded</h1>
           <p role="alert" className="mt-3 text-[#647568]">
             {toUserFacingErrorMessage(error?.message)}

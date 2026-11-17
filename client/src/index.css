@@ -6,12 +6,12 @@
   background: #f8f5ee;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  /* Shared layout tokens — one content width for nav, pages, footer */
-  --agri-content-max: 100rem; /* 1600px */
-  --agri-gutter: 1rem;
-  --agri-gutter-sm: 1.5rem;
-  --agri-gutter-lg: 2rem;
-  --agri-gutter-xl: 2.5rem;
+  /* Shared layout tokens — full-bleed content with small side gaps only */
+  --agri-content-max: 100%;
+  --agri-gutter: 0.75rem;
+  --agri-gutter-sm: 1rem;
+  --agri-gutter-lg: 1rem;
+  --agri-gutter-xl: 1.25rem;
   --agri-hero-badge-inset: 1rem;
   --agri-hero-badge-inset-lg: 1.5rem;
   --agri-radius-card: 1.25rem;
@@ -36,12 +36,13 @@ body {
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
-/* Content column: fluid padding + wide ultrawide cap (shared by shell) */
+/* Content column: full viewport width + small side gutters (shared by shell) */
 .agri-shell {
   width: 100%;
   max-width: var(--agri-content-max);
   margin-inline: auto;
   padding-inline: var(--agri-gutter);
+  box-sizing: border-box;
 }
 @media (min-width: 640px) {
   .agri-shell { padding-inline: var(--agri-gutter-sm); }

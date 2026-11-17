@@ -30,7 +30,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
-/** Shared content width — see --agri-content-max / .agri-shell in index.css */
+/** Shared full-width content shell — small side gutters only (.agri-shell in index.css) */
 const SHELL = "agri-shell";
 
 export const shellContainerClass = SHELL;
