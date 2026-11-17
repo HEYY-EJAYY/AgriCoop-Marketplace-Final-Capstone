@@ -24,6 +24,7 @@ import {
   getConversationMessages,
   getConversationsForUser,
   ensureOrderPaymentRecord,
+  syncProfileRoleToApplicationRole,
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
@@ -2420,6 +2421,7 @@ export const appRouter = router({
         return db.transaction(async tx => {
           const [target] = await tx.select({
             id: users.id,
+            openId: users.openId,
             role: users.role,
             approvalStatus: users.approvalStatus,
             cooperativeId: users.cooperativeId,
@@ -2431,6 +2433,9 @@ export const appRouter = router({
             || !canUpdateCooperativeUser(actor, target.cooperativeId, input.cooperativeId, input.role, target.role)) {
             throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
           }
+          if (!target.openId) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "That user account could not be found." });
+          }
           const scope = actor.role === "superadmin"
             ? eq(users.id, input.userId)
             : and(eq(users.id, input.userId), eq(users.cooperativeId, actor.cooperativeId!));
@@ -2440,6 +2445,14 @@ export const appRouter = router({
             .returning({ id: users.id });
           if (!result.length) {
             throw new TRPCError({ code: "CONFLICT", message: "This account changed while it was being updated." });
+          }
+          try {
+            await syncProfileRoleToApplicationRole(target.openId, input.role, tx);
+          } catch {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "The application role was updated, but the canonical profile role could not be synced. Retry or use role reconciliation.",
+            });
           }
           await recordAuditLog(tx, {
             actorUserId: actor.id,
@@ -2458,6 +2471,78 @@ export const appRouter = router({
             title: "Account access updated",
             content: "An administrator updated your account role, approval status, or cooperative assignment.",
             link: "/dashboard",
+          });
+          return { success: true };
+        });
+      }),
+    listRoleConflicts: protectedProcedure.query(async ({ ctx }) => {
+      requireOperationalRole(ctx.user, ["superadmin"]);
+      const db = await dbOrThrow();
+      const rows = await db.execute(sql`
+        select u.id as "userId", u.email, u.role as "applicationRole", r.role_name as "profileRole", u."openId"
+        from agricoop_app.users u
+        join public.profiles p on p.user_id::text = u."openId"
+        join public.roles r on r.role_id = p.role_id
+        where (r.role_name = 'buyer' and u.role <> 'buyer')
+           or (r.role_name = 'seller' and u.role <> 'seller')
+           or (r.role_name = 'coop_officer' and u.role <> 'admin')
+           or (r.role_name = 'system_admin' and u.role <> 'superadmin')
+        order by u.id
+      `);
+      return Array.from(rows as unknown as Array<Record<string, unknown>>).map(row => ({
+        userId: Number(row.userId),
+        email: String(row.email ?? ""),
+        applicationRole: String(row.applicationRole),
+        profileRole: String(row.profileRole),
+        openId: String(row.openId ?? ""),
+      }));
+    }),
+    reconcileRole: protectedProcedure
+      .input(z.object({
+        userId: z.number().int().positive(),
+        // Prefer application role (operational source of truth) unless explicitly overriding.
+        prefer: z.enum(["application", "profile"]).default("application"),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        requireOperationalRole(ctx.user, ["superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [target] = await tx.select({
+            id: users.id,
+            openId: users.openId,
+            role: users.role,
+            email: users.email,
+          }).from(users).where(eq(users.id, input.userId)).limit(1);
+          if (!target?.openId) throw new TRPCError({ code: "NOT_FOUND", message: "That user account could not be found." });
+          const [profile] = await tx.select({
+            roleId: profiles.roleId,
+            roleName: roles.roleName,
+          }).from(profiles)
+            .leftJoin(roles, eq(profiles.roleId, roles.roleId))
+            .where(eq(profiles.userId, target.openId))
+            .limit(1);
+          if (!profile?.roleName) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Canonical profile role is missing for this user." });
+          }
+          if (input.prefer === "application") {
+            await syncProfileRoleToApplicationRole(target.openId, target.role, tx);
+          } else {
+            const mapped = profile.roleName === "buyer" ? "buyer"
+              : profile.roleName === "seller" ? "seller"
+              : profile.roleName === "coop_officer" ? "admin"
+              : profile.roleName === "system_admin" ? "superadmin"
+              : null;
+            if (!mapped) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "Unsupported canonical role for reconciliation." });
+            }
+            await tx.update(users).set({ role: mapped }).where(eq(users.id, target.id));
+          }
+          await recordAuditLog(tx, {
+            actorUserId: ctx.user.id,
+            action: "user_role_reconciled",
+            entityType: "user",
+            entityId: target.id,
+            metadata: { prefer: input.prefer, email: target.email, applicationRole: target.role, profileRole: profile.roleName },
           });
           return { success: true };
         });

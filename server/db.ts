@@ -27,6 +27,7 @@ import {
 } from "../drizzle/pg-schema";
 import { availableStockAfterReservations } from "./marketplaceRules";
 import {
+  applicationRoleToPublicRoleName,
   matchesPublicRegistrationIdentity,
   resolveAuthIdentityMapping,
   resolvePublicRegistrationIdentity,
@@ -231,7 +232,7 @@ export async function ensureOrderPaymentRecord(
   return db.select().from(payments).where(eq(payments.id, paymentRow.id)).limit(1).then((rows: any[]) => rows[0]);
 }
 
-export async function getUserByVerifiedAuthId(authUserId: string) {
+async function loadAuthIdentityRecords(authUserId: string) {
   const db = await getDb();
   const applicationUsers = await inDatabasePhase("application_user_lookup", () =>
     db.select({
@@ -256,7 +257,55 @@ export async function getUserByVerifiedAuthId(authUserId: string) {
       .leftJoin(roles, eq(profiles.roleId, roles.roleId))
       .where(eq(profiles.userId, authUserId))
       .limit(2));
-  return resolveAuthIdentityMapping(authUserId, applicationUsers, profileRoles);
+  return { applicationUsers, profileRoles };
+}
+
+/** Keep public.profiles.role_id aligned with agricoop_app.users.role (operational source of truth). */
+export async function syncProfileRoleToApplicationRole(
+  authUserId: string,
+  applicationRole: "buyer" | "seller" | "admin" | "superadmin",
+  executor?: RootDb | RootTransaction,
+) {
+  const db = executor ?? await getDb();
+  const publicRoleName = applicationRoleToPublicRoleName(applicationRole);
+  const [roleRow] = await db.select({ roleId: roles.roleId })
+    .from(roles)
+    .where(eq(roles.roleName, publicRoleName))
+    .limit(1);
+  if (!roleRow) {
+    throw new Error(`Canonical public role "${publicRoleName}" is missing.`);
+  }
+  const updated = await db.update(profiles)
+    .set({ roleId: roleRow.roleId })
+    .where(eq(profiles.userId, authUserId))
+    .returning({ userId: profiles.userId });
+  if (!updated.length) {
+    throw new Error("Canonical profile row is missing for this Auth identity.");
+  }
+  return { publicRoleName, roleId: roleRow.roleId };
+}
+
+export async function getUserByVerifiedAuthId(authUserId: string) {
+  const first = await loadAuthIdentityRecords(authUserId);
+  let resolution = resolveAuthIdentityMapping(authUserId, first.applicationUsers, first.profileRoles);
+  // Safe self-heal: when exactly one app user and one profile disagree, mirror app role into profiles.
+  if (resolution.status === "application_role_mapping_conflict" && first.applicationUsers.length === 1) {
+    try {
+      await syncProfileRoleToApplicationRole(authUserId, first.applicationUsers[0].role);
+      const healed = await loadAuthIdentityRecords(authUserId);
+      resolution = resolveAuthIdentityMapping(authUserId, healed.applicationUsers, healed.profileRoles);
+      if (resolution.status === "application_user_resolved") {
+        console.info("[auth] Self-healed role mapping conflict by syncing profiles to application role", {
+          applicationRole: first.applicationUsers[0].role,
+        });
+      }
+    } catch (error) {
+      console.error("[auth] Role mapping self-heal failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+  return resolution;
 }
 
 export async function getCooperatives() {

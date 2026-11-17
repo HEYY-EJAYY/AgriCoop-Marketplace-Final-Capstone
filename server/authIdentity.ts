@@ -7,6 +7,25 @@ const canonicalRoles: Record<string, User["role"]> = {
   system_admin: "superadmin",
 };
 
+/** Operational application role is the source of truth; profiles.role_id must mirror it. */
+export function applicationRoleToPublicRoleName(role: User["role"]): keyof typeof canonicalRoles {
+  switch (role) {
+    case "buyer":
+      return "buyer";
+    case "seller":
+      return "seller";
+    case "admin":
+      return "coop_officer";
+    case "superadmin":
+      return "system_admin";
+  }
+}
+
+export function publicRoleNameToApplicationRole(roleName: string | null | undefined): User["role"] | null {
+  if (!roleName) return null;
+  return canonicalRoles[roleName] ?? null;
+}
+
 export type AuthenticatedApplicationUser = Pick<
   User,
   | "id"

@@ -3197,3 +3197,44 @@ COMMIT;
 -- SELECT has_function_privilege('anon','agricoop_app.reserved_quantities_for_products(integer[])','EXECUTE');
 -- SELECT indexname FROM pg_indexes WHERE indexname IN ('products_marketplace_browse_idx','product_images_product_id_order_idx');
 ```
+
+## BLOCK 10: `20261117150000_orders_demo_seed_key.sql`
+
+```sql
+-- PURPOSE: Add missing orders.demoSeedKey so Drizzle order selects stop failing.
+-- IDEMPOTENT / ADDITIVE ONLY.
+
+BEGIN;
+
+ALTER TABLE agricoop_app.orders
+  ADD COLUMN IF NOT EXISTS "demoSeedKey" character varying(80);
+
+CREATE UNIQUE INDEX IF NOT EXISTS orders_demo_seed_key_idx
+  ON agricoop_app.orders ("demoSeedKey");
+
+COMMIT;
+
+-- Verification:
+-- SELECT column_name FROM information_schema.columns
+-- WHERE table_schema='agricoop_app' AND table_name='orders' AND column_name='demoSeedKey';
+```
+
+## BLOCK 11: Role reconciliation data fix (previewed, narrowly scoped)
+
+```sql
+-- PURPOSE: Align one mismatched profile role to the application users.role source of truth.
+-- Preview first:
+-- SELECT u.id, u.email, u.role, r.role_name
+-- FROM agricoop_app.users u
+-- JOIN public.profiles p ON p.user_id::text = u."openId"
+-- JOIN public.roles r ON r.role_id = p.role_id
+-- WHERE u.id = 2 AND u.email = 'heyyejayy1@gmail.com';
+
+UPDATE public.profiles
+SET role_id = 2
+WHERE user_id = '35dcf280-c098-483a-91da-7e96662efc3b'
+  AND role_id = 4
+  AND email = 'heyyejayy1@gmail.com';
+
+-- After: conflicts should be 0.
+```

@@ -1,4 +1,5 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { APP_ROLES, requireOperationalRole } from "../authz";
@@ -7,6 +8,22 @@ import type { TrpcContext } from "./context";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
+  errorFormatter({ shape, error }) {
+    const causeMessage = error.cause instanceof Error ? error.cause.message : undefined;
+    if (causeMessage || /^Failed query:/i.test(error.message)) {
+      console.error("[trpc]", {
+        code: shape.data.code,
+        path: shape.data.path,
+        causeType: error.cause instanceof Error ? error.cause.name : typeof error.cause,
+        // Log truncated cause for operators; never return SQL to clients.
+        causePreview: causeMessage?.slice(0, 240) ?? error.message.slice(0, 240),
+      });
+    }
+    return {
+      ...shape,
+      message: toUserFacingErrorMessage(shape.message),
+    };
+  },
 });
 
 export const router = t.router;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  applicationRoleToPublicRoleName,
   matchesPublicRegistrationIdentity,
+  publicRoleNameToApplicationRole,
   resolveAuthIdentityMapping,
   resolvePublicRegistrationIdentity,
 } from "./authIdentity";
@@ -96,5 +98,24 @@ describe("verified Auth identity mapping", () => {
     expect(resolveAuthIdentityMapping(authUserId, [user], [{ roleName: "system_admin" }]))
       .toEqual({ status: "application_role_mapping_conflict", user: null });
     expect(user.role).toBe("buyer");
+  });
+
+  it.each([
+    ["buyer", "seller"],
+    ["seller", "buyer"],
+    ["admin", "system_admin"],
+    ["superadmin", "coop_officer"],
+  ] as const)("flags login conflict when application %s disagrees with profile %s", (applicationRole, profileRole) => {
+    expect(resolveAuthIdentityMapping(authUserId, [appUser(applicationRole)], [{ roleName: profileRole }]).status)
+      .toBe("application_role_mapping_conflict");
+  });
+
+  it("maps every application role to a canonical public role and back", () => {
+    expect(applicationRoleToPublicRoleName("buyer")).toBe("buyer");
+    expect(applicationRoleToPublicRoleName("seller")).toBe("seller");
+    expect(applicationRoleToPublicRoleName("admin")).toBe("coop_officer");
+    expect(applicationRoleToPublicRoleName("superadmin")).toBe("system_admin");
+    expect(publicRoleNameToApplicationRole("coop_officer")).toBe("admin");
+    expect(publicRoleNameToApplicationRole("system_admin")).toBe("superadmin");
   });
 });
