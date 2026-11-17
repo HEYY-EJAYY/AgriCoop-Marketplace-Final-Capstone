@@ -104,10 +104,12 @@ SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profi
 
 | Item | Value |
 |------|-------|
-| Commit | _(pending this ship)_ |
-| Production | _(pending)_ |
-| readyState | _(pending)_ |
+| Commit | `9b6f632` |
+| Production | `dpl_PjFcxqmgPFSBtFiuJafGy6cjz4WL` |
+| readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
+| Smoke | `/` **200**; `/api/health` `{"status":"ok","database":"available"}`; `marketplace.list` returns distinct `object/public` image URLs (no hero); Storage object URLs **200** |
+| Runtime logs | Clean on this production deployment after promote (preview alias briefly lacked `DATABASE_URL` — fixed by production-target deploy) |
 
 ---
 

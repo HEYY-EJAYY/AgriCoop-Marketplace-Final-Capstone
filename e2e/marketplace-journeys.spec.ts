@@ -87,8 +87,8 @@ test.describe("public marketplace journeys", () => {
     await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
     const images = page.locator('[data-testid="product-image"]');
-    const count = await images.count();
-    test.skip(count < 2, "Need at least two marketplace listings with product images");
+    await expect(images.first()).toBeVisible({ timeout: 30_000 });
+    await expect(images.nth(1)).toBeVisible({ timeout: 30_000 });
     const srcA = await images.nth(0).getAttribute("data-image-src");
     const srcB = await images.nth(1).getAttribute("data-image-src");
     expect(srcA).toBeTruthy();
