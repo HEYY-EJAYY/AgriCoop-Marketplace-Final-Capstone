@@ -1,37 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getDb: vi.fn(),
-  withRequestDatabaseScope: vi.fn(),
+  pingDatabase: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
-  getDb: mocks.getDb,
-  withRequestDatabaseScope: mocks.withRequestDatabaseScope,
+  pingDatabase: mocks.pingDatabase,
 }));
 
 import { getHealthStatus } from "./health";
 
 describe("database health check", () => {
   beforeEach(() => {
-    mocks.execute.mockReset();
-    mocks.getDb.mockReset();
-    mocks.withRequestDatabaseScope.mockReset();
-    mocks.getDb.mockResolvedValue({ execute: mocks.execute });
-    mocks.withRequestDatabaseScope.mockImplementation((_authUserId, callback) => callback());
+    mocks.pingDatabase.mockReset();
   });
 
-  it("reports database availability after a read-only query under the anonymous role", async () => {
-    mocks.execute.mockResolvedValue({ rows: [{ "?column?": 1 }] });
+  it("reports database availability after a lightweight connectivity probe", async () => {
+    mocks.pingDatabase.mockResolvedValue(undefined);
 
     await expect(getHealthStatus()).resolves.toEqual({ status: "ok", database: "available" });
-    expect(mocks.withRequestDatabaseScope).toHaveBeenCalledWith(null, expect.any(Function));
+    expect(mocks.pingDatabase).toHaveBeenCalledOnce();
   });
 
   it("returns a sanitized degraded status when the database is unavailable", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.withRequestDatabaseScope.mockRejectedValue(new Error("details must not be exposed"));
+    mocks.pingDatabase.mockRejectedValue(new Error("details must not be exposed"));
 
     await expect(getHealthStatus()).resolves.toEqual({ status: "degraded", database: "unavailable" });
     expect(errorSpy).toHaveBeenCalledWith("[health] Database readiness check failed", { errorType: "Error" });

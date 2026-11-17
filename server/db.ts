@@ -113,6 +113,12 @@ export async function getAdminDb() {
   return _seedDb;
 }
 
+/** Lightweight connectivity probe without request-scoped RLS GUC setup. */
+export async function pingDatabase() {
+  if (!_db) throw new Error("DATABASE_URL is required for application database access.");
+  await _db.execute(sql`select 1`);
+}
+
 export async function getDb(): Promise<RootTransaction> {
   const db = requestDatabase.getStore();
   if (!db) throw new Error("A request-scoped PostgreSQL transaction is required.");
