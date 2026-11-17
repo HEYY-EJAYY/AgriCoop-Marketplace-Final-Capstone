@@ -35,11 +35,26 @@ test.describe("public marketplace journeys", () => {
     }
   });
 
-  test("marketplace search filter and sort in URL", async ({ page }) => {
-    await page.goto("/marketplace?q=rice&sort=price_desc&page=1");
+  test("marketplace search filter and sort in URL", async ({ page }, testInfo) => {
+    await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(/q=rice/i);
-    await expect(page).toHaveURL(/sort=price_desc/i);
+
+    const isMobile = testInfo.project.name.startsWith("mobile");
+    if (isMobile) {
+      await page.getByRole("button", { name: /Filters & sort/i }).click();
+      await expect(page.getByRole("heading", { name: /^Filters$/i })).toBeVisible();
+    }
+
+    const search = page.getByPlaceholder(/Produce, category, farmer/i).filter({ visible: true }).first();
+    await search.fill("rice");
+    await expect(page).toHaveURL(/q=rice/i, { timeout: 15_000 });
+
+    const sort = page
+      .locator("#marketplace-sort-desktop, #marketplace-mobile-sort")
+      .filter({ visible: true })
+      .first();
+    await sort.selectOption("price_desc");
+    await expect(page).toHaveURL(/sort=price_desc/i, { timeout: 15_000 });
     await assertNoHorizontalOverflow(page);
   });
 

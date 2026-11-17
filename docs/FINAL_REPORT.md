@@ -63,14 +63,12 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 
 ## Quality gates (post-fix)
 
-Recorded after reconciliation:
-
 | Gate | Result |
 |------|--------|
-| `pnpm check` / `lint` | pass (after App + auth select fixes) |
-| `pnpm test` | run in ship step |
-| `pnpm build` | run in ship step |
-| Playwright | run against production after READY |
+| `pnpm check` / `lint` | **pass** |
+| `pnpm test` | **295 passed**, 2 skipped (43 files); includes `inboxAccess.test.ts` |
+| `pnpm build` | **pass** |
+| Playwright (prod) | **12/12 passed** (mobile-360 + desktop-1280); mobile opens Filters sheet before search/sort |
 
 ---
 
@@ -78,11 +76,12 @@ Recorded after reconciliation:
 
 | Item | Value |
 |------|-------|
-| Commit | `a04345e` |
-| Production | `dpl_HF54L7wTcXo8w1yff6QnAtQYMf3U` |
-| readyState | **READY** |
+| Commit | see latest push on `finish/agricoop-complete` |
+| Prior READY | `dpl_HF54L7wTcXo8w1yff6QnAtQYMf3U` @ `a04345e` |
+| Follow-up | redeploy after Playwright URL-filter hardening + FINAL_REPORT |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/`, `/marketplace`, `/messages`, `/profile` 200; `/api/health` ok |
+| Smoke | `/`, `/marketplace`, `/messages`, `/profile` **200**; `/api/health` `{"status":"ok","database":"available"}` |
+| Runtime logs | No errors on READY deployment window |
 
 ---
 
