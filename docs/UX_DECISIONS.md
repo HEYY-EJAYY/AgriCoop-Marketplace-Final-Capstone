@@ -1,90 +1,57 @@
-# AgriCoop UX decisions (refinement pass)
+# AgriCoop UX decisions (UI/UX refinement)
 
 Branch: `finish/agricoop-complete`  
-Date: 2026-11-17
+Updated: 2026-11-17
 
-Decisions made where the mission left room for judgment. Conventions follow Shopee/Lazada where they fit a cooperative F2F marketplace.
+## Navigation maps
 
----
-
-## Navigation maps (final)
-
-### Logged out (desktop)
+### Logged out (desktop, single row)
 | Zone | Items |
 |------|--------|
 | Left | Logo + AgriCoop title |
 | Center | Marketplace · How It Works · Support |
 | Right | Login · Join AgriCoop (primary) |
 
-**Removed from logged-out header:** search bar, cart/basket icon, logout, account menus.
+No search bar, cart, account menu, or log out when logged out.
 
 ### Buyer
-Center: Marketplace · My Orders · Messages · Support  
-Right: Cart (badge area) · Notifications · `Name | Buyer` profile menu
+Marketplace · My Orders · Messages · Support | cart + notifications + `Name | Buyer` menu
 
 ### Seller
-Center: Marketplace · Seller Center · Messages · Support  
-Right: Notifications · `Name | Seller` profile menu
+Marketplace · Seller Center · Messages · Support | notifications + `Name | Seller` menu
 
 ### Officer Admin (`admin`)
-Center: Dashboard · Moderation · Orders · Users · Support & Tickets  
-Right: Notifications · `Name | Officer Admin` profile menu
+Dashboard · Moderation · Orders · Users · Support & Tickets | notifications + `Name | Officer Admin` menu
 
 ### SuperAdmin
-Center: Dashboard · Users & Roles · Moderation · Orders · System · Audit Logs  
-Right: Notifications · `Name | SuperAdmin` profile menu
+Dashboard · Users & Roles · Moderation · Orders · System · Audit Logs | notifications + `Name | SuperAdmin` menu
 
-### Profile menu (all signed-in roles)
-1. My Profile (`/profile`)  
-2. My Workspace (`/dashboard`)  
-3. Messages (`/messages`)  
-4. Support (`/support`)  
-5. —  
-6. Log Out (last)
+Profile menu (all roles): My Profile · My Workspace · Messages · Support · Log Out (last).
 
-### Mobile bottom nav
-- Guests: Home · Browse · Join  
-- Buyer: Home · Browse · Cart · Orders · Account  
-- Seller: Home · Browse · Center · Messages · Account  
-- Admin/SuperAdmin: Home · Dash · Tickets · Messages · Account  
-
----
+Mobile: hamburger drawer + bottom nav (role-aware). Guests get Home / Browse / Join.
 
 ## Messaging vs Support vs Tickets
 
-| Channel | Route | Data | Who |
-|---------|-------|------|-----|
-| Order / trade Messages | `/messages` | `conversations` with seller/order/product/quotation | Buyer ↔ Seller only |
-| Platform Support | `/support` | `conversations` with no seller/order/product/quotation | User ↔ Officer Admin / SuperAdmin |
-| Tickets | `/support-tickets` | `supportTickets` + messages | Formal tracked cases |
+| System | Route | Data | Who |
+|--------|-------|------|-----|
+| Order inquiries / Messages | `/messages` | `conversations` with seller/order/product/quotation | Buyer ↔ seller only |
+| Platform Support | `/support` | `conversations` with no seller/order/product/quotation | User ↔ officers |
+| Tickets | `/support-tickets` | `supportTickets` | User + staff queue |
 
-**Access decision:** Officers do **not** read private buyer–seller order chats. Platform support threads remain visible to officers. Soft-delete / pin / archive / read state lives in `threadStates` (per user) for conversations; ticket pin/archive/delete use ticket columns.
+Per-user pin / archive / read / soft-delete live in `agricoop_app.threadStates` (`channel` = `conversation` | `ticket` | `support`). One user’s archive or delete never hides the thread for the other participant.
 
----
+## Privacy assumption (trade chats)
+
+Officers and SuperAdmins **cannot** read private buyer–seller order chats via normal inbox APIs. Access is limited to the buyer and seller on the thread (`canAccessConversation`). There is **no silent admin bypass**. An explicit dispute escalation path (logged) is not implemented yet; until it exists, staff must use Support/Tickets channels only.
 
 ## Marketplace
 
-- Search, category, cooperative, and sort live on the marketplace page (URL query params), not in the global header.
-- Sort options: Price low→high, Price high→low, Stock (most available), By Cooperative, Category.
-- Page size 24 with `page` in the URL.
-
----
+URL params: `q`, `category`, `cooperativeId`, `sort` (`price_asc` | `price_desc` | `stock_desc` | `cooperative` | `category`), `page` (24 per page). Price sorts hit the API; other sorts are client-side after fetch.
 
 ## Hero
 
-- Glass value card on the **right** on desktop; stacked under hero content on mobile.
-- Hero H1 has **no** entrance animation (LCP-safe).
+Glass value card with CTA sits on the **right** on desktop and stacks under the hero on mobile. Hero H1 has **no** opacity/entrance animation.
 
----
+## Workspace
 
-## Workspace fade
-
-- Cause: full-screen loading overlays + translucent sticky headers.
-- Fix: solid `#fffdf8` headers; in-layout `min-h-[40vh]` loaders; sticky Save/Cancel on profile/onboarding.
-
----
-
-## Profile
-
-- Single `/profile` for all roles: display name, contact, address, photo, password change.
-- Email and role are read-only; role label uses Officer Admin for `admin`.
+Solid `#f8f5ee` / `#fffdf8` backgrounds (no translucent fade). Workspace mains use `shellContainerClass` (full width to 1440px). Profile / onboarding Save actions use sticky bars.

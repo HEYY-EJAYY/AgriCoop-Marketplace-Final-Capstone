@@ -3247,3 +3247,33 @@ WHERE user_id = '35dcf280-c098-483a-91da-7e96662efc3b'
 -- Verification: to_regclass('agricoop_app."threadStates"') is not null;
 -- supportTickets has archivedAt, deletedAt, pinnedAt.
 ```
+
+## BLOCK 12: `20261117180000_ux_inbox_and_indexes.sql` (applied via Supabase MCP as `ux_inbox_and_indexes`)
+
+```sql
+-- PURPOSE: Per-user inbox state + soft-delete columns + marketplace indexes.
+-- IDEMPOTENT / ADDITIVE ONLY. Verified: to_regclass('agricoop_app."threadStates"') present.
+
+CREATE TABLE IF NOT EXISTS agricoop_app."threadStates" (
+  id serial PRIMARY KEY,
+  "userId" integer NOT NULL REFERENCES agricoop_app.users(id),
+  channel varchar(32) NOT NULL,
+  "threadId" integer NOT NULL,
+  "isRead" integer NOT NULL DEFAULT 0,
+  "pinnedAt" timestamp without time zone,
+  "archivedAt" timestamp without time zone,
+  "deletedAt" timestamp without time zone,
+  "createdAt" timestamp without time zone NOT NULL DEFAULT now(),
+  "updatedAt" timestamp without time zone NOT NULL DEFAULT now(),
+  CONSTRAINT thread_states_channel_check CHECK (channel IN ('conversation', 'ticket', 'support')),
+  CONSTRAINT thread_states_user_channel_thread_uidx UNIQUE ("userId", channel, "threadId")
+);
+
+-- Plus ADD COLUMN IF NOT EXISTS archivedAt/deletedAt on conversations, notifications;
+-- pinnedAt/archivedAt/deletedAt on supportTickets; product/conversation indexes;
+-- RLS policy agricoop_thread_states_own for authenticated.
+```
+
+Verification (2026-11-17):
+- `to_regclass('agricoop_app."threadStates"')` ? `agricoop_app."threadStates"`
+- conversations / supportTickets soft-delete columns present
