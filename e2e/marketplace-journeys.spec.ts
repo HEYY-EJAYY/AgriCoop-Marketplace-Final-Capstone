@@ -35,19 +35,23 @@ test.describe("public marketplace journeys", () => {
     }
   });
 
-  test("marketplace search filter and sort in URL", async ({ page }) => {
+  test("marketplace search filter and sort in URL", async ({ page }, testInfo) => {
     await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
-    const search = page.getByPlaceholder(/Search produce/i).first();
-    if (await search.isVisible()) {
-      await search.fill("rice");
-      await search.press("Enter");
-      await expect(page).toHaveURL(/q=rice/i);
+
+    const isMobile = testInfo.project.name.startsWith("mobile");
+    if (isMobile) {
+      await page.getByRole("button", { name: /Filters & sort/i }).click();
+      await expect(page.getByRole("heading", { name: /^Filters$/i })).toBeVisible();
     }
-    const sort = page.locator("select").filter({ hasText: /Price|Stock|Category|Cooperative/i }).first();
-    if (await sort.count()) {
-      await sort.selectOption({ index: 1 }).catch(() => undefined);
-    }
+
+    const search = page.getByPlaceholder(/Produce, category, farmer/i).locator("visible=true").first();
+    await search.fill("rice");
+    await expect(page).toHaveURL(/q=rice/i, { timeout: 15_000 });
+
+    const sort = page.locator("select").locator("visible=true").filter({ hasText: /Price|Stock|Newest/i }).first();
+    await sort.selectOption({ index: 1 });
+    await expect(page).toHaveURL(/sort=/i, { timeout: 15_000 });
   });
 
   test("search, product detail, and auth entrypoints work", async ({ page }) => {

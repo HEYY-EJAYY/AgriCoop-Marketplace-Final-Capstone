@@ -76,7 +76,13 @@ Recorded after reconciliation:
 
 ## Deploy
 
-Updated after push: production deployment id + READY status + smoke notes.
+| Item | Value |
+|------|-------|
+| Commit | `a04345e` |
+| Production | `dpl_HF54L7wTcXo8w1yff6QnAtQYMf3U` |
+| readyState | **READY** |
+| Alias | https://agricoop-marketplace-final-capstone.vercel.app |
+| Smoke | `/`, `/marketplace`, `/messages`, `/profile` 200; `/api/health` ok |
 
 ---
 
