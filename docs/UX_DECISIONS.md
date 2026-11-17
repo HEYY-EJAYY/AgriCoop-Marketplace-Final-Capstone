@@ -50,8 +50,21 @@ URL params: `q`, `category`, `cooperativeId`, `sort` (`price_asc` | `price_desc`
 
 ## Hero
 
-Glass value card with CTA sits on the **right** on desktop and stacks under the hero on mobile. Hero H1 has **no** opacity/entrance animation.
+**Root causes fixed (2026-11-17):**
+1. Glass card covered the image because it was a large absolute panel (`~22rem`) over an overflowing hero image.
+2. Image overlapped text because desktop media used `absolute … right-[-8vw] w-[70vw]` outside the grid column.
+3. Layout felt narrow / uneven because content capped at `1440px` while marketplace “full-bleed” used negative margins inside the padded shell (not true viewport bands).
+
+**Current rules:**
+- Hero is a real `lg:grid-cols-2` with a contained `aspect-*` image (`object-cover`); no vw overflow, no absolute bleed image.
+- Glass badge is compact (`≤20rem`, ~bottom-right inset `24px` desktop / stacked under image on mobile), frosted with solid fallback, real listing count + featured name from `marketplace.list`.
+- Primary CTAs live in the text column at every breakpoint so the badge never owns the only path to Marketplace.
+- Hero H1 has **no** opacity/entrance animation.
+
+## Layout width
+
+One shared token: CSS `--agri-content-max: 100rem` (1600px) + `.agri-shell` / `shellContainerClass`. Full-bleed bands use `.agri-full-bleed` / `data-full-bleed` with an inner `.agri-shell`. Navbar and footer use the same shell. Avoid `100vw` for horizontal sizing (`overflow-x: clip` on `html`/`body` as a guard).
 
 ## Workspace
 
-Solid `#f8f5ee` / `#fffdf8` backgrounds (no translucent fade). Workspace mains use `shellContainerClass` (full width to 1440px). Profile / onboarding Save actions use sticky bars.
+Solid `#f8f5ee` / `#fffdf8` backgrounds (no translucent fade). Workspace mains use `shellContainerClass`. Profile / onboarding Save actions use sticky bars.

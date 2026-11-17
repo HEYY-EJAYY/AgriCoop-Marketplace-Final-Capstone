@@ -100,3 +100,16 @@ Desktop LCP is **under 1s**. Further mobile-lab gains would need deferring Supab
 ## UX refinement pass (2026-11-17)
 
 Additive indexes on `products` (category, priceCents, stockQty, cooperativeId) and `conversations` (order/buyer/seller). Marketplace pagination (24/page) + URL filters reduce client work. Hero H1 has no animation; glass CTA is CSS-only. Lighthouse before numbers remain the table above; after this pass, re-check home / marketplace / product on Production once deploy `READY` — expect parity or better FCP (solid headers, no header search on public pages).
+
+## Hero layout pass (2026-11-17)
+
+| Guardrail | Before (layout bugs) | After |
+|-----------|----------------------|-------|
+| Hero image | Absolute `70vw` / `-8vw` bleed → overlap + risk of horizontal scroll | Contained column `aspect-*` + `object-cover` |
+| Glass UI | Large frosted panel over image | Compact badge ≤20rem, bottom-right inset |
+| Shell | `max-w-[1440px]` + negative-margin “full-bleed” | `--agri-content-max: 1600px` + `.agri-full-bleed` bands |
+| LCP text | Unchanged (no H1 entrance animation) | Unchanged |
+| Hero image preload / dimensions | Present | Present (`width`/`height`, `srcset`, `fetchPriority=high`) |
+| CLS risk | Absolute overflow image could shift perceived layout | Grid columns + fixed aspect reduce shift |
+
+Local Playwright (375–1920): no `documentElement` horizontal overflow; axe home serious/critical = 0. Re-measure Lighthouse LCP/CLS on Production after READY — target equal or better than After table (home mobile LCP **3.1s**, CLS **0**).

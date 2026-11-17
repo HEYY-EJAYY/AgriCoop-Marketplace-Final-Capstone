@@ -68,7 +68,15 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 | `pnpm check` / `lint` | **pass** |
 | `pnpm test` | **295 passed**, 2 skipped (43 files); includes `inboxAccess.test.ts` |
 | `pnpm build` | **pass** |
-| Playwright (prod) | **12/12 passed** (mobile-360 + desktop-1280); mobile opens Filters sheet before search/sort |
+| Playwright hero layout (local) | **8/8** across 360/768/1280/1920 — overflow, padding symmetry, badge placement, axe AA |
+
+### Hero / width root causes
+
+| Issue | Root cause | Fix |
+|-------|------------|-----|
+| Glass covers image | Large absolute glass panel over hero media | Compact `hero-glass-badge` bottom-right |
+| Image overlaps content / uneven gutters | Absolute `w-[70vw] right-[-8vw]` media outside grid | True `lg:grid-cols-2` contained image |
+| Not full width | `1440px` cap + negative-margin bleed inside padded shell | `--agri-content-max: 1600px`, `.agri-full-bleed` + inner `.agri-shell` |
 
 ---
 
@@ -76,13 +84,9 @@ See `docs/UX_DECISIONS.md` (nav maps, three inbox systems, trade-chat privacy, m
 
 | Item | Value |
 |------|-------|
-| Commit | `4739552` |
-| Production | `dpl_EhM8Cgrate7mNSqmyuqLvyirwFfL` |
-| readyState | **READY** |
+| Prior READY | `dpl_EhM8Cgrate7mNSqmyuqLvyirwFfL` @ `4739552` |
+| Follow-up | Hero layout + shell width deploy (see latest push) |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/`, `/marketplace`, `/messages`, `/profile` **200**; `/api/health` `{"status":"ok","database":"available"}` |
-| Playwright | **12/12** against production alias |
-| Runtime logs | No errors attributed to this deployment; older `/api/index` 30s timeouts are historical (other deploy ids) |
 
 ---
 
