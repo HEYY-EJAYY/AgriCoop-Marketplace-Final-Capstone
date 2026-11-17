@@ -642,7 +642,6 @@ export default function Marketplace() {
                   const { product, sellerName, cooperativeName } = listing;
                   return (
                     <article key={product.id} className="agri-card flex flex-col overflow-hidden">
-                      <div className="h-1.5 bg-gradient-to-r from-[#6d9d4f] via-[#b5cc76] to-[#e8bc69]" />
                       <ListingCardImage product={product} eager={index < 6} />
                       <div className="flex flex-1 flex-col p-3 sm:p-4">
                         <div className="flex items-start justify-between gap-2">
