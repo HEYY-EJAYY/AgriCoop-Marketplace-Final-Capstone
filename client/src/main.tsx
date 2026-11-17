@@ -78,13 +78,15 @@ const trpcClient = trpc.createClient({
   })],
 });
 
-void authSession.waitUntilInitialized().then(() => {
-  logAuthDiagnostic("app_render", { sessionInitialized: true, accessTokenPresent: authSession.getSnapshot().accessTokenPresent });
-  createRoot(document.getElementById("root")!).render(
-    <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </trpc.Provider>,
-  );
+// Paint the shell immediately; tRPC headers still await authSession initialization.
+logAuthDiagnostic("app_render", {
+  sessionInitialized: authSession.getSnapshot().initialized,
+  accessTokenPresent: authSession.getSnapshot().accessTokenPresent,
 });
+createRoot(document.getElementById("root")!).render(
+  <trpc.Provider client={trpcClient} queryClient={queryClient}>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </trpc.Provider>,
+);
