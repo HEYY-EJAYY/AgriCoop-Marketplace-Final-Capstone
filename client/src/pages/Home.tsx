@@ -1,6 +1,7 @@
 import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ArrowRight, BadgeCheck, Handshake, Layers3, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 
 const heroSrc = "/images/hero-banner-1200.webp";
@@ -8,7 +9,22 @@ const heroSrcSet = "/images/hero-banner-800.webp 800w, /images/hero-banner-1200.
 const heroSizes = "(max-width: 1023px) 100vw, 50vw";
 
 export default function Home() {
+  // Defer marketplace snapshot until after first paint so it cannot contend with LCP.
+  const [snapshotReady, setSnapshotReady] = useState(false);
+  useEffect(() => {
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof win.requestIdleCallback === "function") {
+      const id = win.requestIdleCallback(() => setSnapshotReady(true), { timeout: 1200 });
+      return () => win.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(() => setSnapshotReady(true), 0);
+    return () => window.clearTimeout(t);
+  }, []);
   const { data: listings = [] } = trpc.marketplace.list.useQuery(undefined, {
+    enabled: snapshotReady,
     staleTime: 60_000,
   });
   const activeListingCount = listings.length;
@@ -20,7 +36,7 @@ export default function Home() {
         <section className="agri-full-bleed relative overflow-hidden bg-[#e5efe0]" data-testid="home-hero" data-full-bleed>
           <div className="grain absolute inset-0 opacity-30" aria-hidden />
           <div
-            className={`${shellContainerClass} relative grid items-center gap-8 py-12 lg:min-h-[560px] lg:grid-cols-2 lg:gap-10 lg:py-16`}
+            className={`${shellContainerClass} relative grid items-start gap-8 py-12 lg:min-h-[560px] lg:grid-cols-2 lg:gap-10 lg:py-16`}
           >
             <div className="relative z-10 flex flex-col justify-center" data-testid="hero-text">
               <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#c7dabc] bg-[#f5f9f1] px-3 py-1.5 text-xs font-extrabold tracking-[.08em] text-[#2e6a41]">
@@ -63,26 +79,23 @@ export default function Home() {
               </div>
 
               <aside
-                className="hero-glass-badge relative z-10 mt-4 lg:absolute lg:bottom-[var(--agri-hero-badge-inset-lg)] lg:right-[var(--agri-hero-badge-inset-lg)] lg:mt-0 lg:max-w-[min(20rem,42%)]"
+                className="hero-glass-badge relative z-10 mt-4 min-h-[9.5rem] lg:absolute lg:bottom-[var(--agri-hero-badge-inset-lg)] lg:right-[var(--agri-hero-badge-inset-lg)] lg:mt-0 lg:max-w-[min(20rem,42%)]"
                 data-testid="hero-glass-badge"
                 aria-label="Marketplace snapshot"
               >
                 <p className="text-[0.7rem] font-extrabold uppercase tracking-[.12em] text-[#355445]">Live marketplace</p>
-                <p className="mt-1 font-display text-xl font-bold leading-tight text-[#163b2a]">
-                  {activeListingCount === 0
-                    ? "Fresh listings open soon"
-                    : `${activeListingCount} active listing${activeListingCount === 1 ? "" : "s"}`}
+                <p className="mt-1 font-display text-xl font-bold leading-tight text-[#163b2a]" aria-live="polite">
+                  {!snapshotReady
+                    ? "Checking fresh listings…"
+                    : activeListingCount === 0
+                      ? "Fresh listings open soon"
+                      : `${activeListingCount} active listing${activeListingCount === 1 ? "" : "s"}`}
                 </p>
-                {featured ? (
-                  <p className="mt-1 line-clamp-2 text-sm leading-5 text-[var(--agri-glass-muted)]">
-                    Featured: {featured.product.name}
-                    {featured.cooperativeName ? ` · ${featured.cooperativeName}` : ""}
-                  </p>
-                ) : (
-                  <p className="mt-1 text-sm leading-5 text-[var(--agri-glass-muted)]">
-                    Compare harvest prices with cooperative oversight.
-                  </p>
-                )}
+                <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm leading-5 text-[var(--agri-glass-muted)]">
+                  {featured
+                    ? `Featured: ${featured.product.name}${featured.cooperativeName ? ` · ${featured.cooperativeName}` : ""}`
+                    : "Compare harvest prices with cooperative oversight."}
+                </p>
                 <Link
                   href="/marketplace"
                   className="mt-3 inline-flex min-h-11 items-center gap-1 text-sm font-bold text-[#1f5a3c] underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#eab75d]"

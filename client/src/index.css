@@ -77,7 +77,16 @@ button { cursor: pointer; }
   }
 }
 
-.font-display { font-family: "Fraunces", Georgia, serif; }
+/* Metric-matched fallback reduces CLS when Fraunces is optional/late */
+@font-face {
+  font-family: "Fraunces Fallback";
+  src: local("Georgia");
+  size-adjust: 104%;
+  ascent-override: 90%;
+  descent-override: 22%;
+  line-gap-override: 0%;
+}
+.font-display { font-family: "Fraunces", "Fraunces Fallback", Georgia, serif; }
 .grain {
   background-image: radial-gradient(rgba(29, 70, 48, 0.1) 0.7px, transparent 0.7px);
   background-size: 10px 10px;
