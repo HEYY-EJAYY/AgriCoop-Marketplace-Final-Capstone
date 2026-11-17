@@ -34,6 +34,7 @@ import { createPublicAuthClient, supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
 import { normalizeCooperativeName } from "./cooperativeNames";
 import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, PRODUCT_UNITS } from "../shared/productOptions";
+import { isProfileImageSizeAllowed, MAX_PROFILE_IMAGE_SIZE_BYTES } from "../shared/profileImage";
 import {
   assertPaymentOptionSelection,
   getPaymentOptionCooperativeId,
@@ -494,21 +495,31 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().min(1).max(255),
         contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-        base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
+        base64: z.string().min(1).max(Math.ceil(MAX_PROFILE_IMAGE_SIZE_BYTES / 3) * 4),
       }))
       .mutation(async ({ ctx, input }) => {
         if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "The selected image file is invalid." });
         }
         const bytes = Buffer.from(input.base64, "base64");
-        if (!isProductImageSizeAllowed(bytes.length)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Profile photos must be 3 MB or less." });
+        if (!isProfileImageSizeAllowed(bytes.length)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Profile photos must be 2 MB or less after compression." });
         }
         if (!matchesImageContentTypeSignature(bytes, input.contentType)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image." });
         }
-        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "profile";
-        const uploaded = await storagePut(`profiles/${ctx.user.id}/${Date.now()}-${safeName}`, bytes, input.contentType);
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "profile.jpg";
+        const folder = ctx.user.openId || String(ctx.user.id);
+        // Path must stay under the caller's auth uid folder (storage policies + authz tests).
+        if (!folder || folder.includes("/") || folder.includes("..")) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Profile photo path is invalid." });
+        }
+        const uploaded = await storagePut(
+          `${folder}/${Date.now()}-${safeName}`,
+          bytes,
+          input.contentType,
+          { bucket: "avatars", public: true },
+        );
         const db = await dbOrThrow();
         await db.update(users).set({ profileImageUrl: uploaded.url }).where(eq(users.id, ctx.user.id));
         return { url: uploaded.url };

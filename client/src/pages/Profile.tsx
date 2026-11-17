@@ -1,5 +1,6 @@
 import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { blobToBase64, prepareProfileImage } from "@/lib/profileImage";
 import { roleDisplayLabel } from "@/lib/roleLabels";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
@@ -7,19 +8,6 @@ import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { Loader2 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result ?? "");
-      const base64 = result.includes(",") ? result.split(",")[1] : result;
-      resolve(base64);
-    };
-    reader.onerror = () => reject(new Error("Could not read the selected file."));
-    reader.readAsDataURL(file);
-  });
-}
 
 export default function Profile() {
   const { user, loading, refresh } = useAuth();
@@ -54,20 +42,16 @@ export default function Profile() {
 
   const onPickPhoto = async (file: File | null) => {
     if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      toast.error("Use a JPEG, PNG, or WebP image.");
-      return;
-    }
-    if (file.size > 3 * 1024 * 1024) {
-      toast.error("Profile photos must be 3 MB or less.");
-      return;
-    }
     setBusy(true);
+    let localPreview: string | null = null;
     try {
-      const base64 = await fileToBase64(file);
+      const prepared = await prepareProfileImage(file);
+      localPreview = prepared.previewUrl;
+      setPreview(prepared.previewUrl);
+      const base64 = await blobToBase64(prepared.blob);
       const result = await uploadPhoto.mutateAsync({
-        fileName: file.name,
-        contentType: file.type as "image/jpeg" | "image/png" | "image/webp",
+        fileName: prepared.fileName,
+        contentType: prepared.contentType,
         base64,
       });
       setPreview(result.url);
@@ -75,8 +59,10 @@ export default function Profile() {
       await refresh();
       toast.success("Profile photo updated.");
     } catch (error) {
+      setPreview(user.profileImageUrl ?? null);
       toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Upload failed."));
     } finally {
+      if (localPreview) URL.revokeObjectURL(localPreview);
       setBusy(false);
     }
   };
@@ -123,21 +109,45 @@ export default function Profile() {
     }
   };
 
+  const initials = (name.trim().charAt(0) || "?").toUpperCase();
+
   return (
     <>
       <WorkspaceHeader title="My Profile" description="Update the details that appear in your account menu and message threads." />
       <main className={`${shellContainerClass} pb-28 pt-8`}>
         <form id="profile-form" onSubmit={onSubmit} className="agri-card mx-auto max-w-3xl p-6 sm:p-8">
           <div className="flex flex-wrap items-center gap-4">
-            <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-[#e8f0e4] text-2xl font-bold text-[#1f5a3c]">
-              {preview ? <img src={preview} alt="" width={96} height={96} className="h-full w-full object-cover" /> : (name.trim().charAt(0) || "?").toUpperCase()}
+            <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-[#e8f0e4] text-2xl font-bold text-[#1f5a3c]" data-testid="profile-avatar">
+              {preview ? (
+                <img
+                  src={preview}
+                  alt=""
+                  width={96}
+                  height={96}
+                  className="h-full w-full object-cover"
+                  onError={() => setPreview(null)}
+                />
+              ) : (
+                initials
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <label className="agri-ghost min-h-11 cursor-pointer px-4 text-sm">
                 Upload photo
-                <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={e => void onPickPhoto(e.target.files?.[0] ?? null)} />
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  data-testid="profile-photo-input"
+                  disabled={busy}
+                  onChange={e => void onPickPhoto(e.target.files?.[0] ?? null)}
+                />
               </label>
-              {preview && <button type="button" className="agri-ghost min-h-11 text-sm text-[#a34838]" onClick={() => void removePhoto()}>Remove</button>}
+              {preview && (
+                <button type="button" className="agri-ghost min-h-11 text-sm text-[#a34838]" disabled={busy} onClick={() => void removePhoto()}>
+                  Remove
+                </button>
+              )}
             </div>
           </div>
 

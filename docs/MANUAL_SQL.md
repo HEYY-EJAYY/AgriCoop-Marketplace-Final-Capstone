@@ -3277,3 +3277,37 @@ CREATE TABLE IF NOT EXISTS agricoop_app."threadStates" (
 Verification (2026-11-17):
 - `to_regclass('agricoop_app."threadStates"')` ? `agricoop_app."threadStates"`
 - conversations / supportTickets soft-delete columns present
+
+## BLOCK 13: `20261117200000_avatars_and_profile_image_grants.sql` (applied via Supabase MCP as `avatars_and_profile_image_grants`)
+
+**Root cause (profile upload):** `authenticated` had SELECT-only on `agricoop_app.users."profileImageUrl"`, so Storage uploads succeeded (service role) but the subsequent `UPDATE users SET profileImageUrl` failed.
+
+`sql
+-- PURPOSE: Grant profile photo column writes + public avatars bucket + owner-scoped policies.
+-- IDEMPOTENT / ADDITIVE ONLY.
+
+GRANT UPDATE ("profileImageUrl") ON TABLE agricoop_app.users TO authenticated;
+GRANT INSERT ("profileImageUrl") ON TABLE agricoop_app.users TO authenticated;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'avatars',
+  'avatars',
+  true,
+  2097152,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE
+SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- Policies (IF NOT EXISTS via DO blocks): avatars_public_read, avatars_owner_insert,
+-- avatars_owner_update, avatars_owner_delete — path prefix = auth.uid()::text.
+`
+
+Verification (2026-11-17):
+- `storage.buckets` contains `avatars` (public, 2 MB, jpeg/png/webp)
+- Policies `avatars_%` present on `storage.objects`
+- Column privileges: `authenticated` UPDATE/INSERT on `profileImageUrl`

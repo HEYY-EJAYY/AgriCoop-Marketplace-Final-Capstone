@@ -160,11 +160,17 @@ function NotificationBell() {
 function ProfileMenu({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [photoBroken, setPhotoBroken] = useState(false);
   const [location] = useLocation();
   useEffect(() => {
     setOpen(false);
   }, [location]);
+  useEffect(() => {
+    setPhotoBroken(false);
+  }, [user?.profileImageUrl]);
   if (!user) return null;
+  const showPhoto = Boolean(user.profileImageUrl) && !photoBroken;
+  const initials = (user.name?.trim().charAt(0) || "?").toUpperCase();
 
   const closeAnd = (action?: () => void) => {
     setOpen(false);
@@ -182,9 +188,28 @@ function ProfileMenu({ onNavigate }: { onNavigate?: () => void }) {
         className="inline-flex max-w-[min(100%,14rem)] min-h-11 items-center gap-1.5 rounded-xl border border-[#dce4d6] bg-white px-3 text-sm font-bold text-[#315640] hover:bg-[#edf3e9] sm:max-w-xs"
         aria-expanded={open}
         aria-haspopup="menu"
+        data-testid="nav-profile-menu"
         onClick={() => setOpen(value => !value)}
       >
-        <UserRound size={16} className="shrink-0" aria-hidden />
+        {showPhoto ? (
+          <img
+            src={user.profileImageUrl!}
+            alt=""
+            width={28}
+            height={28}
+            className="h-7 w-7 shrink-0 rounded-lg object-cover"
+            data-testid="nav-profile-photo"
+            onError={() => setPhotoBroken(true)}
+          />
+        ) : (
+          <span
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#e8f0e4] text-xs font-bold text-[#1f5a3c]"
+            aria-hidden
+            data-testid="nav-profile-fallback"
+          >
+            {initials}
+          </span>
+        )}
         <span className="truncate">{formatUserRoleChip(user.name, user.role)}</span>
         <ChevronDown size={16} className="shrink-0 opacity-70" aria-hidden />
       </button>
