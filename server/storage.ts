@@ -8,6 +8,7 @@ import {
   PROFILE_VERIFICATION_CONTENT_TYPES,
   PROFILE_VERIFICATION_MAX_BYTES,
 } from "../shared/profileVerification";
+import { SELLER_PAYMENT_QR_BUCKET } from "./paymentProofs";
 
 const DEFAULT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "product-images";
 const DEFAULT_SIGNED_URL_SECONDS = 300;
@@ -63,7 +64,9 @@ async function ensureBucket(bucketName: string, isPublic: boolean) {
     ? { maxBytes: PAYMENT_PROOF_MAX_BYTES, contentTypes: PAYMENT_PROOF_CONTENT_TYPES }
     : bucketName === PROFILE_VERIFICATION_BUCKET
       ? { maxBytes: PROFILE_VERIFICATION_MAX_BYTES, contentTypes: PROFILE_VERIFICATION_CONTENT_TYPES }
-      : null;
+      : bucketName === SELLER_PAYMENT_QR_BUCKET
+        ? { maxBytes: PAYMENT_PROOF_MAX_BYTES, contentTypes: PAYMENT_PROOF_CONTENT_TYPES }
+        : null;
   if (expectedPrivateBucket) {
     const allowedMimeTypes = existing.allowed_mime_types ?? [];
     if (existing.file_size_limit !== expectedPrivateBucket.maxBytes

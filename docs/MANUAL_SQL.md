@@ -3344,3 +3344,5 @@ GRANT SELECT ("fulfillmentMethod") ON TABLE agricoop_app.orders TO authenticated
 ```
 
 Verification (2026-11-17): `marketplace.list` returns 200 with `sellerHasOnlineQr` + listing flags.
+
+Postflight (same migration file): `has_column_privilege` asserts anon/authenticated SELECT on product flags, authenticated SELECT/UPDATE on seller QR account columns, anon SELECT only on `onlinePaymentQrPath` (not account name/number/label), and authenticated SELECT on `orders.fulfillmentMethod`.

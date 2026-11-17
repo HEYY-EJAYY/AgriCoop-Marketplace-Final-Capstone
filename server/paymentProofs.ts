@@ -216,11 +216,11 @@ export function sanitizePaymentProofFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "payment-proof";
 }
 
-export const SELLER_PAYMENT_QR_BUCKET = "product-images";
-export const SELLER_PAYMENT_QR_PREFIX = "seller-payment-qr";
+/** Private bucket; object keys are `{userId}/{file}` (service-role upload + signed read). */
+export const SELLER_PAYMENT_QR_BUCKET = "seller-payment-qr";
 
 export function sellerPaymentQrPrefix(userId: number) {
-  return `${SELLER_PAYMENT_QR_PREFIX}/${userId}/`;
+  return `${userId}/`;
 }
 
 export function isSellerPaymentQrKey(key: string, userId: number) {
@@ -233,4 +233,29 @@ export function isSellerPaymentQrKey(key: string, userId: number) {
     && !fileName.includes("\0")
     && fileName !== "."
     && fileName !== "..";
+}
+
+/** Who may see a seller's QR image URL and account fields. */
+export function canViewSellerOnlinePaymentDetails(
+  actor: { id: number; role: string },
+  sellerId: number,
+): boolean {
+  if (actor.role === "superadmin" || actor.role === "admin") return true;
+  if (actor.id === sellerId) return true;
+  if (actor.role === "buyer") return true;
+  return false;
+}
+
+/** Receipt storage path ownership: buyer folder under payment-proofs. */
+export function assertBuyerOwnsReceiptPath(
+  storagePath: string,
+  buyerId: number,
+  orderId?: number,
+): void {
+  const ownedCheckout = isCheckoutReceiptStorageKey(storagePath, buyerId);
+  const ownedOrder = orderId !== undefined && isPaymentProofStorageKey(storagePath, buyerId, orderId);
+  const ownedPrefix = storagePath.startsWith(`${PAYMENT_PROOF_BUCKET}/${buyerId}/`);
+  if (!ownedCheckout && !ownedOrder && !ownedPrefix) {
+    throw new Error("The payment receipt must be uploaded to your own storage folder.");
+  }
 }

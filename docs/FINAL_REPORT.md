@@ -102,24 +102,58 @@ SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profi
 
 ## Payment / fulfillment / cooperatives / order detail (2026-11-17)
 
+### Step 0 — Conflicting payment UX (pre-fix)
+
+Before unification, payment was split across three phases that disagreed:
+
+1. Marketplace cart dropdown offered only `cash_pickup` / `cash_delivery` (Zod rejected `gcash`).
+2. Checkout re-offered GCash as a third radio with cooperative `paymentOptions` QR — a second choice that could override the cart.
+3. After place-order, GCash buyers uploaded receipts from the Dashboard only.
+
+Pickup/delivery were conflated into cash method names (no `fulfillmentMethod`). Ledger/Activity still showed legacy `f2f`.
+
+### Locked behavior (now)
+
 | Area | Change |
 |------|--------|
-| Checkout | Per-seller radios: Cash Pickup / Cash Delivery / Online; receipt required at create for Online; seller QR (not coop QR) |
-| Listings | `allowsPickup` / `allowsDelivery` / `acceptsOnlinePayment` flags + badges; publish requires cooperative assignment |
-| Schema | BLOCK 14 / migration `20261117210000_payment_fulfillment_coop_orders.sql`: flags, `fulfillmentMethod`, seller QR cols, `orderHistory`, SUTAFACO backfill |
-| Pages | `/orders/:id` (authz buyer/seller/admin) + `/cooperatives/:slug` (`normalizedName`) |
-| Proof review | Seller of order (and admin/superadmin) can verify/reject online receipts |
+| Checkout | Per-seller radios: Cash Pickup / Delivery / Online; receipt required at create for Online; **seller** QR (not coop QR) |
+| Listings | `allowsPickup` / `allowsDelivery` / `acceptsOnlinePayment` + badges; publish requires cooperative assignment |
+| Schema | BLOCK 14 + BLOCK 15 column-scoped GRANTs; `orderHistory`; SUTAFACO seed |
+| Pages | `/orders/:id` (buyer own / seller own / admin|superadmin) + `/cooperatives/:slug` |
+| Secrecy | Account fields never on `marketplace.list`; QR bucket `seller-payment-qr` is **private** with signed URLs; other sellers cannot read another seller's payment details |
+| Proof review | Order seller + scoped admin/superadmin |
+
+### Cooperative backfill counts (live SELECT, 2026-11-17)
+
+| Metric | Before scoped UPDATE (preview at apply) | After |
+|--------|-----------------------------------------|-------|
+| Sellers with `cooperativeId IS NULL` | **0** | **0** |
+| Products with `cooperativeId IS NULL` | **0** | **0** |
+| Sellers with coop / total sellers | — | **2 / 2** |
+| Products with coop / total products | — | **22 / 22** |
+| `SUTAFACO Cooperative` (`sutafacocooperative`) | inserted (exact name); existing “Sutafaco (Sumilihon…” left unchanged | present (id=4) |
+
+### Legacy payment display
+
+Live orders currently store `paymentMethod = f2f` only (4 rows). UI maps `f2f` → “Face-to-face (legacy)” and `gcash`/`online` → “Online Payment” without rewriting stored values (`shared/paymentMethods.ts` + tests).
+
+### Hardening / CI guards
+
+- `server/paymentGrantContract.test.ts` — BLOCK 15 GRANTs are **column-scoped**; anon cannot SELECT account fields
+- `server/paymentSecurity.test.ts` — marketplace secrecy, receipt path ownership, order authz, legacy labels
+- `server/trpcProcedureAccess.test.ts` — role × procedure matrix (anon/buyer/seller/admin/superadmin)
+- Cash sentence appears **only** in the regression test that asserts its absence; production marketplace/checkout HTML: absent
 
 ## Deploy
 
 | Item | Value |
 |------|-------|
-| Commit | `073b361` (+ follow-up column-grant migration) |
-| Production | `dpl_4ZHc3SQMtjuxrUJCSh2YPoFF1FYz` |
-| readyState | **READY** |
+| Commit | _(this hardening ship)_ |
+| Production | _(updated after READY)_ |
+| readyState | **READY** (target) |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | `/` `/api/health` `/marketplace` `/checkout` `/cooperatives/sutafacocooperative` `/orders/1` all **200**; `marketplace.list` returns listings after BLOCK 15 grants |
-| Runtime | Post-deploy `marketplace.list` errors cleared by column GRANTs; unrelated historical timeouts/`conversations.send` remain outside this ship |
+| Smoke | Public shells + `marketplace.list` + coop slug + order-detail auth shell; axe on checkout/order detail |
+| Runtime | Hobby plan retains ~1h of runtime logs; check after deploy for `marketplace.list` / payment paths |
 
 ---
 
@@ -128,4 +162,4 @@ SQL: `docs/MANUAL_SQL.md` BLOCK 13 / migration `20261117200000_avatars_and_profi
 1. Sign in as each of the four roles and exercise Message / Support / Tickets bulk actions once.  
 2. Confirm Supabase Auth Site URL + email redirects match production.  
 3. Optional: explicit dispute escalation path for officer access to order chats (logged) — not built; privacy decision documented.
-4. End-to-end Online Payment with a real seller QR + buyer receipt on production `qa-test-` accounts, then delete test proofs.
+4. Authenticated production E2E for Cash Pickup / Delivery / Online (receipt gate + seller reject/re-upload) using temporary `qa-test-` accounts — no QA credentials were present in the agent environment; CI unit/matrix tests cover the authorization rules.

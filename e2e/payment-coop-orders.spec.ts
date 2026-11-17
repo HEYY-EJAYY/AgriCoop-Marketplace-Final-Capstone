@@ -23,16 +23,24 @@ test.describe("payment, cooperatives, order detail", () => {
     await expect(page.getByText(/not found|unavailable|incorrect/i).first()).toBeVisible({ timeout: 20_000 });
   });
 
-  test("order detail requires auth and axe is clean on checkout shell", async ({ page }) => {
+  test("order detail requires auth and axe is clean on checkout and order detail shells", async ({ page }) => {
     await page.goto("/orders/1");
-    await expect(page.getByText(/Sign in|Order|not found|unavailable/i).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: /Order not found|Order details|Sign in/i }).first()).toBeVisible({ timeout: 20_000 });
+    const orderAxe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+    expect(orderAxe.violations.filter(v => v.impact === "serious" || v.impact === "critical")).toEqual([]);
 
     await page.goto("/checkout");
     await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 20_000 });
-    const results = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa"])
-      .analyze();
-    const serious = results.violations.filter(v => v.impact === "serious" || v.impact === "critical");
-    expect(serious).toEqual([]);
+    await expect(page.getByText(/Sellers record cash received/i)).toHaveCount(0);
+    const checkoutAxe = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+    expect(checkoutAxe.violations.filter(v => v.impact === "serious" || v.impact === "critical")).toEqual([]);
+  });
+
+  test("payment method radios appear only after a cart exists or sign-in shell shows", async ({ page }) => {
+    await page.goto("/checkout");
+    const heading = page.getByRole("heading").first();
+    await expect(heading).toBeVisible({ timeout: 20_000 });
+    const text = await heading.innerText();
+    expect(text).toMatch(/Sign in|checkout|basket|Review your order/i);
   });
 });

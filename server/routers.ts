@@ -58,6 +58,8 @@ import { getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupa
 import { canRequestCooperativeAssociation, canReviewCooperativeAssociation } from "./cooperativeAssociations";
 import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
 import {
+  assertBuyerOwnsReceiptPath,
+  canViewSellerOnlinePaymentDetails,
   createCheckoutReceiptUploadIntent,
   createPaymentProofUploadIntent,
   isCheckoutReceiptStorageKey,
@@ -945,6 +947,9 @@ export const appRouter = router({
         if (input?.sellerId === undefined) {
           requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         }
+        if (!canViewSellerOnlinePaymentDetails(actor, sellerId)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Seller payment details were not found." });
+        }
         const db = await dbOrThrow();
         const [seller] = await db.select({
           id: users.id,
@@ -965,13 +970,14 @@ export const appRouter = router({
         if (seller.onlinePaymentQrPath) {
           try {
             if (seller.onlinePaymentQrPath.startsWith("http")) {
+              // Legacy public URLs remain readable; new uploads use private signed URLs.
               qrImageUrl = seller.onlinePaymentQrPath;
             } else {
-              const resolved = await storageGet(seller.onlinePaymentQrPath, {
+              qrImageUrl = await storageGetSignedUrl(seller.onlinePaymentQrPath, {
                 bucket: SELLER_PAYMENT_QR_BUCKET,
-                public: true,
+                public: false,
+                expiresIn: 300,
               });
-              qrImageUrl = resolved.url;
             }
           } catch {
             qrImageUrl = null;
@@ -1009,17 +1015,19 @@ export const appRouter = router({
           `${sellerPaymentQrPrefix(seller.id)}${Date.now()}-${safeName}`,
           bytes,
           input.contentType,
-          { bucket: SELLER_PAYMENT_QR_BUCKET, public: true },
+          { bucket: SELLER_PAYMENT_QR_BUCKET, public: false },
         );
-        if (!isSellerPaymentQrKey(uploaded.key, seller.id) && !uploaded.key.startsWith(sellerPaymentQrPrefix(seller.id))) {
-          // storagePut appends a hash suffix; still require seller prefix.
-          if (!uploaded.key.startsWith(sellerPaymentQrPrefix(seller.id))) {
-            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "QR upload path was invalid." });
-          }
+        if (!uploaded.key.startsWith(sellerPaymentQrPrefix(seller.id))) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "QR upload path was invalid." });
         }
         const db = await dbOrThrow();
         await db.update(users).set({ onlinePaymentQrPath: uploaded.key }).where(eq(users.id, seller.id));
-        return { url: uploaded.url, path: uploaded.key };
+        const signedUrl = await storageGetSignedUrl(uploaded.key, {
+          bucket: SELLER_PAYMENT_QR_BUCKET,
+          public: false,
+          expiresIn: 300,
+        });
+        return { url: signedUrl, path: uploaded.key };
       }),
     saveOnlinePaymentDetails: protectedProcedure
       .input(z.object({
@@ -1048,7 +1056,10 @@ export const appRouter = router({
         return listing;
       }),
     list: publicProcedure
-      .input(z.object({ category: z.string().optional(), sort: z.enum(["asc", "desc"]).default("asc") }).optional())
+      .input(z.object({
+        category: z.string().optional(),
+        sort: z.enum(["asc", "desc"]).default("asc"),
+      }).nullish())
       .query(({ input }) => getMarketplace(input?.category, input?.sort ?? "asc")),
     categories: publicProcedure.query(() => getCategories()),
   }),
@@ -1473,10 +1484,13 @@ export const appRouter = router({
             if (!input.receiptStoragePath) {
               throw new TRPCError({ code: "BAD_REQUEST", message: "Upload your payment receipt before placing an online payment order." });
             }
-            if (!isCheckoutReceiptStorageKey(input.receiptStoragePath, buyer.id)
-              && !isPaymentProofStorageKey(input.receiptStoragePath, buyer.id, 0)
-              && !input.receiptStoragePath.startsWith(`${PAYMENT_PROOF_BUCKET}/${buyer.id}/`)) {
-              throw new TRPCError({ code: "FORBIDDEN", message: "The payment receipt must be uploaded to your own storage folder." });
+            try {
+              assertBuyerOwnsReceiptPath(input.receiptStoragePath, buyer.id);
+            } catch (error) {
+              throw new TRPCError({
+                code: "FORBIDDEN",
+                message: error instanceof Error ? error.message : "The payment receipt must be uploaded to your own storage folder.",
+              });
             }
           }
 
