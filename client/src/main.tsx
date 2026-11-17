@@ -6,23 +6,76 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { goToAuth } from "./const";
-import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { authSession, logAuthDiagnostic } from "./lib/authSession";
+import { shouldRedirectToAuth } from "./lib/authSessionManager";
 import "./index.css";
 
 const queryClient = new QueryClient();
-let supabaseAccessToken = "";
-if (isSupabaseConfigured) {
-  supabase.auth.getSession().then(({ data }) => { supabaseAccessToken = data.session?.access_token ?? ""; });
-  supabase.auth.onAuthStateChange((_event, session) => { supabaseAccessToken = session?.access_token ?? ""; });
-}
 
-const redirectToLoginIfUnauthorized = (error: unknown) => {
+const redirectToLoginIfUnauthorized = (error: unknown, source: "query" | "mutation") => {
   if (!(error instanceof TRPCClientError) || typeof window === "undefined" || error.message !== UNAUTHED_ERR_MSG) return;
-  goToAuth();
+  const sessionState = authSession.getSnapshot();
+  const shouldRedirect = shouldRedirectToAuth({
+    sessionInitialized: sessionState.initialized,
+    authLoading: !sessionState.initialized,
+    userPresent: false,
+    unauthenticated: true,
+  });
+  logAuthDiagnostic("unauthorized_response", {
+    component: "queryClient",
+    source,
+    sessionInitialized: sessionState.initialized,
+    accessTokenPresent: sessionState.accessTokenPresent,
+    redirectScheduled: shouldRedirect,
+  });
+  if (!shouldRedirect) return;
+  goToAuth(`queryClient.${source}`);
 };
-queryClient.getQueryCache().subscribe(event => { if (event.type === "updated" && event.action.type === "error") { redirectToLoginIfUnauthorized(event.query.state.error); console.error("[API Query Error]", event.query.state.error); } });
-queryClient.getMutationCache().subscribe(event => { if (event.type === "updated" && event.action.type === "error") { redirectToLoginIfUnauthorized(event.mutation.state.error); console.error("[API Mutation Error]", event.mutation.state.error); } });
+queryClient.getQueryCache().subscribe(event => {
+  if (event.type === "updated" && event.action.type === "error") {
+    const error = event.query.state.error;
+    redirectToLoginIfUnauthorized(error, "query");
+    if (error instanceof TRPCClientError) console.error("[API Query Error]", { code: error.data?.code ?? null });
+  }
+});
+queryClient.getMutationCache().subscribe(event => {
+  if (event.type === "updated" && event.action.type === "error") {
+    const error = event.mutation.state.error;
+    redirectToLoginIfUnauthorized(error, "mutation");
+    if (error instanceof TRPCClientError) console.error("[API Mutation Error]", { code: error.data?.code ?? null });
+  }
+});
 
-const trpcClient = trpc.createClient({ links: [httpBatchLink({ url: "/api/trpc", transformer: superjson, headers: () => supabaseAccessToken ? { Authorization: `Bearer ${supabaseAccessToken}` } : {}, fetch(input, init) { return globalThis.fetch(input, { ...(init ?? {}), credentials: "include" }); } })] });
+const trpcClient = trpc.createClient({
+  links: [httpBatchLink({
+    url: "/api/trpc",
+    transformer: superjson,
+    headers: async ({ opList }) => {
+      const stateBeforeWait = authSession.getSnapshot();
+      await authSession.waitUntilInitialized();
+      const token = authSession.getAccessToken();
+      const stateAtSend = authSession.getSnapshot();
+      logAuthDiagnostic("trpc_request_auth_state", {
+        operationPaths: opList.map(operation => operation.path).join(","),
+        sessionInitializedBeforeRequest: stateBeforeWait.initialized,
+        sessionInitializedBeforeSend: stateAtSend.initialized,
+        accessTokenPresent: Boolean(token),
+      });
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    },
+    fetch(input, init) {
+      return globalThis.fetch(input, { ...(init ?? {}), credentials: "include" });
+    },
+  })],
+});
 
-createRoot(document.getElementById("root")!).render(<trpc.Provider client={trpcClient} queryClient={queryClient}><QueryClientProvider client={queryClient}><App /></QueryClientProvider></trpc.Provider>);
+void authSession.waitUntilInitialized().then(() => {
+  logAuthDiagnostic("app_render", { sessionInitialized: true, accessTokenPresent: authSession.getSnapshot().accessTokenPresent });
+  createRoot(document.getElementById("root")!).render(
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </trpc.Provider>,
+  );
+});

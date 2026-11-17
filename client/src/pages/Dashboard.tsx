@@ -1,13 +1,21 @@
 import { WorkspaceHeader } from "@/components/AgriShell";
+import { getAccountAccessRestriction } from "../../../shared/accountAccess";
 import { buildCsv } from "../../../shared/reportCsv";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { goToAuth } from "@/const";
 import { formatDateManila } from "@/lib/datetime";
+import { logAuthDiagnostic } from "@/lib/authSession";
+import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
+import AdminRefundManagement from "@/components/AdminRefundManagement";
+import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
 import { getProductImageUrl } from "@/lib/productImages";
-import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../../../shared/productOptions";
-import { AlertCircle, BarChart3, Check, ClipboardList, Download, FileText, Leaf, Loader2, LucideIcon, Package, Plus, Store, Users } from "lucide-react";
-import { FormEvent, ReactNode, useState } from "react";
+import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
+import { PAYMENT_PROOF_BUCKET, PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../../../shared/paymentProofs";
+import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../../../shared/profileVerification";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertCircle, BarChart3, Check, ClipboardList, Download, FileText, Leaf, Loader2, LucideIcon, Package, Plus, Store, Users, QrCode } from "lucide-react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
@@ -24,21 +32,276 @@ function readImageAsBase64(file: File) {
   });
 }
 
-function Metric({ label, value, icon: Icon }: { label: string; value: string; icon: LucideIcon }) {
-  return <div className="agri-card p-5"><div className="flex items-start justify-between"><p className="text-sm font-bold text-[#66806b]">{label}</p><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#edf4e9] text-[#4c834d]"><Icon size={18}/></span></div><p className="mt-4 font-display text-3xl font-bold text-[#254f37]">{value}</p></div>;
+function ProductImagePicker({ imageUrls, files, onImageUrlsChange, onFilesChange, error, onError, disabled = false }: {
+  imageUrls: string[];
+  files: File[];
+  onImageUrlsChange: (urls: string[]) => void;
+  onFilesChange: (files: File[]) => void;
+  error: string;
+  onError: (message: string) => void;
+  disabled?: boolean;
+}) {
+  const filePreviews = useMemo(
+    () => files.map(file => ({ file, url: URL.createObjectURL(file) })),
+    [files],
+  );
+  useEffect(() => () => filePreviews.forEach(preview => URL.revokeObjectURL(preview.url)), [filePreviews]);
+
+  const chooseFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    if (selected.some(file => !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > MAX_PRODUCT_IMAGE_SIZE_BYTES)) {
+      onError("Choose JPEG, PNG, or WebP images that are 3 MB or less each.");
+      return;
+    }
+    if (imageUrls.length + files.length + selected.length > MAX_PRODUCT_IMAGES) {
+      onError(`A product can have up to ${MAX_PRODUCT_IMAGES} images.`);
+      return;
+    }
+    onError("");
+    onFilesChange([...files, ...selected]);
+  };
+
+  return <div className="field-label mt-3">
+    Product image gallery ({imageUrls.length + files.length}/{MAX_PRODUCT_IMAGES})
+    <input className="field-control" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled || imageUrls.length + files.length >= MAX_PRODUCT_IMAGES} onChange={chooseFiles}/>
+    {error && <span role="alert" className="mt-1 block text-xs text-[#a34838]">{error}</span>}
+    {(imageUrls.length > 0 || files.length > 0) && <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      {imageUrls.map((url, index) => <div key={`${url}-${index}`} className="relative overflow-hidden rounded-lg border border-[#dce4d6]">
+        <img src={url} alt={`Product image ${index + 1}`} className="h-28 w-full object-cover"/>
+        <div className="absolute right-1 top-1 flex gap-1">
+          <button type="button" className="rounded bg-white/90 px-2 py-1 text-xs font-bold" aria-label={`Move product image ${index + 1} earlier`} disabled={disabled || index === 0} onClick={() => onImageUrlsChange(moveProductImage(imageUrls, index, -1))}>Up</button>
+          <button type="button" className="rounded bg-white/90 px-2 py-1 text-xs font-bold" aria-label={`Move product image ${index + 1} later`} disabled={disabled || index === imageUrls.length - 1} onClick={() => onImageUrlsChange(moveProductImage(imageUrls, index, 1))}>Down</button>
+          <button type="button" className="rounded bg-white/90 px-2 py-1 text-xs font-bold text-[#8c4135]" aria-label={`Remove product image ${index + 1}`} disabled={disabled} onClick={() => onImageUrlsChange(imageUrls.filter((_, imageIndex) => imageIndex !== index))}>Remove</button>
+        </div>
+      </div>)}
+      {filePreviews.map(({ file, url }, index) => <div key={`${file.name}-${index}`} className="relative overflow-hidden rounded-lg border border-[#dce4d6]">
+        <img src={url} alt={`New product image ${index + imageUrls.length + 1}`} className="h-28 w-full object-cover"/>
+        <div className="absolute right-1 top-1 flex gap-1">
+          <button type="button" className="rounded bg-white/90 px-2 py-1 text-xs font-bold" aria-label={`Move selected product image ${index + 1} earlier`} disabled={disabled || index === 0} onClick={() => onFilesChange(moveProductImage(files, index, -1))}>Up</button>
+          <button type="button" className="rounded bg-white/90 px-2 py-1 text-xs font-bold" aria-label={`Move selected product image ${index + 1} later`} disabled={disabled || index === files.length - 1} onClick={() => onFilesChange(moveProductImage(files, index, 1))}>Down</button>
+          <button type="button" className="rounded bg-white/90 px-2 py-1 text-xs font-bold text-[#8c4135]" aria-label={`Remove selected image ${index + 1}`} disabled={disabled} onClick={() => onFilesChange(files.filter((_, fileIndex) => fileIndex !== index))}>Remove</button>
+        </div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+async function uploadProductImageFiles(
+  files: File[],
+  upload: (input: { fileName: string; contentType: "image/jpeg" | "image/png" | "image/webp"; base64: string }) => Promise<{ url: string }>,
+) {
+  const uploadedUrls: string[] = [];
+  for (const file of files) {
+    const uploaded = await upload({
+      fileName: file.name,
+      contentType: file.type as "image/jpeg" | "image/png" | "image/webp",
+      base64: await readImageAsBase64(file),
+    });
+    uploadedUrls.push(uploaded.url);
+  }
+  return uploadedUrls;
 }
 
 function Empty({ icon: Icon, title, body }: { icon: LucideIcon; title: string; body: string }) {
   return <div className="py-9 text-center"><Icon className="mx-auto text-[#a0b796]" size={29}/><h3 className="mt-3 font-bold text-[#3d5e49]">{title}</h3><p className="mx-auto mt-1 max-w-xs text-sm leading-6 text-[#6d7d70]">{body}</p></div>;
 }
 
+function QueryErrorState({ message, onRetry, isFetching }: { message: string; onRetry: () => void; isFetching: boolean }) {
+  return <div className="agri-card p-6 text-center">
+    <p role="alert" className="text-sm text-[#a34838]">{message}</p>
+    <button type="button" className="agri-ghost mt-3 text-sm" disabled={isFetching} onClick={onRetry}>
+      {isFetching && <Loader2 className="animate-spin" size={15}/>} Retry
+    </button>
+  </div>;
+}
+
+function Metric({ label, value, icon: Icon }: { label: string; value: string; icon: LucideIcon }) {
+  return <div className="agri-card p-5"><div className="flex items-start justify-between"><p className="text-sm font-bold text-[#66806b]">{label}</p><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#edf4e9] text-[#4c834d]"><Icon size={18}/></span></div><p className="mt-4 font-display text-3xl font-bold text-[#254f37]">{value}</p></div>;
+}
+
 function LoadingWorkspace() { return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>; }
 
+function getAuthGateCopy(resolution: string | undefined) {
+  switch (resolution) {
+    case "email_not_verified":
+      return {
+        title: "Verify your email",
+        message: "This Supabase identity has not confirmed its email address. Operational access is blocked until you verify it. Open the verification message or request a new link from the sign-in page.",
+      };
+    case "application_user_missing":
+      return {
+        title: "AgriCoop account link required",
+        message: "Supabase sign-in is valid, but no matching application account was found for this Auth identity. Ask an administrator to verify the openId mapping. Sign-in does not create or assign a profile or role.",
+      };
+    case "application_user_mapping_unavailable":
+      return {
+        title: "AgriCoop identity mapping unavailable",
+        message: "A canonical Supabase profile exists, but AgriCoop could not find its exact application account mapping. Ask an administrator to verify the openId link and database policies.",
+      };
+    case "application_profile_missing":
+      return {
+        title: "AgriCoop role profile missing",
+        message: "An application account exists, but its canonical public role profile is missing or not visible. An administrator must review the profile link and database policies.",
+      };
+    case "application_role_mapping_unavailable":
+      return {
+        title: "AgriCoop role mapping unavailable",
+        message: "The canonical role record is missing or not visible. An administrator must review the role mapping; AgriCoop will not infer a role from Auth metadata.",
+      };
+    case "application_role_mapping_conflict":
+      return {
+        title: "AgriCoop role conflict",
+        message: "The canonical Supabase role conflicts with the application account role. Sign-in is blocked until an administrator reconciles the records.",
+      };
+    case "application_identity_conflict":
+      return {
+        title: "Duplicate AgriCoop identity",
+        message: "More than one application or canonical role record matches this Auth identity. Sign-in is blocked until an administrator resolves the duplicate records.",
+      };
+    case "application_database_access_denied":
+      return {
+        title: "AgriCoop database access denied",
+        message: "Database grants or row-level security policies denied the application lookup. An administrator must review access; AgriCoop will not bypass those policies.",
+      };
+    case "application_database_schema_unavailable":
+      return {
+        title: "AgriCoop database schema unavailable",
+        message: "A required application schema object is missing or incompatible. An administrator must review the PostgreSQL schema before sign-in can continue.",
+      };
+    case "application_database_unavailable":
+      return {
+        title: "AgriCoop profile service unavailable",
+        message: "Supabase sign-in may be valid, but AgriCoop could not reach its application database. Try again later.",
+      };
+    default:
+      return {
+        title: "Your AgriCoop workspace",
+        message: "Sign in to access the tools assigned to your marketplace role.",
+      };
+  }
+}
+
 function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, sessionLoading, accessTokenPresent, logout } = useAuth();
+  const { data: authResolution } = trpc.auth.status.useQuery(undefined, { enabled: !loading && !user });
+  useEffect(() => {
+    logAuthDiagnostic("protected_route_auth_state", {
+      component: "Dashboard.AuthGate",
+      sessionInitializationPending: sessionLoading,
+      authLoading: loading,
+      accessTokenPresent,
+      applicationUserPresent: Boolean(user),
+    });
+  }, [sessionLoading, loading, accessTokenPresent, user]);
   if (loading) return <LoadingWorkspace/>;
-  if (!user) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><Leaf className="mx-auto text-[#68924d]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">Your AgriCoop workspace</h1><p className="mt-3 leading-7 text-[#647568]">Sign in to access the tools assigned to your marketplace role.</p><button className="agri-button mt-6" onClick={goToAuth}>Sign in to AgriCoop</button></div></div>;
+  if (!user) {
+    const copy = getAuthGateCopy(authResolution);
+    return <div className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4">
+      <div className="agri-card max-w-md p-8 text-center">
+        <Leaf className="mx-auto text-[#68924d]"/>
+        <h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">{copy.title}</h1>
+        <p className="mt-3 leading-7 text-[#647568]">{copy.message}</p>
+        <button className="agri-button mt-6" onClick={() => goToAuth("Dashboard.AuthGate")}>
+          {authResolution === "email_not_verified" ? "Open verification" : "Sign in to AgriCoop"}
+        </button>
+      </div>
+    </div>;
+  }
+  const accessRestriction = getAccountAccessRestriction(user);
+  if (accessRestriction) {
+    const copy = {
+      pending: {
+        title: "Account pending approval",
+        message: "Your AgriCoop account is not approved for operational access yet. Sellers also need an authorized cooperative assignment. No role or cooperative assignment was created during sign-in.",
+      },
+      suspended: {
+        title: "Account access suspended",
+        message: "Your AgriCoop account is suspended. Contact an authorized administrator to review your account status.",
+      },
+      cooperative_assignment_required: {
+        title: "Cooperative assignment required",
+        message: "This Admin account has no cooperative assignment. Contact a SuperAdmin before using cooperative operations.",
+      },
+    }[accessRestriction];
+    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card w-full max-w-xl p-8 text-center"><Leaf className="mx-auto text-[#68924d]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">{copy.title}</h1><p className="mt-3 leading-7 text-[#647568]">{copy.message}</p>{user.role === "seller" && user.cooperativeId === null && <SellerAssociationRequestPanel/>}<button className="agri-button mt-6" onClick={() => void logout().catch(() => toast.error("Could not complete sign out. Please try again."))}>Sign out</button></div></main>;
+  }
   return <>{children}</>;
+}
+
+function SellerAssociationRequestPanel() {
+  const utils = trpc.useUtils();
+  const [cooperativeId, setCooperativeId] = useState("");
+  const [message, setMessage] = useState("");
+  const { data: cooperatives = [], isLoading: cooperativesLoading, error: cooperativesError } = trpc.cooperativeAssociations.activeCooperatives.useQuery();
+  const { data: requests = [], isLoading: requestsLoading, error: requestsError } = trpc.cooperativeAssociations.mine.useQuery();
+  const request = trpc.cooperativeAssociations.request.useMutation({
+    onSuccess: async () => {
+      toast.success("Cooperative association request submitted.");
+      setMessage("");
+      await utils.cooperativeAssociations.mine.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const pendingRequest = requests.find(row => row.request.status === "pending");
+
+  return <section className="mt-6 rounded-xl border border-[#dce4d6] bg-[#f5f8f2] p-4 text-left">
+    <h2 className="font-display text-xl font-bold text-[#264f37]">Request cooperative association</h2>
+    <p className="mt-1 text-sm leading-6 text-[#65766b]">An authorized cooperative Admin must review your request. Approval assigns the cooperative; account approval remains a separate step.</p>
+    {(cooperativesError || requestsError) && <p role="alert" className="mt-3 text-sm text-[#a34838]">{cooperativesError?.message || requestsError?.message}</p>}
+    {(cooperativesLoading || requestsLoading) && <p className="mt-3 text-sm text-[#65766b]">Loading cooperative options…</p>}
+    {requests.map(({ request: row, cooperativeName }) => <div key={row.id} className="mt-3 rounded-lg bg-white p-3 text-sm">
+      <p className="font-bold text-[#315640]">{cooperativeName} · {row.status}</p>
+      {row.message && <p className="mt-1 text-[#65766b]">{row.message}</p>}
+      {row.reviewNote && <p className="mt-1 text-[#65766b]">Admin note: {row.reviewNote}</p>}
+    </div>)}
+    {!pendingRequest && !cooperativesLoading && !cooperativesError && <form className="mt-4 space-y-3" onSubmit={event => {
+      event.preventDefault();
+      const selectedId = Number(cooperativeId);
+      if (Number.isSafeInteger(selectedId) && selectedId > 0) request.mutate({ cooperativeId: selectedId, message: message.trim() || undefined });
+    }}>
+      <label className="field-label">Choose a cooperative<select required className="field-control" value={cooperativeId} onChange={event => setCooperativeId(event.target.value)}>
+        <option value="">Select a cooperative</option>
+        {cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}
+      </select></label>
+      <label className="field-label">Message for the Admin (optional)<textarea maxLength={600} className="field-control min-h-20" value={message} onChange={event => setMessage(event.target.value)}/></label>
+      <button className="agri-button text-sm" disabled={request.isPending || !cooperativeId || !cooperatives.length}>Submit association request</button>
+    </form>}
+    {!cooperativesLoading && !cooperativesError && !cooperatives.length && <p className="mt-3 text-sm text-[#65766b]">No active cooperatives are currently accepting requests.</p>}
+  </section>;
+}
+
+function AssociationRequestsManager() {
+  const utils = trpc.useUtils();
+  const { data: requests = [], isLoading, error } = trpc.cooperativeAdmin.associationRequests.useQuery();
+  const review = trpc.cooperativeAdmin.reviewAssociationRequest.useMutation({
+    onSuccess: async () => {
+      toast.success("Association request reviewed.");
+      await Promise.all([
+        utils.cooperativeAdmin.associationRequests.invalidate(),
+        utils.admin.overview.invalidate(),
+      ]);
+    },
+    onError: problem => toast.error(problem.message),
+  });
+
+  return <section className="mt-8 agri-card p-5 sm:p-6">
+    <h2 className="font-display text-2xl font-bold text-[#264f37]">Seller cooperative requests</h2>
+    <p className="mt-1 text-sm text-[#6a796e]">Approving assigns the cooperative only. Review the Seller's account approval separately.</p>
+    {isLoading && <p className="mt-4 text-sm text-[#65766b]">Loading requests…</p>}
+    {error && <p role="alert" className="mt-4 text-sm text-[#a34838]">{error.message}</p>}
+    {!isLoading && !error && !requests.length && <p className="mt-4 text-sm text-[#65766b]">No pending association requests.</p>}
+    <div className="mt-4 space-y-3">{requests.map(({ request: row, sellerName, sellerEmail, cooperativeName }) => <article key={row.id} className="rounded-xl border border-[#e2e9dd] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="font-bold text-[#315640]">{sellerName || "Seller"} · {cooperativeName}</p><p className="text-xs text-[#718074]">{sellerEmail || "No email"} · Request #{row.id}</p></div>
+        <div className="flex gap-2">
+          <button className="agri-button px-3 py-2 text-xs" disabled={review.isPending} onClick={() => review.mutate({ requestId: row.id, decision: "approved" })}>Approve association</button>
+          <button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={review.isPending} onClick={() => review.mutate({ requestId: row.id, decision: "rejected" })}>Reject</button>
+        </div>
+      </div>
+      {row.message && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#65766b]">{row.message}</p>}
+    </article>)}</div>
+  </section>;
 }
 
 function Onboarding() {
@@ -58,10 +321,193 @@ function Onboarding() {
   return <><WorkspaceHeader title="Complete your profile" description="Keep your contact details current for cooperative marketplace activity."/><main className="mx-auto max-w-3xl px-4 py-10 sm:px-6"><form onSubmit={submit} className="agri-card p-6 sm:p-8"><h1 className="font-display text-3xl font-bold text-[#244e36]">Your profile</h1><p className="mt-3 leading-7 text-[#647568]">Your role, approval status, and cooperative assignment are managed by AgriCoop and your cooperative officer.</p><label className="field-label mt-6">Display name<input value={name} onChange={e => setName(e.target.value)} className="field-control" required maxLength={120}/></label><label className="field-label mt-5">Contact number <span className="normal-case tracking-normal text-[#6e7d73]">(optional)</span><input value={contactNumber} onChange={e => setContactNumber(e.target.value)} className="field-control" placeholder="e.g., 09XX XXX XXXX" maxLength={40}/></label><label className="field-label mt-5">Address <span className="normal-case tracking-normal text-[#6e7d73]">(optional)</span><textarea value={address} onChange={e => setAddress(e.target.value)} className="field-control" maxLength={500}/></label><button disabled={update.isPending} className="agri-button mt-7">{update.isPending && <Loader2 className="animate-spin" size={17}/>} Save profile</button></form></main></>;
 }
 
+function ProfileVerificationPanel() {
+  const { user } = useAuth();
+  const utils = trpc.useUtils();
+  const verificationQuery = trpc.account.verificationMine.useQuery();
+  const requestUpload = trpc.account.requestVerificationUpload.useMutation();
+  const submitVerification = trpc.account.submitVerification.useMutation();
+  const [birthdate, setBirthdate] = useState(user?.birthdate ? new Date(user.birthdate).toISOString().slice(0, 10) : "");
+  const [phone, setPhone] = useState(user?.phone ?? "");
+  const [address, setAddress] = useState(user?.address ?? "");
+  const [note, setNote] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState("");
+  const [stage, setStage] = useState<"idle" | "authorizing" | "uploading" | "saving">("idle");
+  const status = verificationQuery.data?.status ?? user?.verificationStatus ?? "unverified";
+  const canSubmit = status === "unverified" || status === "rejected";
+  const isPending = stage !== "idle" || requestUpload.isPending || submitVerification.isPending;
+  const stageLabel = stage === "authorizing" ? "Preparing secure upload…"
+    : stage === "uploading" ? "Uploading privately…"
+      : stage === "saving" ? "Validating and submitting…"
+        : "Submit for review";
+  const refresh = async () => {
+    await Promise.all([utils.account.verificationMine.invalidate(), utils.auth.me.invalidate()]);
+  };
+  const chooseFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = event.currentTarget.files?.[0] ?? null;
+    event.currentTarget.value = "";
+    if (selected && (!PROFILE_VERIFICATION_CONTENT_TYPES.includes(selected.type as typeof PROFILE_VERIFICATION_CONTENT_TYPES[number])
+      || selected.size < 1
+      || selected.size > PROFILE_VERIFICATION_MAX_BYTES)) {
+      setFileError("Choose a JPEG, PNG, or WebP image up to 5 MiB.");
+      setFile(null);
+      return;
+    }
+    setFileError("");
+    setFile(selected);
+  };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!file || !birthdate || !phone.trim()) return;
+    try {
+      setStage("authorizing");
+      const authorization = await requestUpload.mutateAsync({
+        contentType: file.type as typeof PROFILE_VERIFICATION_CONTENT_TYPES[number],
+        fileSizeBytes: file.size,
+      });
+      setStage("uploading");
+      const { error } = await supabase.storage
+        .from(PROFILE_VERIFICATION_BUCKET)
+        .uploadToSignedUrl(authorization.storagePath, authorization.uploadToken, file, { contentType: file.type });
+      if (error) throw new Error(error.message);
+      setStage("saving");
+      await submitVerification.mutateAsync({
+        uploadIntent: authorization.uploadIntent,
+        birthdate,
+        phone,
+        address: address || undefined,
+        note: note || undefined,
+      });
+      toast.success("Profile verification submitted for review.");
+      setFile(null);
+      setNote("");
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not submit profile verification.");
+    } finally {
+      setStage("idle");
+    }
+  };
+
+  return <section className="mt-8 agri-card p-5 sm:p-6">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 className="font-display text-2xl font-bold text-[#264f37]">Profile verification</h2><p className="mt-1 text-sm text-[#6a796e]">Submit a private image of your verification document. Only authorized cooperative administrators can review it.</p></div>
+      <Status value={status}/>
+    </div>
+    {verificationQuery.error ? <div className="mt-4"><p role="alert" className="text-sm text-[#a34838]">{verificationQuery.error.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={verificationQuery.isFetching} onClick={() => void verificationQuery.refetch()}>Retry</button></div>
+      : verificationQuery.isLoading ? <Loader2 className="mx-auto my-5 animate-spin text-[#5d8a5e]"/>
+        : <div className="mt-4 space-y-4">
+          {status === "pending" && <p role="status" className="rounded-lg bg-[#f7f5ef] p-3 text-sm text-[#66766b]">Your application is awaiting review. You cannot submit another application while one is pending.</p>}
+          {status === "approved" && <p role="status" className="rounded-lg bg-[#edf6eb] p-3 text-sm text-[#315640]">Your profile verification is approved.</p>}
+          {verificationQuery.data?.submissions.length ? <div className="rounded-xl border border-[#e2e9dd] p-4">
+            <h3 className="font-bold text-[#315640]">Submission history</h3>
+            <ol className="mt-3 space-y-3">{verificationQuery.data.submissions.map(submission => <li key={submission.id} className="rounded-lg bg-[#f5f7f3] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">Submitted {when(submission.submittedAt)}</span><Status value={submission.status}/></div>
+              {submission.reviewedAt && <p className="mt-1 text-xs text-[#718074]">Reviewed {when(submission.reviewedAt)}</p>}
+              {submission.reviewNote && <p className="mt-2 whitespace-pre-wrap text-sm text-[#65766b]">Review note: {submission.reviewNote}</p>}
+            </li>)}</ol>
+          </div> : <div className="rounded-xl border border-[#e2e9dd] p-4"><h3 className="font-bold text-[#315640]">Submission history</h3><p className="mt-2 text-sm text-[#6d7d70]">No verification submissions yet.</p></div>}
+          {canSubmit && <form onSubmit={submit} className="grid gap-4 md:grid-cols-2">
+            <label className="field-label">Birthdate<input required type="date" className="field-control" value={birthdate} onChange={event => setBirthdate(event.target.value)} disabled={isPending}/></label>
+            <label className="field-label">Contact number<input required type="tel" minLength={7} maxLength={40} className="field-control" value={phone} onChange={event => setPhone(event.target.value)} disabled={isPending}/></label>
+            <label className="field-label md:col-span-2">Address (optional)<textarea maxLength={500} className="field-control min-h-20" value={address} onChange={event => setAddress(event.target.value)} disabled={isPending}/></label>
+            <label className="field-label md:col-span-2">Verification document image (JPEG, PNG, or WebP; up to 5 MiB)
+              <input required type="file" accept="image/jpeg,image/png,image/webp" className="field-control" onChange={chooseFile} disabled={isPending}/>
+              {file && <span className="mt-1 block text-xs text-[#66766b]">Selected: {file.name}</span>}
+              {fileError && <span role="alert" className="mt-1 block text-xs text-[#a34838]">{fileError}</span>}
+            </label>
+            <label className="field-label md:col-span-2">Note for the reviewer (optional)<textarea maxLength={600} className="field-control min-h-20" value={note} onChange={event => setNote(event.target.value)} disabled={isPending}/></label>
+            <label className="flex items-start gap-2 text-xs leading-5 text-[#65766b] md:col-span-2"><input required type="checkbox" className="mt-1" disabled={isPending}/>I consent to sharing this document and profile details with authorized AgriCoop reviewers for verification. The file is stored privately and is not published.</label>
+            <button type="submit" className="agri-button justify-self-start text-sm" disabled={!file || !birthdate || !phone.trim() || Boolean(fileError) || isPending}>
+              {isPending && <Loader2 className="animate-spin" size={16}/>} {stageLabel}
+            </button>
+            {isPending && <p role="status" className="self-center text-xs text-[#66766b]">{stageLabel} Keep this page open until the upload is complete.</p>}
+          </form>}
+        </div>}
+  </section>;
+}
+
+function BuyerPaymentProof({ payment, onSubmitted }: { payment: any; onSubmitted: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState("");
+  const [uploadStage, setUploadStage] = useState<"idle" | "authorizing" | "uploading" | "saving">("idle");
+  const previewUrl = useMemo(() => file ? URL.createObjectURL(file) : null, [file]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+  const upload = trpc.payments.uploadProof.useMutation();
+  const finalizeUpload = trpc.payments.finalizeProofUpload.useMutation();
+  const canSubmitProof = (payment.status === "pending" || payment.status === "failed")
+    && payment.proofStatus !== "pending"
+    && payment.proofStatus !== "verified"
+    && payment.orderStatus !== "cancelled"
+    && payment.orderStatus !== "completed";
+  const submitProof = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!file) return;
+    try {
+      setUploadStage("authorizing");
+      const authorization = await upload.mutateAsync({
+        orderId: payment.orderId,
+        fileName: file.name,
+        contentType: file.type as typeof PAYMENT_PROOF_CONTENT_TYPES[number],
+        fileSizeBytes: file.size,
+      });
+      setUploadStage("uploading");
+      const { error } = await supabase.storage
+        .from(PAYMENT_PROOF_BUCKET)
+        .uploadToSignedUrl(authorization.storagePath, authorization.uploadToken, file, { contentType: file.type });
+      if (error) throw new Error(error.message);
+      setUploadStage("saving");
+      await finalizeUpload.mutateAsync({ orderId: payment.orderId, uploadIntent: authorization.uploadIntent });
+      toast.success("Payment proof submitted for verification.");
+      setFile(null);
+      onSubmitted();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not submit payment proof.");
+    } finally {
+      setUploadStage("idle");
+    }
+  };
+  const isUploading = uploadStage !== "idle" || upload.isPending || finalizeUpload.isPending;
+  const uploadStageLabel = uploadStage === "authorizing" ? "Preparing secure upload…"
+    : uploadStage === "uploading" ? "Uploading privately…"
+      : uploadStage === "saving" ? "Verifying and saving…"
+        : "Submit proof";
+  return <article className="rounded-xl border border-[#e3e9de] p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div><p className="font-bold text-[#315640]">Order #{payment.orderId} · {peso(payment.amountCents)}</p><p className="mt-1 text-xs text-[#6d7d70]">GCash payment · Transaction #{payment.id}</p></div>
+      <Status value={payment.status}/>
+    </div>
+    {payment.reviewNote && <p className="mt-3 rounded-lg bg-[#f7f5ef] p-3 text-sm text-[#66766b]">Admin review note: {payment.reviewNote}</p>}
+    {canSubmitProof ? <form onSubmit={submitProof} className="mt-4 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+      <label className="field-label">Payment receipt image (JPEG, PNG, or WebP; up to 5 MiB)<input required className="field-control" type="file" accept="image/jpeg,image/png,image/webp" disabled={isUploading} onChange={event => {
+        const selected = event.currentTarget.files?.[0] ?? null;
+        event.currentTarget.value = "";
+        if (selected && (!PAYMENT_PROOF_CONTENT_TYPES.includes(selected.type as typeof PAYMENT_PROOF_CONTENT_TYPES[number]) || selected.size > PAYMENT_PROOF_MAX_BYTES)) {
+          setFileError("Choose a JPEG, PNG, or WebP receipt image that is 5 MiB or less.");
+          setFile(null);
+          return;
+        }
+        setFileError("");
+        setFile(selected);
+      }}/></label>
+      <button className="agri-button" disabled={!file || isUploading}>{isUploading ? <Loader2 className="animate-spin" size={16}/> : null} {uploadStageLabel}</button>
+      {isUploading && <p role="status" className="text-xs text-[#66766b] md:col-span-2">{uploadStageLabel} Keep this page open until the upload is complete.</p>}
+      {fileError && <p role="alert" className="text-xs text-[#a34838] md:col-span-2">{fileError}</p>}
+      {previewUrl && <img src={previewUrl} alt="Selected payment receipt preview" className="max-h-56 rounded-lg border border-[#e3e9de] object-contain md:col-span-2"/>}
+    </form> : <p className="mt-3 text-sm text-[#66766b]">{payment.status === "awaiting_verification" ? "Your receipt is awaiting Admin review." : "This payment is no longer accepting proof submissions."}</p>}
+  </article>;
+}
+
 function BuyerDashboard() {
   const utils = trpc.useUtils();
-  const { data: orders = [], isLoading } = trpc.orders.buyerMine.useQuery();
-  const { data: quotations = [] } = trpc.quotations.buyerMine.useQuery();
+  const [quotedPaymentMethod, setQuotedPaymentMethod] = useState<"cash_pickup" | "cash_delivery">("cash_pickup");
+  const ordersQuery = trpc.orders.buyerMine.useQuery();
+  const { data: orders = [], isLoading } = ordersQuery;
+  const quotationsQuery = trpc.quotations.buyerMine.useQuery();
+  const { data: quotations = [] } = quotationsQuery;
+  const paymentsQuery = trpc.payments.mine.useQuery();
+  const { data: payments = [], isLoading: paymentsLoading } = paymentsQuery;
   const refreshBuyerData = () => {
     utils.quotations.buyerMine.invalidate();
     utils.orders.buyerMine.invalidate();
@@ -74,74 +520,186 @@ function BuyerDashboard() {
     onSuccess: () => { toast.success("Order placed at the quoted unit price."); refreshBuyerData(); },
     onError: error => toast.error(error.message),
   });
-  return <><WorkspaceHeader title="Buyer workspace" description="Track direct orders, quotation requests, and face-to-face coordination."/><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-3"><Metric label="Orders placed" value={String(orders.length)} icon={ClipboardList}/><Metric label="Open quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/><Metric label="Completed orders" value={String(orders.filter(row => row.order.status === "completed").length)} icon={Check}/></div><section className="mt-8 grid gap-8 xl:grid-cols-[1.25fr_.75fr]"><div className="agri-card p-5 sm:p-6"><div className="flex items-center justify-between"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your orders</h2><p className="mt-1 text-sm text-[#6a796e]">Seller confirmations and fulfillment updates appear here.</p></div><Link href="/marketplace" className="agri-ghost text-sm no-underline">Browse listings</Link></div><div className="mt-5 space-y-3">{isLoading ? <Loader2 className="mx-auto my-10 animate-spin text-[#5d8a5e]"/> : orders.length ? orders.map(row => <div className="rounded-2xl border border-[#e3e9de] p-4" key={row.order.id}><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-bold text-[#30573e]">Order #{row.order.id} · {row.sellerName || "Farm seller"}</p><p className="mt-1 text-xs text-[#6d7d70]">{row.order.orderType} order · {when(row.order.createdAt)}</p></div><Status value={row.order.status}/></div><div className="mt-3 flex flex-wrap gap-2">{row.items.map(item => <span key={item.item.id} className="rounded-lg bg-[#f0f5ed] px-2.5 py-1.5 text-xs text-[#45614e]">{item.productName} × {item.item.quantity} {item.unit}</span>)}</div><div className="mt-3 flex items-center justify-between border-t border-[#edf0e9] pt-3"><p className="font-display font-bold text-[#27573a]">{peso(row.order.totalCents)}</p><p className="text-xs text-[#6c7a70]">Payment coordination / status</p></div></div>) : <Empty icon={ClipboardList} title="No orders yet" body="Explore local cooperative listings and submit your first order when ready."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><p className="mt-1 text-sm text-[#6a796e]">A transparent first step before an order.</p><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <div key={row.quotation.id} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex justify-between gap-2"><p className="font-bold text-[#315640]">{row.productName}</p><Status value={row.quotation.status}/></div><p className="mt-1 text-xs text-[#728076]">{row.quotation.requestedQty} {row.unit} from {row.sellerName || "farm seller"}</p>{row.quotation.quotedPriceCents !== null && <p className="mt-3 font-display text-lg font-bold text-[#2c603f]">{peso(row.quotation.quotedPriceCents)} per {row.unit}</p>}{row.quotation.sellerNote && <p className="mt-2 text-xs leading-5 text-[#637568]">“{row.quotation.sellerNote}”</p>}{row.quotation.status === "responded" && <div className="mt-3 flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "accepted" })}>Accept quote</button><button className="agri-ghost px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "declined" })}>Decline quote</button></div>}{row.quotation.status === "accepted" && <button className="agri-button mt-3 px-3 py-2 text-xs" disabled={placeQuotedOrder.isPending} onClick={() => placeQuotedOrder.mutate({ items: [{ productId: row.quotation.productId, quantity: row.quotation.requestedQty }], quotationId: row.quotation.id })}>Place order at quoted price</button>}</div>) : <Empty icon={FileText} title="No quotations yet" body="Request a quotation from any available product in the marketplace."/>}</div></div></section></main></>;
+  const queryError = ordersQuery.error ?? quotationsQuery.error ?? paymentsQuery.error;
+  const isFetching = ordersQuery.isFetching || quotationsQuery.isFetching || paymentsQuery.isFetching;
+  if (queryError) {
+    return <>
+      <WorkspaceHeader title="Buyer workspace" description="Your marketplace data could not be loaded."/>
+      <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+        <QueryErrorState
+          message={queryError.message}
+          isFetching={isFetching}
+          onRetry={() => void Promise.all([ordersQuery.refetch(), quotationsQuery.refetch(), paymentsQuery.refetch()])}
+        />
+      </main>
+    </>;
+  }
+  if (ordersQuery.isLoading || quotationsQuery.isLoading || paymentsQuery.isLoading) return <LoadingWorkspace/>;
+  return <>
+    <WorkspaceHeader title="Buyer workspace" description="Track direct orders, quotation requests, and face-to-face coordination."/>
+    <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric label="Orders placed" value={String(orders.length)} icon={ClipboardList}/>
+        <Metric label="Open quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/>
+        <Metric label="Completed orders" value={String(orders.filter(row => row.order.status === "completed").length)} icon={Check}/>
+      </div>
+      <ProfileVerificationPanel/>
+      <section className="mt-8 grid gap-8 xl:grid-cols-[1.25fr_.75fr]">
+        <div className="agri-card p-5 sm:p-6">
+          <div className="flex items-center justify-between"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your orders</h2><p className="mt-1 text-sm text-[#6a796e]">Seller confirmations and fulfillment updates appear here.</p></div><Link href="/marketplace" className="agri-ghost text-sm no-underline">Browse listings</Link></div>
+          <div className="mt-5 space-y-3">
+            {isLoading ? <Loader2 className="mx-auto my-10 animate-spin text-[#5d8a5e]"/> : orders.length ? orders.map(row => <div className="rounded-2xl border border-[#e3e9de] p-4" key={row.order.id}>
+              <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-bold text-[#30573e]">Order #{row.order.id} · {row.sellerName || "Farm seller"}</p><p className="mt-1 text-xs text-[#6d7d70]">{row.order.orderType} order · {when(row.order.createdAt)}</p></div><Status value={row.order.status}/></div>
+              <div className="mt-3 flex flex-wrap gap-2">{row.items.map(item => <span key={item.item.id} className="rounded-lg bg-[#f0f5ed] px-2.5 py-1.5 text-xs text-[#45614e]">{item.productName} × {item.item.quantity} {item.unit}</span>)}</div>
+              <div className="mt-3 flex items-center justify-between border-t border-[#edf0e9] pt-3"><p className="font-display font-bold text-[#27573a]">{peso(row.order.totalCents)}</p><p className="text-xs text-[#6c7a70]">Payment coordination / status</p></div>
+            </div>) : <Empty icon={ClipboardList} title="No orders yet" body="Explore local cooperative listings and submit your first order when ready."/>}
+          </div>
+        </div>
+        <div className="agri-card p-5 sm:p-6">
+          <h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><p className="mt-1 text-sm text-[#6a796e]">A transparent first step before an order.</p>
+          <div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <div key={row.quotation.id} className="rounded-xl bg-[#f2f6ef] p-4">
+            <div className="flex justify-between gap-2"><p className="font-bold text-[#315640]">{row.productName}</p><Status value={row.quotation.status}/></div>
+            <p className="mt-1 text-xs text-[#728076]">{row.quotation.requestedQty} {row.unit} from {row.sellerName || "farm seller"}</p>
+            {row.quotation.quotedPriceCents !== null && <p className="mt-3 font-display text-lg font-bold text-[#2c603f]">{peso(row.quotation.quotedPriceCents)} per {row.unit}</p>}
+            {row.quotation.sellerNote && <p className="mt-2 text-xs leading-5 text-[#637568]">“{row.quotation.sellerNote}”</p>}
+            {row.quotation.status === "responded" && <div className="mt-3 flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "accepted" })}>Accept quote</button><button className="agri-ghost px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "declined" })}>Decline quote</button></div>}
+            {row.quotation.status === "accepted" && <div className="mt-3 space-y-2"><label className="field-label">Payment method<select className="field-control" value={quotedPaymentMethod} onChange={event => setQuotedPaymentMethod(event.target.value as typeof quotedPaymentMethod)}><option value="cash_pickup">Cash on pickup</option><option value="cash_delivery">Cash on delivery</option></select></label><button className="agri-button px-3 py-2 text-xs" disabled={placeQuotedOrder.isPending} onClick={() => placeQuotedOrder.mutate({ items: [{ productId: row.quotation.productId, quantity: row.quotation.requestedQty }], quotationId: row.quotation.id, paymentMethod: quotedPaymentMethod })}>Place order at quoted price</button></div>}
+          </div>) : <Empty icon={FileText} title="No quotations yet" body="Request a quotation from any available product in the marketplace."/>}</div>
+        </div>
+      </section>
+      <section className="mt-8 agri-card p-5 sm:p-6">
+        <h2 className="font-display text-2xl font-bold text-[#264f37]">GCash payments</h2>
+        <p className="mt-1 text-sm text-[#6a796e]">Submit a receipt for review after paying with the seller’s configured GCash option.</p>
+        <div className="mt-5 space-y-4">
+          {paymentsLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : payments.filter(payment => payment.paymentMethod === "gcash").map(payment => <BuyerPaymentProof key={payment.id} payment={payment} onSubmitted={() => { void utils.payments.mine.invalidate(); void utils.orders.buyerMine.invalidate(); }}/>)}
+          {!paymentsLoading && !payments.some(payment => payment.paymentMethod === "gcash") && <Empty icon={ClipboardList} title="No GCash payments" body="GCash payment records will appear here after placing a GCash order."/>}
+        </div>
+      </section>
+    </main>
+  </>;
 }
 
 function SellerProductCard({ product }: { product: any }) {
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageUrls, setImageUrls] = useState<string[]>(product.imageUrls?.length ? product.imageUrls : product.primaryImageUrl ? [product.primaryImageUrl] : []);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imageError, setImageError] = useState("");
-  const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), imageUrl: product.primaryImageUrl || "", qualityGrade: product.qualityGrade, status: product.status });
-  const update = trpc.products.update.useMutation({ onSuccess: () => { toast.success("Listing and inventory updated."); setEditing(false); setImageFile(null); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
+  const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), qualityGrade: product.qualityGrade, status: product.status });
+  const update = trpc.products.update.useMutation({ onSuccess: result => { toast.success(result.reviewRequired ? "Listing changes submitted for review and hidden until approval." : "Listing and inventory updated."); setEditing(false); setImageFiles([]); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
   const uploadImage = trpc.products.uploadImage.useMutation();
   const archive = trpc.products.archive.useMutation({ onSuccess: () => { toast.success("Listing archived."); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
   const submitProduct = trpc.products.submit.useMutation({ onSuccess: () => { toast.success("Product submitted for verification."); utils.products.mine.invalidate(); }, onError: error => toast.error(error.message) });
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (Number(values.minOrderQty) > Number(values.stock)) return;
-    let primaryImageUrl = values.imageUrl || null;
-    if (imageFile) {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(imageFile.type) || imageFile.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
-        setImageError("Choose a JPEG, PNG, or WebP image that is 5 MB or less.");
-        return;
-      }
-      try {
-        const uploaded = await uploadImage.mutateAsync({ fileName: imageFile.name, contentType: imageFile.type as "image/jpeg" | "image/png" | "image/webp", base64: await readImageAsBase64(imageFile) });
-        primaryImageUrl = uploaded.url;
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Image upload failed.");
-        return;
-      }
+    if (Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock)) {
+      toast.error("Minimum order cannot exceed available stock.");
+      return;
     }
-    update.mutate({ id: product.id, name: values.name, category: values.category, variety: values.variety, description: values.description, unit: values.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(values.price) * 100), stockQty: Number(values.stock), minOrderQty: Number(values.minOrderQty), qualityGrade: values.qualityGrade, status: values.status, primaryImageUrl });
+    if (imageError) {
+      toast.error(imageError);
+      return;
+    }
+    try {
+      const uploadedUrls = await uploadProductImageFiles(imageFiles, uploadImage.mutateAsync);
+      const nextImageUrls = [...imageUrls, ...uploadedUrls];
+      update.mutate(
+        { id: product.id, name: values.name, category: values.category, variety: values.variety, description: values.description, unit: values.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(values.price) * 100), stockQty: Number(values.stock), minOrderQty: Number(values.minOrderQty), qualityGrade: values.qualityGrade, status: values.status, imageUrls: nextImageUrls },
+        { onSuccess: () => setImageUrls(nextImageUrls) },
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Image upload failed.");
+    }
   };
-  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="1" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={values.stock} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><label className="field-label mt-3">Product image upload<input className="field-control" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { setImageFile(e.target.files?.[0] ?? null); setImageError(""); }}/></label>{imageError && <p role="alert" className="text-xs text-[#a34838]">{imageError}</p>}<label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
+  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
   return <div className="rounded-2xl border border-[#e2e9dd] p-4"><div className="flex justify-between gap-3"><span className="rounded-full bg-[#eef5ea] px-2 py-1 text-xs font-bold text-[#4d784c]">{product.category}</span><Status value={product.verificationStatus || product.status}/></div><h3 className="mt-4 font-display text-xl font-bold text-[#28523a]">{product.name}</h3><p className="mt-1 text-sm text-[#647468]">{product.variety} · {peso(product.priceCents)} per {product.unit}</p><div className="mt-4 flex items-center justify-between border-t border-[#edf0e9] pt-3"><span className="text-xs font-bold text-[#607363]">Stock: {product.stockQty} {product.unit} · Minimum: {product.minOrderQty} {product.unit}</span><span className="text-xs text-[#688068]">{product.qualityGrade}</span></div><div className="mt-4 flex gap-3"><button onClick={() => setEditing(true)} className="agri-ghost px-3 py-2 text-xs">Edit listing</button>{product.verificationStatus !== "pending" && product.verificationStatus !== "approved" && <button onClick={() => submitProduct.mutate({ id: product.id })} className="agri-button px-3 py-2 text-xs">Submit for verification</button>}{product.status === "published" && <button onClick={() => archive.mutate({ id: product.id })} className="text-xs font-bold text-[#a34838]">Archive</button>}</div></div>;
 }
 function QuotationResponse({ row, onRespond }: { row: any; onRespond: (price: number, note: string | undefined, status: "responded" | "declined") => void }) {
-  const [price, setPrice] = useState(""); const [note, setNote] = useState("");
-  return <div className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex justify-between gap-2"><div><p className="font-bold text-[#315640]">{row.productName}</p><p className="mt-1 text-xs text-[#6d7d70]">{row.buyerName || "Buyer"} requests {row.quotation.requestedQty} {row.unit}</p></div><Status value={row.quotation.status}/></div>{row.quotation.buyerNote && <p className="mt-2 text-xs italic leading-5 text-[#647568]">“{row.quotation.buyerNote}”</p>}{row.quotation.status === "requested" && <div className="mt-3 flex gap-2"><label className="sr-only" htmlFor={`quotation-price-${row.quotation.id}`}>Price per unit (PHP)</label><input id={`quotation-price-${row.quotation.id}`} type="number" min="0.01" step="0.01" value={price} onChange={e => setPrice(e.target.value)} placeholder="Price per unit (PHP)" className="field-control mt-0 text-sm"/><button disabled={!price} onClick={() => onRespond(Math.round(Number(price) * 100), note || undefined, "responded")} className="agri-button shrink-0 px-3 py-2 text-xs">Reply</button><button onClick={() => onRespond(1, note || undefined, "declined")} className="text-xs font-bold text-[#a34838]">Decline</button></div>}</div>;
+  const [price, setPrice] = useState("");
+  const [note, setNote] = useState("");
+  const submitResponse = (event: FormEvent) => {
+    event.preventDefault();
+    const quotedPriceCents = Math.round(Number(price) * 100);
+    if (!Number.isSafeInteger(quotedPriceCents) || quotedPriceCents <= 0) return;
+    onRespond(quotedPriceCents, note.trim() || undefined, "responded");
+  };
+
+  return <div className="rounded-xl bg-[#f2f6ef] p-4">
+    <div className="flex justify-between gap-2">
+      <div>
+        <p className="font-bold text-[#315640]">{row.productName}</p>
+        <p className="mt-1 text-xs text-[#6d7d70]">{row.buyerName || "Buyer"} requests {row.quotation.requestedQty} {row.unit}</p>
+      </div>
+      <Status value={row.quotation.status}/>
+    </div>
+    {row.quotation.buyerNote && <p className="mt-2 text-xs italic leading-5 text-[#647568]">“{row.quotation.buyerNote}”</p>}
+    {row.quotation.status === "requested" && <form onSubmit={submitResponse} className="mt-3 space-y-3">
+      <label className="field-label">Price per unit (PHP)
+        <input required type="number" min="0.01" step="0.01" value={price} onChange={event => setPrice(event.target.value)} className="field-control"/>
+      </label>
+      <label className="field-label">Note for the buyer (optional)
+        <textarea maxLength={600} value={note} onChange={event => setNote(event.target.value)} className="field-control min-h-20"/>
+      </label>
+      <div className="flex gap-2">
+        <button type="submit" className="agri-button shrink-0 px-3 py-2 text-xs">Reply</button>
+        <button type="button" onClick={() => onRespond(1, note.trim() || undefined, "declined")} className="text-xs font-bold text-[#a34838]">Decline</button>
+      </div>
+    </form>}
+  </div>;
 }
 
 function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void } = {}) {
-  const utils = trpc.useUtils(); const { user } = useAuth(); const { data: products = [], isLoading } = trpc.products.mine.useQuery(); const { data: orders = [] } = trpc.orders.sellerMine.useQuery(undefined, { enabled: user?.role === "seller" }); const { data: quotations = [] } = trpc.quotations.sellerMine.useQuery(undefined, { enabled: user?.role === "seller" });
+  const utils = trpc.useUtils(); const { user } = useAuth(); const productsQuery = trpc.products.mine.useQuery(); const { data: products = [], isLoading } = productsQuery; const ordersQuery = trpc.orders.sellerMine.useQuery(undefined, { enabled: user?.role === "seller" }); const { data: orders = [] } = ordersQuery; const quotationsQuery = trpc.quotations.sellerMine.useQuery(undefined, { enabled: user?.role === "seller" }); const { data: quotations = [] } = quotationsQuery;
   const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect" });
-  const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFile, setImageFile] = useState<File | null>(null); const [imageError, setImageError] = useState("");
+  const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFiles, setImageFiles] = useState<File[]>([]); const [imageError, setImageError] = useState("");
   const uploadImage = trpc.products.uploadImage.useMutation();
-  const create = trpc.products.create.useMutation({ onSuccess: () => { toast.success("Product listing submitted for verification."); setOpenForm(false); setForm(emptyForm()); setImageFile(null); setImageError(""); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
+  const create = trpc.products.create.useMutation({ onSuccess: () => { toast.success("Product listing submitted for verification."); setOpenForm(false); setForm(emptyForm()); setImageFiles([]); setImageError(""); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
   const updateStatus = trpc.orders.updateStatus.useMutation({ onSuccess: () => { toast.success("Order status updated."); utils.orders.sellerMine.invalidate(); utils.products.mine.invalidate(); }, onError: error => toast.error(error.message) });
+  const recordCashReceipt = trpc.payments.recordCashReceipt.useMutation({ onSuccess: () => { toast.success("Cash receipt recorded."); utils.orders.sellerMine.invalidate(); utils.orders.buyerMine.invalidate(); utils.payments.mine.invalidate(); }, onError: error => toast.error(error.message) });
   const respond = trpc.quotations.respond.useMutation({ onSuccess: () => { toast.success("Quotation response sent."); utils.quotations.sellerMine.invalidate(); }, onError: error => toast.error(error.message) });
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (Number(form.minOrderQty) > Number(form.stock)) return;
-    let imageUrl: string | undefined;
-    if (imageFile) {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(imageFile.type) || imageFile.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
-        setImageError("Choose a JPEG, PNG, or WebP image that is 5 MB or less.");
-        return;
-      }
-      try {
-        imageUrl = (await uploadImage.mutateAsync({ fileName: imageFile.name, contentType: imageFile.type as "image/jpeg" | "image/png" | "image/webp", base64: await readImageAsBase64(imageFile) })).url;
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Image upload failed.");
-        return;
-      }
+    if (Number(form.minOrderQty) > Number(form.stock) || imageError) return;
+    try {
+      const imageUrls = await uploadProductImageFiles(imageFiles, uploadImage.mutateAsync);
+      create.mutate({ name: form.name, category: form.category, variety: form.variety, description: form.description, unit: form.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(form.price) * 100), stockQty: Number(form.stock), minOrderQty: Number(form.minOrderQty), qualityGrade: form.qualityGrade, imageUrls });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Image upload failed.");
     }
-    create.mutate({ name: form.name, category: form.category, variety: form.variety, description: form.description, unit: form.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(form.price) * 100), stockQty: Number(form.stock), minOrderQty: Number(form.minOrderQty), qualityGrade: form.qualityGrade, imageUrls: imageUrl ? [imageUrl] : [] });
   };
-  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(products.filter(product => product.status === "published").length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p></div><button className="agri-button text-sm" onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{openForm && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><label className="field-label">Product image upload<input className="field-control" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { setImageFile(e.target.files?.[0] ?? null); setImageError(""); }}/>{imageError && <span role="alert" className="mt-1 block text-xs text-[#a34838]">{imageError}</span>}</label><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:row-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div><button disabled={create.isPending || uploadImage.isPending} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : products.length ? products.map(product => <SellerProductCard key={product.id} product={product}/>) : <Empty icon={Package} title="No products published" body="Add your first harvest to begin reaching buyers."/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><p className="font-bold text-[#315640]">Order #{row.order.id} · {row.buyerName || "Buyer"}</p><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete and record.</p>}<button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
+  const queryError = productsQuery.error
+    ?? (user?.role === "seller" ? ordersQuery.error ?? quotationsQuery.error : undefined);
+  const queryFetching = productsQuery.isFetching || ordersQuery.isFetching || quotationsQuery.isFetching;
+  if (queryError) {
+    return <>
+      <WorkspaceHeader title="Seller workspace" description="Marketplace data could not be loaded."/>
+      <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+        <QueryErrorState
+          message={queryError.message}
+          isFetching={queryFetching}
+          onRetry={() => void Promise.all([
+            productsQuery.refetch(),
+            ...(user?.role === "seller" ? [ordersQuery.refetch(), quotationsQuery.refetch()] : []),
+          ])}
+        />
+      </main>
+    </>;
+  }
+  if (productsQuery.isLoading || (user?.role === "seller" && (ordersQuery.isLoading || quotationsQuery.isLoading))) {
+    return <LoadingWorkspace/>;
+  }
+  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(products.filter(product => product.status === "published").length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p></div><button className="agri-button text-sm" onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{openForm && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:row-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : products.length ? products.map(product => <SellerProductCard key={product.id} product={product}/>) : <Empty icon={Package} title="No products published" body="Add your first harvest to begin reaching buyers."/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><p className="font-bold text-[#315640]">Order #{row.order.id} · {row.buyerName || "Buyer"}</p><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}  {row.order.status === "ready" && row.order.paymentStatus !== "paid" && row.payment && (row.order.paymentMethod === "cash_pickup" || row.order.paymentMethod === "cash_delivery") && <button disabled={recordCashReceipt.isPending} onClick={() => recordCashReceipt.mutate({ orderId: row.order.id })} className="agri-ghost px-3 py-2 text-xs">Record cash received</button>}<button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
 }
+
+function SellerVerificationWorkspace() {
+  const { user } = useAuth();
+  return <>
+    {user?.cooperativeId === null && <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><SellerAssociationRequestPanel/></div>}
+    <SellerDashboard/>
+    <main className="mx-auto max-w-7xl px-4 pb-8 sm:px-6 lg:px-8"><ProfileVerificationPanel/></main>
+  </>;
+}
+
 function OfficerDashboard() {
   const utils = trpc.useUtils(); const { data: overview, isLoading, error } = trpc.cooperativeAdmin.overview.useQuery();
   const updateMember = trpc.cooperativeAdmin.updateMemberStatus.useMutation({ onSuccess: () => { toast.success("Member status updated."); utils.cooperativeAdmin.overview.invalidate(); }, onError: problem => toast.error(problem.message) });
@@ -160,9 +718,10 @@ function AdminUserRow({ user, cooperativeName, cooperatives, canAssignSuperAdmin
 function AdminOrderCard({ orderId }: { orderId: number }) {
   const utils = trpc.useUtils();
   const [completionOpen, setCompletionOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [finalQuantities, setFinalQuantities] = useState<Record<number, string>>({});
   const [completionError, setCompletionError] = useState("");
-  const { data, isLoading, error } = trpc.cooperativeAdmin.orderDetails.useQuery({ orderId });
+  const { data, isLoading, isFetching, error, refetch } = trpc.cooperativeAdmin.orderDetails.useQuery({ orderId });
   const updateStatus = trpc.orders.updateStatus.useMutation({
     onSuccess: async () => {
       toast.success("Order updated.");
@@ -178,6 +737,17 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
       setCompletionError(problem.message);
       toast.error(problem.message);
     },
+  });
+  const recordCashReceipt = trpc.payments.recordCashReceipt.useMutation({
+    onSuccess: async () => {
+      toast.success("Cash receipt recorded.");
+      await Promise.all([
+        utils.cooperativeAdmin.orderDetails.invalidate({ orderId }),
+        utils.admin.overview.invalidate(),
+        utils.payments.mine.invalidate(),
+      ]);
+    },
+    onError: problem => toast.error(problem.message),
   });
   const items = data?.items ?? [];
   const quantityError = (value: string, stockQty: number) => {
@@ -219,14 +789,15 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
       finalItems: validQuantities.map(({ item, value }) => ({ orderItemId: item.id, quantity: Number(value) })),
     });
   };
-  const cancelOrder = () => {
-    if (window.confirm("Cancel this order? No stock will be deducted.")) {
-      updateStatus.mutate({ orderId, status: "cancelled" });
-    }
-  };
+  const cancelOrder = () => setCancelOpen(true);
 
   if (isLoading) return <div className="rounded-xl bg-[#f2f6ef] p-4 text-sm text-[#6c7c70]">Loading order #{orderId}…</div>;
-  if (error || !data) return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Could not load order #{orderId}: {error?.message ?? "Order details are unavailable."}</div>;
+  if (error || !data) return <AdminOrderDetailsQueryError
+    orderId={orderId}
+    message={error?.message ?? "Order details are unavailable."}
+    isRetrying={isFetching}
+    onRetry={() => { void refetch(); }}
+  />;
 
   return <article className="rounded-xl border border-[#e2e9dd] bg-[#f8faf6] p-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -240,6 +811,7 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
       {items.map(({ item, productName, unit }) => <p key={item.id}>{productName} × {item.quantity} {unit} · {peso(item.unitPriceCents * item.quantity)}</p>)}
     </div>
     <div className="mt-4 flex flex-wrap gap-2">
+      {data.order.status === "ready" && data.payment && data.order.paymentStatus !== "paid" && (data.order.paymentMethod === "cash_pickup" || data.order.paymentMethod === "cash_delivery") && <div><p className="mb-1 text-xs text-[#6c7c70]">Record only after the full cash amount is received.</p><button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={recordCashReceipt.isPending} onClick={() => recordCashReceipt.mutate({ orderId: data.order.id })}>Record cash received</button></div>}
       {data.order.status === "ready" && <button type="button" className="agri-button px-3 py-2 text-xs" onClick={startCompletion}>Complete</button>}
       {data.order.status !== "completed" && data.order.status !== "cancelled" && <button type="button" className="px-3 py-2 text-xs font-bold text-[#a34838]" onClick={cancelOrder}>Cancel</button>}
     </div>
@@ -293,20 +865,118 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
         </div>
       </form>
     </div>}
+    <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Cancel order #{orderId}?</AlertDialogTitle>
+          <AlertDialogDescription>This action cannot be undone. No stock will be deducted.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={updateStatus.isPending}>Keep order</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={updateStatus.isPending}
+            onClick={() => updateStatus.mutate({ orderId, status: "cancelled" })}
+          >
+            Cancel order
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </article>;
+}
+
+function AdminPaymentReviewQueue() {
+  const utils = trpc.useUtils();
+  const [reasons, setReasons] = useState<Record<number, string>>({});
+  const { data: queue = [], isLoading, isFetching, error, refetch } = trpc.payments.reviewQueue.useQuery();
+  const review = trpc.payments.reviewProof.useMutation({
+    onSuccess: () => {
+      toast.success("Payment review saved.");
+      void utils.payments.reviewQueue.invalidate();
+      void utils.payments.mine.invalidate();
+      void utils.admin.overview.invalidate();
+    },
+    onError: mutationError => toast.error(mutationError.message),
+  });
+  return <section className="mt-8 agri-card p-5 sm:p-6">
+    <h2 className="font-display text-2xl font-bold text-[#264f37]">GCash payment review</h2>
+    <p className="mt-1 text-sm text-[#6a796e]">Review private receipt images before marking a payment verified or rejected.</p>
+    {error ? <div className="mt-4 text-sm text-[#a34838]"><p role="alert">{error.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={isFetching} onClick={() => void refetch()}>Retry</button></div> : isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : queue.length ? <div className="mt-5 space-y-4">{queue.map(row => <article key={row.proof.id} className="rounded-xl border border-[#e3e9de] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-bold text-[#315640]">Order #{row.order.id} · {peso(Number(row.order.totalCents))}</p><p className="mt-1 text-xs text-[#6d7d70]">Proof #{row.proof.id} · {row.proof.originalFileName ?? "Receipt image"}</p></div><Status value={row.proof.verificationStatus}/></div>
+      {row.evidenceUrl ? <a href={row.evidenceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-bold text-[#397549] underline">Open private receipt image</a> : <p className="mt-3 text-sm text-[#a34838]">{row.evidenceUnavailable ? "The private receipt is unavailable. Check Storage configuration; reject this attempt with a reason so the buyer can resubmit." : "No valid private receipt is available for this payment."}</p>}
+      {row.proof.verificationStatus === "pending" && <div className="mt-4 flex flex-wrap items-end gap-3">
+        <label className="field-label min-w-56 flex-1">Review note (required when rejecting)<textarea maxLength={600} className="field-control min-h-16" value={reasons[row.proof.id] ?? ""} onChange={event => setReasons(current => ({ ...current, [row.proof.id]: event.target.value }))}/></label>
+        <button className="agri-button" disabled={review.isPending || !row.evidenceUrl} onClick={() => review.mutate({ proofId: row.proof.id, decision: "verified", reviewNote: reasons[row.proof.id]?.trim() || undefined })}>Verify payment</button>
+        <button className="agri-ghost text-[#a34838]" disabled={review.isPending || !reasons[row.proof.id]?.trim()} onClick={() => review.mutate({ proofId: row.proof.id, decision: "rejected", reviewNote: reasons[row.proof.id]?.trim() })}>Reject proof</button>
+      </div>}
+    </article>)}</div> : <p className="py-6 text-center text-sm text-[#6d7d70]">No GCash payments are waiting for review.</p>}
+  </section>;
+}
+
+function AdminProfileVerificationQueue() {
+  const utils = trpc.useUtils();
+  const [reasons, setReasons] = useState<Record<number, string>>({});
+  const { data: queue = [], isLoading, isFetching, error, refetch } = trpc.account.verificationQueue.useQuery();
+  const review = trpc.account.reviewVerification.useMutation({
+    onSuccess: async () => {
+      toast.success("Profile verification decision saved.");
+      setReasons({});
+      await Promise.all([
+        utils.account.verificationQueue.invalidate(),
+        utils.admin.overview.invalidate(),
+      ]);
+    },
+    onError: mutationError => toast.error(mutationError.message),
+  });
+  return <section className="mt-8 agri-card p-5 sm:p-6">
+    <h2 className="font-display text-2xl font-bold text-[#264f37]">Profile verification queue</h2>
+    <p className="mt-1 text-sm text-[#6a796e]">Review private applicant documents. Admins see only their cooperative; SuperAdmins see platform-wide submissions.</p>
+    {error ? <div className="mt-4 text-sm text-[#a34838]"><p role="alert">{error.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={isFetching} onClick={() => void refetch()}>Retry</button></div>
+      : isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/>
+        : queue.length ? <div className="mt-5 space-y-4">{queue.map(row => <article key={row.submissionId} className="rounded-xl border border-[#e3e9de] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><p className="font-bold text-[#315640]">{row.name || "Unnamed applicant"} · User #{row.userId}</p><p className="mt-1 text-xs capitalize text-[#6d7d70]">{row.role} · Cooperative {row.cooperativeId ?? "unassigned"} · Submitted {when(row.submittedAt)}</p></div>
+            <Status value="pending"/>
+          </div>
+          <dl className="mt-3 grid gap-2 rounded-lg bg-[#f5f7f3] p-3 text-sm sm:grid-cols-2">
+            <div><dt className="text-xs text-[#718074]">Birthdate</dt><dd>{when(row.birthdate)}</dd></div>
+            <div><dt className="text-xs text-[#718074]">Contact number</dt><dd>{row.phone || "Not provided"}</dd></div>
+            <div className="sm:col-span-2"><dt className="text-xs text-[#718074]">Address</dt><dd>{row.address || "Not provided"}</dd></div>
+            {row.submissionNote && <div className="sm:col-span-2"><dt className="text-xs text-[#718074]">Applicant note</dt><dd className="whitespace-pre-wrap">{row.submissionNote}</dd></div>}
+          </dl>
+          {row.evidenceUrl ? <a href={row.evidenceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-bold text-[#397549] underline">Open private verification image</a>
+            : <p role="alert" className="mt-3 text-sm text-[#a34838]">The private evidence is unavailable. Check the bucket setup; approval is disabled until evidence is accessible.</p>}
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="field-label min-w-56 flex-1">Review note (required when rejecting)<textarea maxLength={600} className="field-control min-h-16" value={reasons[row.submissionId] ?? ""} onChange={event => setReasons(current => ({ ...current, [row.submissionId]: event.target.value }))}/></label>
+            <button type="button" className="agri-button" disabled={review.isPending || !row.evidenceUrl} onClick={() => review.mutate({ submissionId: row.submissionId, decision: "approved" })}>Approve</button>
+            <button type="button" className="agri-ghost text-[#a34838]" disabled={review.isPending || !reasons[row.submissionId]?.trim()} onClick={() => review.mutate({ submissionId: row.submissionId, decision: "rejected", note: reasons[row.submissionId]?.trim() })}>Reject</button>
+          </div>
+        </article>)}</div>
+          : <p className="py-6 text-center text-sm text-[#6d7d70]">No profiles are waiting for review.</p>}
+  </section>;
 }
 
 function AdminDashboard() {
   const [sellerMode, setSellerMode] = useState(false);
+  const [rejectingProductId, setRejectingProductId] = useState<number | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
   const { user } = useAuth();
-  const utils = trpc.useUtils(); const { data: overview, isLoading } = trpc.admin.overview.useQuery(); const [name, setName] = useState(""); const [location, setLocation] = useState("");
+  const utils = trpc.useUtils(); const overviewQuery = trpc.admin.overview.useQuery(); const { data: overview, isLoading } = overviewQuery; const [name, setName] = useState(""); const [location, setLocation] = useState("");
   const createCooperative = trpc.cooperatives.create.useMutation({ onSuccess: () => { toast.success("Cooperative added."); setName(""); setLocation(""); utils.admin.overview.invalidate(); utils.cooperatives.list.invalidate(); }, onError: error => toast.error(error.message) });
-  const updateUser = trpc.admin.updateUser.useMutation({ onSuccess: () => { toast.success("User settings saved."); utils.admin.overview.invalidate(); }, onError: error => toast.error(error.message) }); const reviewProduct = trpc.admin.reviewProduct.useMutation({ onSuccess: () => { toast.success("Product review saved."); utils.admin.overview.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
-  if (sellerMode) return <SellerDashboard onExitSellerMode={() => setSellerMode(false)}/>; if (isLoading) return <LoadingWorkspace/>;
-  return <><WorkspaceHeader title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"} description={user?.role === "superadmin" ? "Coordinate roles, cooperative assignments, and platform-wide marketplace oversight." : "Manage listings and accounts within your assigned cooperative."}/><div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><button className="agri-ghost text-sm" onClick={() => setSellerMode(true)}>Act as seller</button></div><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-4"><Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users}/><Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store}/><Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package}/><Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList}/></div><section className="mt-8 agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Order fulfillment</h2><p className="mt-1 text-sm text-[#6a796e]">Complete ready orders with actual delivered quantities, or cancel without deducting stock.</p><div className="mt-5 space-y-3">{overview?.orders.filter(order => order.status !== "completed" && order.status !== "cancelled").map(order => <AdminOrderCard key={order.id} orderId={order.id}/>)}{!overview?.orders.some(order => order.status !== "completed" && order.status !== "cancelled") && <p className="py-5 text-center text-sm text-[#6d7d70]">No orders are waiting for fulfillment.</p>}</div></section><section className="mt-8 agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2><p className="mt-1 text-sm text-[#6a796e]">Approve Seller submissions before buyer visibility is enabled.</p></div><div className="grid gap-3 border-t border-[#e3e9de] p-5 sm:grid-cols-2 lg:grid-cols-3">{overview?.products.filter(product => product.verificationStatus === "pending").map(product => <div key={product.id} className="rounded-2xl border border-[#e2e9dd] p-4"><p className="font-display text-xl font-bold text-[#28523a]">{product.name}</p><p className="mt-1 text-xs text-[#6d7d70]">{product.category} · {peso(product.priceCents)} / {product.unit}</p><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" onClick={() => reviewProduct.mutate({ productId: product.id, decision: "approved" })}>Approve</button><button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => { const reason = window.prompt("Rejection reason:"); if (reason?.trim()) reviewProduct.mutate({ productId: product.id, decision: "rejected", rejectionReason: reason.trim() }); }}>Reject</button></div></div>)}{!overview?.products.some(product => product.verificationStatus === "pending") && <p className="col-span-full py-6 text-center text-sm text-[#6d7d70]">No products are waiting for review.</p>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-[1.3fr_.7fr]"><div className="agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2><p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p></div><div className="overflow-x-auto border-t border-[#e3e9de]"><table className="w-full min-w-[860px] text-left text-sm"><thead className="bg-[#f1f6ee] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="p-3">User</th><th className="p-3">Role</th><th className="p-3">Cooperative</th><th className="p-3">Approval</th><th className="p-3"></th></tr></thead><tbody>{overview?.users.map(row => <AdminUserRow key={row.user.id} user={row.user} cooperativeName={row.cooperativeName} cooperatives={overview.cooperatives} canAssignSuperAdmin={user?.role === "superadmin"} onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}/>)}</tbody></table>{!overview?.users.length && <p className="p-8 text-center text-sm text-[#6d7d70]">No user accounts are available yet.</p>}</div></div><div className="space-y-8"><form onSubmit={event => { event.preventDefault(); createCooperative.mutate({ name, location }); }} className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2><label className="field-label mt-4">Cooperative name<input required className="field-control" value={name} onChange={e => setName(e.target.value)}/></label><label className="field-label mt-4">Location<input required className="field-control" value={location} onChange={e => setLocation(e.target.value)} placeholder="City, Province"/></label><button className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16}/> Create cooperative</button></form><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Platform activity</h2><div className="mt-4 space-y-3">{overview?.orders.slice(0, 5).map(order => <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}><div><p className="font-bold text-[#315640]">Order #{order.id}</p><p className="text-xs text-[#6c7c70]">{peso(order.totalCents)} · {when(order.createdAt)}</p></div><Status value={order.status}/></div>)}{!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}</div></div></div></section></main></>;
+  const updateUser = trpc.admin.updateUser.useMutation({ onSuccess: () => { toast.success("User settings saved."); utils.admin.overview.invalidate(); }, onError: error => toast.error(error.message) }); const reviewProduct = trpc.admin.reviewProduct.useMutation({ onSuccess: () => { toast.success("Product review saved."); setRejectingProductId(null); setRejectionReason(""); utils.admin.overview.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(error.message) });
+  if (sellerMode) return <SellerDashboard onExitSellerMode={() => setSellerMode(false)}/>; if (isLoading) return <LoadingWorkspace/>; if (overviewQuery.error) return <><WorkspaceHeader title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"} description="Your authorized platform summary could not be loaded."/><main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8"><QueryErrorState message={overviewQuery.error.message} isFetching={overviewQuery.isFetching} onRetry={() => void overviewQuery.refetch()}/></main></>;
+  return <><WorkspaceHeader title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"} description={user?.role === "superadmin" ? "Coordinate roles, cooperative assignments, and platform-wide marketplace oversight." : "Manage listings and accounts within your assigned cooperative."}/><div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6 lg:px-8"><button className="agri-ghost text-sm" onClick={() => setSellerMode(true)}>Act as seller</button></div><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="grid gap-4 md:grid-cols-4"><Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users}/><Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store}/><Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package}/><Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList}/></div>
+  <section className="mt-8 flex flex-wrap items-center justify-between gap-4 agri-card p-5 sm:p-6"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Payment Options</h2><p className="mt-1 text-sm text-[#6a796e]">Manage QR images, payment instructions, and checkout availability.</p></div><Link href="/admin/payment-options" className="agri-button text-sm no-underline">Manage payment options</Link></section>
+  <AdminPaymentReviewQueue/>
+  <AdminProfileVerificationQueue/>
+  <AdminRefundManagement/>
+  <AssociationRequestsManager/>
+  <section className="mt-8 agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Order fulfillment</h2><p className="mt-1 text-sm text-[#6a796e]">Complete ready orders with actual delivered quantities, or cancel without deducting stock.</p><div className="mt-5 space-y-3">{overview?.orders.filter(order => order.status !== "completed" && order.status !== "cancelled").map(order => <AdminOrderCard key={order.id} orderId={order.id}/>)}{!overview?.orders.some(order => order.status !== "completed" && order.status !== "cancelled") && <p className="py-5 text-center text-sm text-[#6d7d70]">No orders are waiting for fulfillment.</p>}</div></section><section className="mt-8 agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2><p className="mt-1 text-sm text-[#6a796e]">Approve Seller submissions before buyer visibility is enabled.</p></div><div className="grid gap-3 border-t border-[#e3e9de] p-5 sm:grid-cols-2 lg:grid-cols-3">{overview?.products.filter(product => product.verificationStatus === "pending").map(product => <div key={product.id} className="rounded-2xl border border-[#e2e9dd] p-4"><p className="font-display text-xl font-bold text-[#28523a]">{product.name}</p><p className="mt-1 text-xs text-[#6d7d70]">{product.category} · {peso(product.priceCents)} / {product.unit}</p><div className="mt-4 flex gap-2"><button className="agri-button px-3 py-2 text-xs" onClick={() => reviewProduct.mutate({ productId: product.id, decision: "approved" })}>Approve</button><button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => { setRejectingProductId(product.id); setRejectionReason(""); }}>Reject</button></div>{rejectingProductId === product.id && <form onSubmit={event => { event.preventDefault(); const reason = rejectionReason.trim(); if (reason) reviewProduct.mutate({ productId: product.id, decision: "rejected", rejectionReason: reason }); }} className="mt-4 space-y-3"><label className="field-label">Rejection reason<textarea required maxLength={600} className="field-control min-h-20" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)}/></label><div className="flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={reviewProduct.isPending || !rejectionReason.trim()}>Submit rejection</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setRejectingProductId(null)}>Keep in queue</button></div></form>}</div>)}{!overview?.products.some(product => product.verificationStatus === "pending") && <p className="col-span-full py-6 text-center text-sm text-[#6d7d70]">No products are waiting for review.</p>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-[1.3fr_.7fr]"><div className="agri-card overflow-hidden"><div className="p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2><p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p></div><div className="overflow-x-auto border-t border-[#e3e9de]"><table className="w-full min-w-[860px] text-left text-sm"><thead className="bg-[#f1f6ee] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="p-3">User</th><th className="p-3">Role</th><th className="p-3">Cooperative</th><th className="p-3">Approval</th><th className="p-3"></th></tr></thead><tbody>{overview?.users.map(row => <AdminUserRow key={row.user.id} user={row.user} cooperativeName={row.cooperativeName} cooperatives={overview.cooperatives} canAssignSuperAdmin={user?.role === "superadmin"} onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}/>)}</tbody></table>{!overview?.users.length && <p className="p-8 text-center text-sm text-[#6d7d70]">No user accounts are available yet.</p>}</div></div><div className="space-y-8">{user?.role === "superadmin" && <form onSubmit={event => { event.preventDefault(); createCooperative.mutate({ name, location }); }} className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2><label className="field-label mt-4">Cooperative name<input required className="field-control" value={name} onChange={e => setName(e.target.value)}/></label><label className="field-label mt-4">Location<input required className="field-control" value={location} onChange={e => setLocation(e.target.value)} placeholder="City, Province"/></label><button className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16}/> Create cooperative</button></form>}<div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Platform activity</h2><div className="mt-4 space-y-3">{overview?.orders.slice(0, 5).map(order => <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}><div><p className="font-bold text-[#315640]">Order #{order.id}</p><p className="text-xs text-[#6c7c70]">{peso(order.totalCents)} · {when(order.createdAt)}</p></div><Status value={order.status}/></div>)}{!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}</div></div></div></section></main></>;
 }
 
 export default function Dashboard() {
   const { user } = useAuth();
-  return <AuthGate>{user?.role === "admin" || user?.role === "superadmin" ? <AdminDashboard/> : user?.role === "seller" ? <SellerDashboard/> : user?.role === "buyer" ? <BuyerDashboard/> : <Onboarding/>}</AuthGate>;
+  // AdminDashboard is coop-scoped for officers via admin.overview; SuperAdmin sees platform-wide queues.
+  // OfficerDashboard remains available as a lighter member-focused view if we split routes later.
+  return <AuthGate>{user?.role === "admin" || user?.role === "superadmin" ? <AdminDashboard/> : user?.role === "seller" ? <SellerVerificationWorkspace/> : user?.role === "buyer" ? <BuyerDashboard/> : <Onboarding/>}</AuthGate>;
 }

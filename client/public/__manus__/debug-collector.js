@@ -35,6 +35,20 @@
       "authorization",
       "cookie",
       "session",
+      "code",
+      "email",
+      "phone",
+      "address",
+      "birthdate",
+      "username",
+      "userid",
+      "user_id",
+      "openid",
+      "uuid",
+      "name",
+      "text",
+      "arialabel",
+      "id",
     ],
     maxBodyLength: 10240,
     // UI event logging privacy policy:
@@ -61,6 +75,55 @@
   // Utility Functions
   // ==========================================================================
 
+  function isSensitiveField(key) {
+    return CONFIG.sensitiveFields.some(function (field) {
+      return String(key).toLowerCase().indexOf(field) !== -1;
+    });
+  }
+
+  function sanitizeText(value) {
+    return String(value)
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
+      .replace(/(^|[?&#])([^=]*(?:token|secret|password|key|authorization|cookie|session|code|email|phone|address|name)[^=]*=)[^&#\s]*/gi, "$1$2[REDACTED]")
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]");
+  }
+
+  function sanitizeUrl(value) {
+    try {
+      var isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value));
+      var parsed = new URL(String(value), window.location.href);
+      parsed.username = "";
+      parsed.password = "";
+      parsed.searchParams.forEach(function (parameter, key) {
+        if (isSensitiveField(key)) parsed.searchParams.set(key, "[REDACTED]");
+      });
+      if (parsed.hash.indexOf("=") !== -1) {
+        var hashParams = new URLSearchParams(parsed.hash.slice(1));
+        hashParams.forEach(function (parameter, key) {
+          if (isSensitiveField(key)) hashParams.set(key, "[REDACTED]");
+        });
+        parsed.hash = hashParams.toString();
+      }
+      return isAbsolute ? parsed.toString() : parsed.pathname + parsed.search + parsed.hash;
+    } catch (e) {
+      return "[URL REDACTED]";
+    }
+  }
+
+  function sanitizeHeaders(headers) {
+    var sanitized = {};
+    Object.keys(headers || {}).forEach(function (key) {
+      if (isSensitiveField(key)) {
+        sanitized[key] = "[REDACTED]";
+      } else if (/^(?:location|content-location|referer|referrer)$/i.test(key)) {
+        sanitized[key] = sanitizeUrl(headers[key]);
+      } else {
+        sanitized[key] = sanitizeValue(headers[key]);
+      }
+    });
+    return sanitized;
+  }
+
   function sanitizeValue(value, depth) {
     if (depth === void 0) depth = 0;
     if (depth > 5) return "[Max Depth]";
@@ -68,7 +131,8 @@
     if (value === undefined) return undefined;
 
     if (typeof value === "string") {
-      return value.length > 1000 ? value.slice(0, 1000) + "...[truncated]" : value;
+      var safeText = sanitizeText(value);
+      return safeText.length > 1000 ? safeText.slice(0, 1000) + "...[truncated]" : safeText;
     }
 
     if (typeof value !== "object") return value;
@@ -82,10 +146,7 @@
     var sanitized = {};
     for (var k in value) {
       if (Object.prototype.hasOwnProperty.call(value, k)) {
-        var isSensitive = CONFIG.sensitiveFields.some(function (f) {
-          return k.toLowerCase().indexOf(f) !== -1;
-        });
-        if (isSensitive) {
+        if (isSensitiveField(k)) {
           sanitized[k] = "[REDACTED]";
         } else {
           sanitized[k] = sanitizeValue(value[k], depth + 1);
@@ -98,10 +159,10 @@
   function formatArg(arg) {
     try {
       if (arg instanceof Error) {
-        return { type: "Error", message: arg.message, stack: arg.stack };
+        return { type: "Error", message: sanitizeText(arg.message), stack: sanitizeText(arg.stack || "") };
       }
       if (typeof arg === "object") return sanitizeValue(arg);
-      return String(arg);
+      return sanitizeText(arg);
     } catch (e) {
       return "[Unserializable]";
     }
@@ -124,6 +185,15 @@
     } catch (e) {
       return str;
     }
+  }
+
+  function sanitizeCapturedBody(text) {
+    var sanitized = sanitizeValue(tryParseJson(text));
+    var serialized = typeof sanitized === "string" ? sanitized : JSON.stringify(sanitized);
+    if (serialized.length > CONFIG.maxBodyLength) {
+      return serialized.slice(0, CONFIG.maxBodyLength) + "...[truncated]";
+    }
+    return sanitized;
   }
 
   // ==========================================================================
@@ -197,8 +267,8 @@
       ariaLabel: ariaLabel,
       testId: testId,
       dataLoc: dataLoc,
-      href: href,
-      text: elText(el),
+      href: href ? sanitizeUrl(href) : null,
+      text: "[REDACTED]",
       selectorHint: selectorHint,
     };
   }
@@ -209,7 +279,7 @@
     if (tag !== "input" && tag !== "textarea") return false;
 
     var type = (el.getAttribute("type") || "").toLowerCase();
-    if (type === "password") return true;
+    if (type === "password" || type === "email" || type === "tel") return true;
 
     var name = (el.getAttribute("name") || "").toLowerCase();
     var id = (el.id || "").toLowerCase();
@@ -241,7 +311,7 @@
     var entry = {
       timestamp: Date.now(),
       kind: kind,
-      url: location.href,
+      url: sanitizeUrl(location.href),
       viewport: { width: window.innerWidth, height: window.innerHeight },
       payload: sanitizeValue(payload),
     };
@@ -470,7 +540,7 @@
     var requestHeaders = {};
     try {
       if (init.headers) {
-        requestHeaders = Object.fromEntries(new Headers(init.headers).entries());
+        requestHeaders = sanitizeHeaders(Object.fromEntries(new Headers(init.headers).entries()));
       }
     } catch (e) {
       requestHeaders = { _parseError: true };
@@ -480,10 +550,10 @@
       timestamp: startTime,
       type: "fetch",
       method: method.toUpperCase(),
-      url: url,
+      url: sanitizeUrl(url),
       request: {
         headers: requestHeaders,
-        body: init.body ? sanitizeValue(tryParseJson(init.body)) : null,
+        body: init.body ? sanitizeCapturedBody(init.body) : null,
       },
       response: null,
       duration: null,
@@ -500,7 +570,7 @@
         entry.response = {
           status: response.status,
           statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries()),
+          headers: sanitizeHeaders(Object.fromEntries(response.headers.entries())),
           body: null,
         };
 
@@ -556,9 +626,9 @@
           .text()
           .then(function (text) {
             if (text.length <= CONFIG.maxBodyLength) {
-              entry.response.body = sanitizeValue(tryParseJson(text));
+              entry.response.body = sanitizeCapturedBody(text);
             } else {
-              entry.response.body = text.slice(0, CONFIG.maxBodyLength) + "...[truncated]";
+              entry.response.body = sanitizeCapturedBody(text);
             }
           })
           .catch(function () {
@@ -574,7 +644,7 @@
       })
       .catch(function (error) {
         entry.duration = Date.now() - startTime;
-        entry.error = { message: error.message, stack: error.stack };
+        entry.error = { message: sanitizeText(error.message), stack: sanitizeText(error.stack || "") };
 
         store.networkRequests.push(entry);
         pruneBuffer(store.networkRequests, CONFIG.bufferSize.network);
@@ -583,7 +653,7 @@
           kind: "fetch",
           method: entry.method,
           url: entry.url,
-          message: error.message,
+          message: sanitizeText(error.message),
         });
 
         throw error;
@@ -615,7 +685,7 @@
       xhr._manusData.url.indexOf("/__manus__/") !== 0
     ) {
       xhr._manusData.startTime = Date.now();
-      xhr._manusData.requestBody = body ? sanitizeValue(tryParseJson(body)) : null;
+      xhr._manusData.requestBody = body ? sanitizeCapturedBody(body) : null;
 
       xhr.addEventListener("load", function () {
         var contentType = (xhr.getResponseHeader("content-type") || "").toLowerCase();
@@ -643,13 +713,13 @@
           try {
             var text = xhr.responseText || "";
             if (text.length > CONFIG.maxBodyLength) {
-              responseBody = text.slice(0, CONFIG.maxBodyLength) + "...[truncated]";
+              responseBody = sanitizeCapturedBody(text);
             } else {
-              responseBody = sanitizeValue(tryParseJson(text));
+              responseBody = sanitizeCapturedBody(text);
             }
           } catch (e) {
             // responseText may throw for non-text responses
-            responseBody = "[Unable to read response: " + e.message + "]";
+            responseBody = "[Unable to read response: " + sanitizeText(e.message) + "]";
           }
         }
 
@@ -657,7 +727,7 @@
           timestamp: xhr._manusData.startTime,
           type: "xhr",
           method: xhr._manusData.method,
-          url: xhr._manusData.url,
+          url: sanitizeUrl(xhr._manusData.url),
           request: { body: xhr._manusData.requestBody },
           response: {
             status: xhr.status,
@@ -687,7 +757,7 @@
           timestamp: xhr._manusData.startTime,
           type: "xhr",
           method: xhr._manusData.method,
-          url: xhr._manusData.url,
+          url: sanitizeUrl(xhr._manusData.url),
           request: { body: xhr._manusData.requestBody },
           response: null,
           duration: Date.now() - xhr._manusData.startTime,

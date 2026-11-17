@@ -15,20 +15,64 @@ export default function Support() {
   const [reply, setReply] = useState("");
   const { data: threads = [], isLoading: threadsLoading } = trpc.conversations.mine.useQuery(undefined, { enabled: !!user });
   const activeId = selectedId ?? threads[0]?.conversation.id ?? null;
-  const { data: messages = [], isLoading: messagesLoading } = trpc.conversations.messages.useQuery({ conversationId: activeId! }, { enabled: !!activeId });
+  const { data: messages = [], isLoading: messagesLoading } = trpc.conversations.messages.useQuery(
+    { conversationId: activeId! },
+    { enabled: !!activeId, refetchInterval: 5_000, refetchOnWindowFocus: true },
+  );
   const utils = trpc.useUtils();
   const create = trpc.conversations.create.useMutation({ onSuccess: data => { setSubject(""); setBody(""); setSelectedId(data.conversationId); utils.conversations.mine.invalidate(); toast.success("Inquiry sent to AgriCoop support."); }, onError: error => toast.error(error.message) });
   const send = trpc.conversations.send.useMutation({ onSuccess: () => { setReply(""); utils.conversations.messages.invalidate({ conversationId: activeId! }); utils.conversations.mine.invalidate(); }, onError: error => toast.error(error.message) });
   useEffect(() => {
     if (!activeId) return;
-    let source: EventSource | null = null;
     let cancelled = false;
-    void supabase.auth.getSession().then(({ data }) => {
-      if (cancelled || !data.session?.access_token) return;
-      source = new EventSource(`/api/conversations/${activeId}/stream?access_token=${encodeURIComponent(data.session.access_token)}`);
-      source.addEventListener("message", () => { utils.conversations.messages.invalidate({ conversationId: activeId }); utils.conversations.mine.invalidate(); });
-    });
-    return () => { cancelled = true; source?.close(); };
+    let controller: AbortController | null = null;
+    let retryTimer: number | null = null;
+    let retryDelay = 1_000;
+    const connect = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!data.session?.access_token) throw new Error("No active session.");
+        controller = new AbortController();
+        const response = await fetch(`/api/conversations/${activeId}/stream`, {
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error("Conversation stream is unavailable.");
+        retryDelay = 1_000;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!cancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const eventName = block.split("\n").find(line => line.startsWith("event:"))?.slice(6).trim();
+            if (eventName === "message") {
+              utils.conversations.messages.invalidate({ conversationId: activeId });
+              utils.conversations.mine.invalidate();
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+        }
+        if (!cancelled) throw new Error("Conversation stream closed.");
+      } catch {
+        if (!cancelled) {
+          retryTimer = window.setTimeout(() => void connect(), retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 30_000);
+        }
+      }
+    };
+    void connect();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
   }, [activeId, utils]);
 
   if (loading) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]" /></div>;
