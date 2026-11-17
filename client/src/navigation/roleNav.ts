@@ -28,16 +28,10 @@ export const ROLE_CENTER_NAV: Record<AppRole, NavItem[]> = {
   ],
   admin: [
     { label: "Dashboard", href: "/dashboard" },
-    { label: "Moderation", href: "/dashboard#moderation" },
-    { label: "Orders", href: "/dashboard#orders" },
-    { label: "Users", href: "/dashboard#users" },
     { label: "Support & Tickets", href: "/support-tickets", matchPrefix: true },
   ],
   superadmin: [
     { label: "Dashboard", href: "/dashboard" },
-    { label: "Users & Roles", href: "/dashboard#users" },
-    { label: "Moderation", href: "/dashboard#moderation" },
-    { label: "Orders", href: "/dashboard#orders" },
     { label: "System", href: "/admin/payment-options", matchPrefix: true },
     { label: "Audit Logs", href: "/admin/audit-logs", matchPrefix: true },
   ],
