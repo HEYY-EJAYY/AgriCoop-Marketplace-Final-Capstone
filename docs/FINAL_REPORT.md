@@ -144,16 +144,43 @@ Live orders currently store `paymentMethod = f2f` only (4 rows). UI maps `f2f` �
 - `server/trpcProcedureAccess.test.ts` — role × procedure matrix (anon/buyer/seller/admin/superadmin)
 - Cash sentence appears **only** in the regression test that asserts its absence; production marketplace/checkout HTML: absent
 
+### BLOCK 15 exact GRANTs (column-scoped)
+
+```sql
+GRANT SELECT ("allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
+  ON TABLE agricoop_app.products TO anon, authenticated;
+GRANT SELECT ("onlinePaymentQrPath", "onlinePaymentAccountName", "onlinePaymentAccountNumber", "onlinePaymentLabel")
+  ON TABLE agricoop_app.users TO authenticated;
+GRANT UPDATE ("onlinePaymentQrPath", "onlinePaymentAccountName", "onlinePaymentAccountNumber", "onlinePaymentLabel")
+  ON TABLE agricoop_app.users TO authenticated;
+GRANT SELECT ("onlinePaymentQrPath") ON TABLE agricoop_app.users TO anon;
+GRANT SELECT ("fulfillmentMethod") ON TABLE agricoop_app.orders TO authenticated;
+```
+
+Live privilege check (2026-11-17): anon SELECT on account name/number/label = **false**; anon SELECT on `onlinePaymentQrPath` = **true** (presence only; marketplace returns `sellerHasOnlineQr` boolean, never account fields). Buckets `payment-proofs` and `seller-payment-qr` are **public=false**.
+
+### Quality gates (payment hardening)
+
+| Gate | Result |
+|------|--------|
+| lint / typecheck | **pass** |
+| vitest | **346 passed**, 2 skipped |
+| build | **pass** |
+| Playwright `payment-coop-orders` desktop-1280 | **pass** after Auth/Checkout AA contrast fixes |
+| Cash sentence repo search | only in `Checkout.cashCopy.test.tsx` (asserts absence) |
+| Runtime errors (Hobby ~1h) | Pre-grant `marketplace.list` INTERNAL_SERVER_ERROR cluster on older deploy; recheck after READY |
+
 ## Deploy
 
 | Item | Value |
 |------|-------|
-| Commit | _(this hardening ship)_ |
-| Production | _(updated after READY)_ |
-| readyState | **READY** (target) |
+| Commit | `ff86c49` (hardening `6538c0c` + axe contrast) |
+| Production | `dpl_EF82GEbUYktyMVGgdQttP7N3P3Ew` |
+| readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | Public shells + `marketplace.list` + coop slug + order-detail auth shell; axe on checkout/order detail |
-| Runtime | Hobby plan retains ~1h of runtime logs; check after deploy for `marketplace.list` / payment paths |
+| Smoke | Public shells + `marketplace.list` + coop slug + order-detail Auth gate; axe on Auth/checkout |
+| Runtime | Hobby retains ~1h; post-READY check for `marketplace.list` / payment paths |
+| QA cleanup | No `qa-test-` users found in live DB (none created this run) |
 
 ---
 
@@ -162,4 +189,4 @@ Live orders currently store `paymentMethod = f2f` only (4 rows). UI maps `f2f` �
 1. Sign in as each of the four roles and exercise Message / Support / Tickets bulk actions once.  
 2. Confirm Supabase Auth Site URL + email redirects match production.  
 3. Optional: explicit dispute escalation path for officer access to order chats (logged) — not built; privacy decision documented.
-4. Authenticated production E2E for Cash Pickup / Delivery / Online (receipt gate + seller reject/re-upload) using temporary `qa-test-` accounts — no QA credentials were present in the agent environment; CI unit/matrix tests cover the authorization rules.
+4. Authenticated production E2E for Cash Pickup / Delivery / Online (receipt gate + seller confirm/reject + buyer re-upload) with temporary `qa-test-` accounts — no QA credentials in the agent environment; CI unit/matrix/security tests cover the authorization and receipt rules.

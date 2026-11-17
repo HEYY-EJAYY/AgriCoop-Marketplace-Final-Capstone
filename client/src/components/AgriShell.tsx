@@ -56,7 +56,7 @@ function NavLinks({ items, className = "", onNavigate }: { items: NavItem[]; cla
 
 export function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
-    <Link href="/" className="inline-flex shrink-0 items-center gap-2 text-[#174a31] no-underline">
+    <Link href="/" aria-label="AgriCoop" className="inline-flex shrink-0 items-center gap-2 text-[#174a31] no-underline">
       <img
         src="/images/agricoop-mark.jpg"
         alt=""
@@ -64,6 +64,7 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
         height={40}
         className="h-10 w-10 rounded-xl object-cover"
         decoding="async"
+        aria-hidden
       />
       {!compact && <span className="font-display text-xl font-bold tracking-tight">AgriCoop</span>}
     </Link>
