@@ -25,7 +25,7 @@ import {
   transactions,
   users,
 } from "../drizzle/pg-schema";
-import { availableStockAfterReservations, STOCK_RESERVING_ORDER_STATUSES } from "./marketplaceRules";
+import { availableStockAfterReservations } from "./marketplaceRules";
 import {
   matchesPublicRegistrationIdentity,
   resolveAuthIdentityMapping,
@@ -37,7 +37,8 @@ function createDb(url: string | undefined) {
   const client = postgres(url, {
     connect_timeout: 10,
     idle_timeout: 20,
-    max: 10,
+    // Serverless: one connection per isolate; rely on Supabase pooler for concurrency.
+    max: 1,
     prepare: false,
   });
   return drizzle(client, { schema: {
@@ -261,21 +262,16 @@ export async function getCooperatives() {
 export async function getOpenOrderReservationQuantities(db: RootTransaction, productIds: number[]) {
   const reservationsByProduct = new Map<number, number>();
   if (!productIds.length) return reservationsByProduct;
-  const rows = await db.select({
-    productId: orderItems.productId,
-    quantity: orderItems.quantity,
-  })
-    .from(orderItems)
-    .innerJoin(orders, eq(orderItems.orderId, orders.id))
-    .where(and(
-      inArray(orderItems.productId, productIds),
-      inArray(orders.status, STOCK_RESERVING_ORDER_STATUSES),
-    ));
-  for (const row of rows) {
-    reservationsByProduct.set(
-      row.productId,
-      (reservationsByProduct.get(row.productId) ?? 0) + row.quantity,
-    );
+  // SECURITY DEFINER helper: works under anon RLS without SELECT on orders/orderItems.
+  const result = await db.execute(sql`
+    select product_id, quantity
+    from agricoop_app.reserved_quantities_for_products(array[${sql.join(productIds.map(id => sql`${id}`), sql`,`)}]::integer[])
+  `);
+  for (const row of Array.from(result as unknown as Array<Record<string, unknown>>)) {
+    const productId = Number(row.product_id ?? row.productId);
+    const quantity = Number(row.quantity ?? 0);
+    if (!Number.isFinite(productId)) continue;
+    reservationsByProduct.set(productId, (reservationsByProduct.get(productId) ?? 0) + quantity);
   }
   return reservationsByProduct;
 }
@@ -287,7 +283,22 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
   if (category && category !== "all") conditions.push(eq(products.category, category));
   const listings = await db
     .select({
-      product: products,
+      id: products.id,
+      sellerId: products.sellerId,
+      cooperativeId: products.cooperativeId,
+      name: products.name,
+      category: products.category,
+      variety: products.variety,
+      description: products.description,
+      unit: products.unit,
+      priceCents: products.priceCents,
+      stockQty: products.stockQty,
+      minOrderQty: products.minOrderQty,
+      qualityGrade: products.qualityGrade,
+      status: products.status,
+      verificationStatus: products.verificationStatus,
+      visibility: products.visibility,
+      primaryImageUrl: products.primaryImageUrl,
       sellerName: users.name,
       cooperativeName: cooperatives.name,
     })
@@ -296,12 +307,18 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
     .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
     .where(and(...conditions))
     .orderBy(sort === "asc" ? asc(products.priceCents) : desc(products.priceCents));
-  const reservations = await getOpenOrderReservationQuantities(db, listings.map(listing => listing.product.id));
-  const imageRows = listings.length
-    ? await db.select().from(productImages)
-      .where(inArray(productImages.productId, listings.map(listing => listing.product.id)))
-      .orderBy(asc(productImages.displayOrder), asc(productImages.id))
-    : [];
+  const productIds = listings.map(listing => listing.id);
+  const [reservations, imageRows] = await Promise.all([
+    getOpenOrderReservationQuantities(db, productIds),
+    productIds.length
+      ? db.select({
+          productId: productImages.productId,
+          imageUrl: productImages.imageUrl,
+        }).from(productImages)
+          .where(inArray(productImages.productId, productIds))
+          .orderBy(asc(productImages.displayOrder), asc(productImages.id))
+      : Promise.resolve([] as Array<{ productId: number; imageUrl: string }>),
+  ]);
   const imagesByProduct = new Map<number, string[]>();
   for (const row of imageRows) {
     const urls = imagesByProduct.get(row.productId) ?? [];
@@ -309,17 +326,19 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
     imagesByProduct.set(row.productId, urls);
   }
   return listings.map(listing => {
-    const storedImages = imagesByProduct.get(listing.product.id) ?? [];
+    const storedImages = imagesByProduct.get(listing.id) ?? [];
+    const { sellerName, cooperativeName, ...productFields } = listing;
     return {
-      ...listing,
+      sellerName,
+      cooperativeName,
       product: {
-        ...listing.product,
+        ...productFields,
         imageUrls: storedImages.length
           ? storedImages
-          : listing.product.primaryImageUrl ? [listing.product.primaryImageUrl] : [],
+          : listing.primaryImageUrl ? [listing.primaryImageUrl] : [],
         stockQty: availableStockAfterReservations(
-          listing.product.stockQty,
-          reservations.get(listing.product.id) ?? 0,
+          listing.stockQty,
+          reservations.get(listing.id) ?? 0,
         ),
       },
     };

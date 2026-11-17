@@ -3146,3 +3146,54 @@ SELECT
 FROM storage.buckets
 WHERE id = 'profile-verification-documents';
 ```
+
+## BLOCK 9: `20261117140000_anon_marketplace_browse_perf.sql`
+
+```sql
+-- PURPOSE: Unblock anon marketplace browse under RLS + add browse indexes / reserved-qty helper.
+-- IDEMPOTENT / ADDITIVE ONLY.
+
+BEGIN;
+
+GRANT EXECUTE ON FUNCTION agricoop_app.shares_cooperative(integer) TO anon;
+GRANT EXECUTE ON FUNCTION agricoop_app.is_superadmin() TO anon;
+GRANT EXECUTE ON FUNCTION agricoop_app.is_staff() TO anon;
+
+GRANT SELECT ("id", "name", "approvalStatus", "role") ON TABLE agricoop_app.users TO anon;
+
+CREATE OR REPLACE FUNCTION agricoop_app.reserved_quantities_for_products(product_ids integer[])
+RETURNS TABLE(product_id integer, quantity integer)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = agricoop_app, public
+AS $fn$
+  SELECT oi."productId" AS product_id,
+         COALESCE(SUM(oi.quantity), 0)::integer AS quantity
+  FROM agricoop_app."orderItems" oi
+  INNER JOIN agricoop_app.orders o ON o.id = oi."orderId"
+  WHERE oi."productId" = ANY(product_ids)
+    AND o.status IN (
+      'submitted'::agricoop_app.order_status,
+      'confirmed'::agricoop_app.order_status,
+      'ready'::agricoop_app.order_status
+    )
+  GROUP BY oi."productId";
+$fn$;
+
+REVOKE ALL ON FUNCTION agricoop_app.reserved_quantities_for_products(integer[]) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION agricoop_app.reserved_quantities_for_products(integer[]) TO anon, authenticated;
+
+CREATE INDEX IF NOT EXISTS products_marketplace_browse_idx
+  ON agricoop_app.products (status, "verificationStatus", visibility, "priceCents");
+
+CREATE INDEX IF NOT EXISTS product_images_product_id_order_idx
+  ON agricoop_app."productImages" ("productId", "displayOrder", id);
+
+COMMIT;
+
+-- Verification:
+-- SELECT has_function_privilege('anon','agricoop_app.shares_cooperative(integer)','EXECUTE');
+-- SELECT has_function_privilege('anon','agricoop_app.reserved_quantities_for_products(integer[])','EXECUTE');
+-- SELECT indexname FROM pg_indexes WHERE indexname IN ('products_marketplace_browse_idx','product_images_product_id_order_idx');
+```
