@@ -174,12 +174,12 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 
 | Item | Value |
 |------|-------|
-| Commit | `ff86c49` (hardening `6538c0c` + axe contrast) |
-| Production | `dpl_EF82GEbUYktyMVGgdQttP7N3P3Ew` |
+| Commit | `f37d9a9` (UI/a11y ship `5c96c48`; hardening `6538c0c`) |
+| Production | `dpl_HZermnm9MgpL7L9oDsVcXVJB9iRR` (`5c96c48` READY on alias); follow-on `dpl_6AHJXvYbJkYhKWxir1Fv63fxi7fd` for `f37d9a9` |
 | readyState | **READY** |
 | Alias | https://agricoop-marketplace-final-capstone.vercel.app |
-| Smoke | Public shells + `marketplace.list` + coop slug + order-detail Auth gate; axe on Auth/checkout |
-| Runtime | Hobby retains ~1h; post-READY check for `marketplace.list` / payment paths |
+| Smoke | `marketplace.list` 200 with flags + `sellerHasOnlineQr` only; coop slug; order Auth gate; Playwright payment-coop-orders **8/8** (360+1280) incl. axe AA |
+| Runtime | Hobby ~1h; only stale `marketplace.list` grant errors on old deploy `dpl_4ZHc…` (pre-BLOCK 15). No new error clusters on post-fix production deploys in the retained window. |
 | QA cleanup | No `qa-test-` users found in live DB (none created this run) |
 
 ---
