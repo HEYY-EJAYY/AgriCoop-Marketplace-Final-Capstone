@@ -1,10 +1,14 @@
 import "dotenv/config";
+import { assertLocalSeedTarget } from "../server/seedSafety";
 import { supabaseAdmin } from "../server/clients";
-import { upsertUser } from "../server/db";
+import { getAdminDb, upsertUser } from "../server/db";
 
+assertLocalSeedTarget(process.env, { requireLocalSupabase: true });
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 if (!serviceRoleKey || !supabaseUrl) throw new Error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
+const db = await getAdminDb();
+if (!db) throw new Error("SEED_DATABASE_URL is required.");
 
 const accounts = [
   {
@@ -49,7 +53,7 @@ for (const account of accounts) {
     role: "superadmin",
     approvalStatus: "approved",
     loginMethod: "supabase",
-  });
+  }, db);
   console.log(`Provisioned SuperAdmin account: ${account.username}`);
 }
 

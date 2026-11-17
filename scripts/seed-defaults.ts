@@ -1,19 +1,21 @@
+import { assertLocalSeedTarget } from "../server/seedSafety";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+assertLocalSeedTarget(process.env, { requireLocalSupabase: true });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!supabaseUrl || !serviceRoleKey) throw new Error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required.");
+if (!process.env.SEED_DATABASE_URL) throw new Error("SEED_DATABASE_URL is required.");
 
-const [{ eq }, { products, users }, { getDb }, { supabaseAdmin }] = await Promise.all([
+const [{ eq }, { products, users }, { getAdminDb }, { supabaseAdmin }] = await Promise.all([
   import("drizzle-orm"),
-  import("../drizzle/schema"),
+  import("../drizzle/pg-schema"),
   import("../server/db"),
   import("../server/clients"),
 ]);
-const db = await getDb();
-if (!db) throw new Error("Unable to connect to the configured database.");
+const db = await getAdminDb();
+if (!db) throw new Error("Unable to connect to the configured seed database.");
 
 const accounts = [
   { emailKey: "SEED_SUPERADMIN_1_EMAIL", passwordKey: "SEED_SUPERADMIN_1_PASSWORD", name: "Joan Athan Nelle Cahiyang", role: "superadmin" as const },
@@ -66,7 +68,7 @@ for (const account of accounts) {
     await db.update(users).set(userRecord).where(eq(users.id, existingAppUser.id));
     authUsers.push({ role: account.role, email, id: existingAppUser.id });
   } else {
-    const [created] = await db.insert(users).values(userRecord).$returningId();
+    const [created] = await db.insert(users).values(userRecord).returning({ id: users.id });
     authUsers.push({ role: account.role, email, id: created.id });
   }
 }

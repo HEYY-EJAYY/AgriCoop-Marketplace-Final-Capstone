@@ -1,11 +1,11 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCooperativeResource, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, isSellerApproved, requireOperationalRole } from "./authz";
-import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
+import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCashReceipt, canManageCooperativeResource, canManageRefundRecord, canRecordCashReceipt, canReviewPaymentProof, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, canVerifyPaymentRecord, isPaymentOrderConsistent, isPaymentTransactionConsistent, isSellerApproved, requireOperationalRole } from "./authz";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertOrderCanAcceptPaymentProof, assertPaymentProofReadyForReview, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems } from "./marketplaceRules";
 import {
   getAdminOverview,
   getBuyerOrders,
@@ -17,27 +17,75 @@ import {
   getMarketplaceProduct,
   getOfficerOverview,
   getOrderDetail,
-  getProductById,
+  getOpenOrderReservationQuantities,
   getSellerOrders,
   getSellerProducts,
   getSellerQuotations,
   getConversationMessages,
   getConversationsForUser,
+  ensureOrderPaymentRecord,
   upsertUser,
+  withRequestDatabaseScope,
 } from "./db";
-import { conversationMessages, conversations, cooperatives, orderEvents, orderItems, orders, products, quotations, transactions, users } from "../drizzle/schema";
-import { supabaseAdmin } from "./clients";
+import { conversationMessages, conversations, cooperativeAssociationRequests, cooperatives, auditLogs, notifications, orderEvents, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, transactions, users, profiles } from "../drizzle/pg-schema";
+import { createPublicAuthClient, supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
 import { normalizeCooperativeName } from "./cooperativeNames";
-import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, PRODUCT_UNITS } from "../shared/productOptions";
-import { storagePut } from "./storage";
+import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, PRODUCT_UNITS } from "../shared/productOptions";
+import {
+  assertPaymentOptionSelection,
+  getPaymentOptionCooperativeId,
+  getPaymentQrStoragePrefix,
+  isGcashCheckoutOption,
+  paymentOptionDetailsChanged,
+} from "./paymentOptions";
+import { isStorageKeyWithinPrefix, isStoragePublicUrlWithinPrefix, storageCreateSignedUploadUrl, storageDeleteObject, storageDeletePublicUrl, storageDownloadPrivateObject, storageDownloadPrivateProof, storageGet, storageGetSignedUrl, storageKeyFromPublicUrlWithinPrefix, storagePut } from "./storage";
+import { quotationResponseInputSchema } from "../shared/quotation";
+import { getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupabaseEmail, RegistrationCleanupError, RegistrationRateLimitError, registrationRateLimiter, provisionAuthAccount } from "./registration";
+import { canRequestCooperativeAssociation, canReviewCooperativeAssociation } from "./cooperativeAssociations";
+import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
+import { createPaymentProofUploadIntent, isPaymentProofStorageKey, PAYMENT_PROOF_BUCKET, sanitizePaymentProofFileName, verifyPaymentProofUploadIntent } from "./paymentProofs";
+import { PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../shared/paymentProofs";
+import { SUPPORT_TICKET_STATUSES } from "../shared/supportTicketStatus";
+import { matchesImageContentTypeSignature } from "../shared/imageValidation";
+import { createRefundRecord, completedRefundAmountCents, parseRefundRecords, reservedRefundAmountCents, transitionRefundRecord, type RefundState } from "../shared/paymentRefunds";
+import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../shared/profileVerification";
+import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
+import { resolvePublicRegistrationIdentity } from "./authIdentity";
 
-const registrationRoleSchema = z.enum(["buyer", "seller", "admin"]);
+export const registrationRoleSchema = z.enum(["buyer", "seller"]);
+export const publicRegistrationInputSchema = z.object({
+  email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
+  password: z.string().min(6).max(128),
+  name: z.string().min(2).max(120),
+  role: registrationRoleSchema,
+}).strict();
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
+const supportTicketStatusSchema = z.enum(SUPPORT_TICKET_STATUSES);
 export const accountProfileInputSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   contactNumber: z.string().max(40).optional(),
   address: z.string().max(500).optional(),
+}).strict();
+function isValidVerificationBirthdate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime())
+    && parsed.toISOString().slice(0, 10) === value
+    && parsed.getTime() <= Date.now();
+}
+
+export const profileVerificationUploadInputSchema = z.object({
+  contentType: z.enum(PROFILE_VERIFICATION_CONTENT_TYPES),
+  fileSizeBytes: z.number().int().min(1).max(PROFILE_VERIFICATION_MAX_BYTES),
+}).strict();
+
+export const profileVerificationSubmissionInputSchema = z.object({
+  uploadIntent: z.string().min(1).max(2048),
+  birthdate: z.string().trim().refine(isValidVerificationBirthdate, "Enter a valid birthdate that is not in the future."),
+  phone: z.string().trim().min(7).max(40),
+  address: z.string().trim().max(500).optional(),
+  note: z.string().trim().max(600).optional(),
 }).strict();
 const productFields = {
   name: z.string().trim().min(2).max(160),
@@ -54,7 +102,7 @@ function validateProductQuantities(
   input: { stockQty: number; minOrderQty: number },
   context: z.RefinementCtx,
 ) {
-  if (input.minOrderQty > input.stockQty) {
+  if (input.stockQty > 0 && input.minOrderQty > input.stockQty) {
     context.addIssue({
       code: "custom",
       path: ["minOrderQty"],
@@ -63,14 +111,30 @@ function validateProductQuantities(
   }
 }
 
-const newProductSchema = z.object({
+export const newProductSchema = z.object({
   ...productFields,
   qualityGrade: z.enum(["premium", "standard", "imperfect"]).default("standard"),
   imageUrls: z.array(z.string().max(1000).refine(
     imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
     "Image must be a valid URL or local image path.",
-  )).max(10).default([]),
+  )).max(MAX_PRODUCT_IMAGES, `A product can have up to ${MAX_PRODUCT_IMAGES} images.`).default([]),
   submitForVerification: z.boolean().default(true),
+}).superRefine(validateProductQuantities);
+
+export const updateProductSchema = z.object({
+  id: z.number().int().positive(),
+  ...productFields,
+  stockQty: z.number().int().min(0, "Available stock cannot be negative."),
+  qualityGrade: z.enum(["premium", "standard", "imperfect"]),
+  status: z.enum(["published", "archived"]),
+  imageUrls: z.array(z.string().max(1000).refine(
+    imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
+    "Image must be a valid URL or local image path.",
+  )).max(MAX_PRODUCT_IMAGES, `A product can have up to ${MAX_PRODUCT_IMAGES} images.`).optional(),
+  primaryImageUrl: z.string().max(1000).refine(
+    imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
+    "Image must be a valid URL or local image path.",
+  ).nullable().optional(),
 }).superRefine(validateProductQuantities);
 
 async function dbOrThrow() {
@@ -79,113 +143,188 @@ async function dbOrThrow() {
   return db;
 }
 
+export function validateProductImageUrls(imageUrls: string[], sellerId: number, existingUrls: string[] = []) {
+  if (imageUrls.length > MAX_PRODUCT_IMAGES || new Set(imageUrls).size !== imageUrls.length) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: `Choose up to ${MAX_PRODUCT_IMAGES} unique product images.` });
+  }
+  const allowedPrefix = `products/${sellerId}/`;
+  if (imageUrls.some(url =>
+    !isStoragePublicUrlWithinPrefix(url, allowedPrefix) && !existingUrls.includes(url)
+  )) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be uploaded to your authorized AgriCoop Storage location." });
+  }
+}
+
+export function assertProductImageUpdateInput(
+  imageUrls: string[] | undefined,
+  primaryImageUrl: string | null | undefined,
+) {
+  if (primaryImageUrl !== undefined && imageUrls === undefined) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Update product images through the image gallery." });
+  }
+  if (imageUrls !== undefined && primaryImageUrl !== undefined && primaryImageUrl !== (imageUrls[0] ?? null)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "The primary image must match the first image in the gallery." });
+  }
+}
+
 async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { buyerId: number; sellerId?: number; productId?: number; subject: string; body: string; orderId?: number; quotationId?: number }) {
-  const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).$returningId();
+  const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).returning({ id: conversations.id });
   await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
   return thread.id;
 }
 
-async function recordOrderEvent(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { orderId: number; actorUserId: number; action: string; fromStatus?: string | null; toStatus?: string | null; note?: string | null }) {
-  await db.insert(orderEvents).values({
-    orderId: input.orderId,
-    actorUserId: input.actorUserId,
-    action: input.action,
-    fromStatus: input.fromStatus ?? null,
-    toStatus: input.toStatus ?? null,
-    note: input.note ?? null,
-  });
+async function recordAuditLog(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { actorUserId: number; action: string; entityType: string; entityId?: number; cooperativeId?: number | null; metadata?: any }) {
+  // Actor is pinned inside agricoop_app.write_audit_log from auth.uid(); actorUserId is retained for call-site clarity/tests.
+  void input.actorUserId;
+  await db.execute(sql`
+    select agricoop_app.write_audit_log(
+      ${input.action},
+      ${input.entityType},
+      ${input.entityId ?? null},
+      ${input.cooperativeId ?? null},
+      ${input.metadata ? JSON.stringify(input.metadata) : null}
+    )
+  `);
+}
+
+async function createNotification(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { userId: number; type: string; title: string; content: string; link?: string; relatedEntityId?: number; relatedEntityType?: string }) {
+  await db.execute(sql`
+    select agricoop_app.create_notification(
+      ${input.userId},
+      ${input.type},
+      ${input.title},
+      ${input.content},
+      ${input.link ?? null},
+      ${input.relatedEntityId ?? null},
+      ${input.relatedEntityType ?? null}
+    )
+  `);
 }
 
 export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    status: publicProcedure.query(opts => opts.ctx.authResolution),
     register: publicProcedure
-      .input(z.object({
-        email: z.string().email(),
-        password: z.string().min(6).max(128),
-        name: z.string().min(2).max(120),
-        role: registrationRoleSchema,
-        sellerType: z.enum(["individual", "cooperative"]).optional(),
-        cooperativeId: z.number().int().positive().optional(),
-        cooperativeName: z.string().max(180).optional(),
-      }))
-      .mutation(async ({ input }) => {
-        let cooperativeId: number | null = null;
-        let joinedExistingCooperative: string | null = null;
-        let cooperativeName: string | null = null;
-
-        if (input.role === "seller") {
-          if (!input.sellerType) {
-            throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether you are an individual seller or a cooperative member." });
+      .input(publicRegistrationInputSchema)
+      .mutation(async ({ input, ctx }) => {
+        try {
+          registrationRateLimiter.consume("register", ctx.req.ip, input.email);
+        } catch (error) {
+          if (error instanceof RegistrationRateLimitError) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
           }
-          if (input.sellerType === "cooperative") {
-            const db = await dbOrThrow();
-            if (input.cooperativeId !== undefined) {
-              const existing = (await db.select().from(cooperatives).where(eq(cooperatives.id, input.cooperativeId)).limit(1))[0];
-              if (!existing || existing.status !== "active") {
-                throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an active cooperative from the list." });
-              }
-              cooperativeId = existing.id;
-              cooperativeName = existing.name;
-            } else if (input.cooperativeName !== undefined) {
-              let normalized: ReturnType<typeof normalizeCooperativeName>;
-              try {
-                normalized = normalizeCooperativeName(input.cooperativeName);
-              } catch (error) {
-                throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Enter a valid cooperative name." });
-              }
-              if (normalized.displayName.length > 180) {
-                throw new TRPCError({ code: "BAD_REQUEST", message: "Cooperative name must be 180 characters or fewer." });
-              }
-              const existing = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
-              if (existing) {
-                cooperativeId = existing.id;
-                cooperativeName = existing.name;
-                joinedExistingCooperative = existing.name;
-              } else {
-                try {
-                  const [created] = await db.insert(cooperatives).values({
-                    name: normalized.displayName,
-                    normalizedName: normalized.normalizedName,
-                    location: "Not specified",
-                  }).$returningId();
-                  cooperativeId = created.id;
-                  cooperativeName = normalized.displayName;
-                } catch (error) {
-                  const cause = error instanceof Error && "cause" in error ? error.cause : undefined;
-                  const errorCode = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-                  const errorNumber = typeof cause === "object" && cause !== null && "errno" in cause ? cause.errno : undefined;
-                  if (errorCode !== "ER_DUP_ENTRY" && errorNumber !== 1062) throw error;
-                  const racedExisting = (await db.select().from(cooperatives).where(eq(cooperatives.normalizedName, normalized.normalizedName)).limit(1))[0];
-                  if (!racedExisting) throw error;
-                  cooperativeId = racedExisting.id;
-                  cooperativeName = racedExisting.name;
-                  joinedExistingCooperative = racedExisting.name;
-                }
-              }
-            } else {
-              throw new TRPCError({ code: "BAD_REQUEST", message: "Choose an existing cooperative or enter a new cooperative name." });
-            }
-          }
+          throw error;
         }
 
-        const { data, error } = await supabaseAdmin.auth.admin.createUser({
+        const authClient = createPublicAuthClient();
+        const { data, error } = await authClient.auth.signUp({
           email: input.email,
           password: input.password,
-          email_confirm: true,
-          user_metadata: { name: input.name, role: input.role },
+          options: {
+            data: { name: input.name },
+            emailRedirectTo: getEmailVerificationRedirectUrl(process.env.APP_URL),
+          },
         });
-        if (error || !data.user) throw new TRPCError({ code: "BAD_REQUEST", message: error?.message || "Unable to create the account." });
-        await upsertUser({
-          openId: data.user.id,
+        if (error) {
+          if (isDuplicateSignupError(error)) return { success: true, verificationRequired: true };
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to start registration. Please try again later." });
+        }
+        const createdAuthUser = data.user;
+        if (!createdAuthUser) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to start registration. Please try again later." });
+        }
+        if (createdAuthUser.identities?.length === 0) return { success: true, verificationRequired: true };
+        if (data.session || isVerifiedSupabaseEmail(createdAuthUser)) {
+          try {
+            const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(createdAuthUser.id);
+            if (deleteError) throw deleteError;
+          } catch (deleteError) {
+            console.error("[registration] Could not remove an account created without email confirmation", {
+              errorType: deleteError instanceof Error ? deleteError.name : "UnknownError",
+            });
+          }
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Email confirmation is not enabled. Contact support before registering.",
+          });
+        }
+        try {
+          await provisionAuthAccount(
+            createdAuthUser.id,
+            () => withRequestDatabaseScope(createdAuthUser.id, async () => {
+              const db = await getDb();
+              const publicRoles = await db.select({ roleId: roles.roleId, roleName: roles.roleName })
+                .from(roles)
+                .where(eq(roles.roleName, input.role))
+                .limit(2);
+              if (publicRoles.length !== 1) {
+                throw new Error("Canonical registration role is missing or ambiguous.");
+              }
+              const identity = resolvePublicRegistrationIdentity(publicRoles[0].roleName);
+              if (!identity || identity.publicRoleName !== input.role) {
+                throw new Error("The requested role is not permitted for public registration.");
+              }
+              await upsertUser({
+                openId: createdAuthUser.id,
+                email: input.email,
+                name: input.name,
+                role: identity.applicationRole,
+                approvalStatus: identity.approvalStatus,
+                cooperativeId: null,
+                loginMethod: "supabase",
+              });
+              await db.insert(profiles).values({
+                userId: createdAuthUser.id,
+                fullName: input.name,
+                email: input.email,
+                roleId: publicRoles[0].roleId,
+              });
+            }),
+            async authUserId => {
+              const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+              if (error) throw error;
+            },
+          );
+        } catch (error) {
+          const cleanupFailed = error instanceof RegistrationCleanupError;
+          if (cleanupFailed) {
+            console.error("[registration] Auth cleanup failed after profile provisioning error", {
+              errorType: error.name,
+            });
+          }
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: cleanupFailed
+              ? "Registration could not be completed. Contact support before trying again."
+              : "Registration setup failed and the incomplete account was removed. Please try again.",
+          });
+        }
+        return { success: true, verificationRequired: true };
+      }),
+    resendVerification: publicProcedure
+      .input(z.object({ email: z.string().trim().email().max(320).transform(value => value.toLowerCase()) }).strict())
+      .mutation(async ({ input, ctx }) => {
+        try {
+          registrationRateLimiter.consume("resend", ctx.req.ip, input.email);
+        } catch (error) {
+          if (error instanceof RegistrationRateLimitError) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
+          }
+          throw error;
+        }
+        const { error } = await createPublicAuthClient().auth.resend({
+          type: "signup",
           email: input.email,
-          name: input.name,
-          role: input.role,
-          approvalStatus: input.role === "buyer" ? "approved" : "pending",
-          cooperativeId,
-          loginMethod: "supabase",
+          options: { emailRedirectTo: getEmailVerificationRedirectUrl(process.env.APP_URL) },
         });
-        return { success: true, cooperativeName, joinedExistingCooperative };
+        if (error) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Unable to request a verification email. Please try again later.",
+          });
+        }
+        return { success: true };
       }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -222,7 +361,7 @@ export const appRouter = router({
         ? undefined
         : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
       if (!thread || !canAccessConversation(ctx.user, thread, seller?.cooperativeId ?? null)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this conversation." });
-      const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).$returningId();
+      const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).returning({ id: conversationMessages.id });
       publishConversationMessage({ conversationId: input.conversationId, messageId: message.id, senderId: ctx.user.id });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
       return { success: true };
@@ -238,56 +377,266 @@ export const appRouter = router({
         await db.update(users).set(input).where(eq(users.id, ctx.user.id));
         return { success: true };
       }),
+    verificationMine: protectedProcedure.query(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      const submissions = await db.select({
+        id: profileVerificationSubmissions.id,
+        status: profileVerificationSubmissions.status,
+        submissionNote: profileVerificationSubmissions.submissionNote,
+        submittedAt: profileVerificationSubmissions.submittedAt,
+        reviewedAt: profileVerificationSubmissions.reviewedAt,
+        reviewNote: profileVerificationSubmissions.reviewNote,
+      }).from(profileVerificationSubmissions)
+        .where(eq(profileVerificationSubmissions.userId, ctx.user.id))
+        .orderBy(desc(profileVerificationSubmissions.submittedAt), desc(profileVerificationSubmissions.id));
+      return { status: ctx.user.verificationStatus, submissions };
+    }),
+    requestVerificationUpload: protectedProcedure
+      .input(profileVerificationUploadInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const applicant = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        if (!canSubmitProfileVerification(applicant)) {
+          throw new TRPCError({ code: "CONFLICT", message: "A pending or approved verification cannot be resubmitted." });
+        }
+        const db = await dbOrThrow();
+        const [latest] = await db.select({ status: profileVerificationSubmissions.status })
+          .from(profileVerificationSubmissions)
+          .where(eq(profileVerificationSubmissions.userId, applicant.id))
+          .orderBy(desc(profileVerificationSubmissions.submittedAt), desc(profileVerificationSubmissions.id))
+          .limit(1);
+        if (latest && latest.status !== "rejected") {
+          throw new TRPCError({ code: "CONFLICT", message: "A pending or approved verification cannot be resubmitted." });
+        }
+
+        const extension = profileVerificationExtension(input.contentType);
+        if (!extension) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a supported verification image." });
+        }
+        const storagePath = `${PROFILE_VERIFICATION_BUCKET}/${applicant.id}/${crypto.randomUUID()}.${extension}`;
+        const signedUpload = await storageCreateSignedUploadUrl(storagePath, PROFILE_VERIFICATION_BUCKET);
+        if (signedUpload.path !== storagePath || !isProfileVerificationStorageKey(signedUpload.path, applicant.id)) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Private Storage returned an invalid verification path." });
+        }
+        return {
+          storagePath: signedUpload.path,
+          uploadToken: signedUpload.token,
+          uploadIntent: createProfileVerificationUploadIntent({
+            userId: applicant.id,
+            storagePath: signedUpload.path,
+            mimeType: input.contentType,
+            fileSizeBytes: input.fileSizeBytes,
+          }),
+        };
+      }),
     submitVerification: protectedProcedure
+      .input(profileVerificationSubmissionInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        const applicant = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        if (!canSubmitProfileVerification(applicant)) {
+          throw new TRPCError({ code: "CONFLICT", message: "A pending or approved verification cannot be resubmitted." });
+        }
+        const intent = verifyProfileVerificationUploadIntent(input.uploadIntent, applicant.id);
+        if (!intent) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The verification upload authorization is invalid or expired." });
+        }
+
+        try {
+          const bytes = await storageDownloadPrivateObject(intent.storagePath, PROFILE_VERIFICATION_BUCKET);
+          if (bytes.length !== intent.fileSizeBytes || bytes.length > PROFILE_VERIFICATION_MAX_BYTES) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded verification image size does not match its authorization." });
+          }
+          if (!matchesImageContentTypeSignature(bytes, intent.mimeType)) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded verification image does not match its declared format." });
+          }
+
+          const db = await dbOrThrow();
+          const submissionId = await db.transaction(async tx => {
+            const [target] = await tx.select({
+              id: users.id,
+              cooperativeId: users.cooperativeId,
+              verificationStatus: users.verificationStatus,
+            }).from(users)
+              .where(eq(users.id, applicant.id))
+              .for("update")
+              .limit(1);
+            if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "The applicant profile was not found." });
+
+            const [latest] = await tx.select({
+              id: profileVerificationSubmissions.id,
+              status: profileVerificationSubmissions.status,
+            }).from(profileVerificationSubmissions)
+              .where(eq(profileVerificationSubmissions.userId, applicant.id))
+              .orderBy(desc(profileVerificationSubmissions.submittedAt), desc(profileVerificationSubmissions.id))
+              .limit(1)
+              .for("update");
+            if (!canSubmitProfileVerification({ role: applicant.role, verificationStatus: target.verificationStatus })
+              || (latest && !canSubmitProfileVerification({ role: applicant.role, verificationStatus: latest.status }))) {
+              throw new TRPCError({ code: "CONFLICT", message: "A pending or approved verification cannot be resubmitted." });
+            }
+
+            await tx.execute(sql`select set_config('agricoop.profile_verification_upload_verified', '1', true)`);
+            const [submission] = await tx.insert(profileVerificationSubmissions).values({
+              userId: applicant.id,
+              storagePath: intent.storagePath,
+              mimeType: intent.mimeType,
+              fileSizeBytes: bytes.length,
+              submissionNote: input.note?.trim() || null,
+              status: "pending",
+            }).returning({ id: profileVerificationSubmissions.id });
+            if (!submission) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Verification submission metadata was not saved." });
+
+            await tx.update(users).set({
+              birthdate: new Date(`${input.birthdate}T00:00:00.000Z`),
+              phone: input.phone.trim(),
+              address: input.address?.trim() || null,
+              verificationStatus: "pending",
+              verificationNote: input.note?.trim() || null,
+              verifiedBy: null,
+              verifiedAt: null,
+            }).where(eq(users.id, applicant.id));
+            await createNotification(tx, {
+              userId: applicant.id,
+              type: "profile_verification_submitted",
+              title: "Verification submitted",
+              content: "Your profile verification is waiting for an administrator's review.",
+              link: "/dashboard",
+              relatedEntityId: submission.id,
+              relatedEntityType: "profile_verification_submission",
+            });
+            return submission.id;
+          });
+          return { success: true, submissionId, verificationStatus: "pending" as const };
+        } catch (error) {
+          try {
+            const removed = await storageDeleteObject(
+              intent.storagePath,
+              `${PROFILE_VERIFICATION_BUCKET}/${applicant.id}/`,
+              { bucket: PROFILE_VERIFICATION_BUCKET, public: false },
+            );
+            if (!removed) throw new Error("The uploaded object was outside the applicant's storage scope.");
+          } catch (cleanupError) {
+            throw new AggregateError(
+              [error, cleanupError],
+              "Verification submission failed and the uploaded document could not be safely cleaned up.",
+            );
+          }
+          throw error;
+        }
+      }),
+    verificationQueue: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      if (actor.role === "admin" && actor.cooperativeId === null) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before reviewing verification submissions." });
+      }
+      const db = await dbOrThrow();
+      const scope = actor.role === "admin" ? eq(users.cooperativeId, actor.cooperativeId!) : undefined;
+      const rows = await db.select({
+        submissionId: profileVerificationSubmissions.id,
+        userId: users.id,
+        name: users.name,
+        role: users.role,
+        cooperativeId: users.cooperativeId,
+        birthdate: users.birthdate,
+        phone: users.phone,
+        address: users.address,
+        submissionNote: profileVerificationSubmissions.submissionNote,
+        storagePath: profileVerificationSubmissions.storagePath,
+        mimeType: profileVerificationSubmissions.mimeType,
+        fileSizeBytes: profileVerificationSubmissions.fileSizeBytes,
+        submittedAt: profileVerificationSubmissions.submittedAt,
+      }).from(profileVerificationSubmissions)
+        .innerJoin(users, eq(profileVerificationSubmissions.userId, users.id))
+        .where(scope
+          ? and(eq(profileVerificationSubmissions.status, "pending"), scope)
+          : eq(profileVerificationSubmissions.status, "pending"))
+        .orderBy(asc(profileVerificationSubmissions.submittedAt), asc(profileVerificationSubmissions.id))
+        .limit(100);
+      return Promise.all(rows.map(async ({ storagePath, userId, ...row }) => {
+        const validPath = isProfileVerificationStorageKey(storagePath, userId);
+        return {
+          ...row,
+          userId,
+          evidenceUrl: validPath
+            ? await storageGetSignedUrl(storagePath, { bucket: PROFILE_VERIFICATION_BUCKET, public: false, expiresIn: 60 })
+            : null,
+          evidenceUnavailable: !validPath,
+        };
+      }));
+    }),
+    reviewVerification: protectedProcedure
       .input(z.object({
-        birthdate: z.string().trim().min(1).max(40).optional(),
-        phone: z.string().trim().max(40).optional(),
-        address: z.string().trim().max(500).optional(),
-        idNumber: z.string().trim().min(4).max(80).optional(),
-        selfieUrl: z.string().trim().max(1000).optional(),
+        submissionId: z.number().int().positive(),
+        decision: z.enum(["approved", "rejected"]),
         note: z.string().trim().max(600).optional(),
+      }).strict().superRefine((input, refinement) => {
+        if (input.decision === "rejected" && !input.note?.trim()) {
+          refinement.addIssue({ code: "custom", path: ["note"], message: "A rejection reason is required." });
+        }
       }))
       .mutation(async ({ ctx, input }) => {
-        if (!canSubmitProfileVerification({ role: ctx.user.role, verificationStatus: ctx.user.verificationStatus })) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "This profile is already verified or cannot be verified with the current role." });
-        }
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
-        const birthdateValue = input.birthdate ? new Date(input.birthdate) : undefined;
-        if (input.birthdate && Number.isNaN(birthdateValue?.getTime() ?? NaN)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "The birthdate is not a valid date." });
-        }
-        await db.update(users)
-          .set({
-            birthdate: birthdateValue ?? null,
-            phone: input.phone?.trim() || null,
-            address: input.address?.trim() || null,
-            profileImageUrl: input.selfieUrl?.trim() || null,
-            verificationStatus: "pending",
-            verificationNote: input.note?.trim() || null,
-            verifiedAt: null,
-          })
-          .where(eq(users.id, ctx.user.id));
-        return { success: true, verificationStatus: "pending" };
-      }),
-    reviewVerification: protectedProcedure
-      .input(z.object({ userId: z.number().int().positive(), decision: z.enum(["approved", "rejected"]), note: z.string().trim().max(600).optional() }))
-      .mutation(async ({ ctx, input }) => {
-        requireOperationalRole(ctx.user, ["admin", "superadmin"]);
-        const db = await dbOrThrow();
-        const target = (await db.select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
-        if (!target) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "The requested user record was not found." });
-        }
-        if (ctx.user.role === "admin" && target.cooperativeId !== ctx.user.cooperativeId) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "You can only review members from your own cooperative." });
-        }
-        await db.update(users).set({
-          verificationStatus: input.decision,
-          verificationNote: input.note?.trim() || null,
-          verifiedBy: ctx.user.id,
-          verifiedAt: new Date(),
-        }).where(eq(users.id, input.userId));
-        return { success: true, verificationStatus: input.decision };
+        return db.transaction(async tx => {
+          const [target] = await tx.select({
+            submissionId: profileVerificationSubmissions.id,
+            userId: users.id,
+            cooperativeId: users.cooperativeId,
+            verificationStatus: profileVerificationSubmissions.status,
+          }).from(profileVerificationSubmissions)
+            .innerJoin(users, eq(profileVerificationSubmissions.userId, users.id))
+            .where(eq(profileVerificationSubmissions.id, input.submissionId))
+            .for("update")
+            .limit(1);
+          if (!target) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "The requested verification submission was not found." });
+          }
+          if (!canManageCooperativeResource(actor, target.cooperativeId)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You can only review members from your own cooperative." });
+          }
+          if (target.verificationStatus !== "pending") {
+            throw new TRPCError({ code: "CONFLICT", message: "Only a pending profile verification can be reviewed." });
+          }
+
+          const reviewedAt = new Date();
+          const reviewNote = input.note?.trim() || null;
+          const result = await tx.update(profileVerificationSubmissions).set({
+            status: input.decision,
+            reviewNote,
+            reviewedBy: actor.id,
+            reviewedAt,
+          }).where(and(
+            eq(profileVerificationSubmissions.id, target.submissionId),
+            eq(profileVerificationSubmissions.status, "pending"),
+          )).returning({ id: profileVerificationSubmissions.id });
+          if (result.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "The profile verification changed while it was being reviewed." });
+          }
+          const userUpdate = await tx.update(users).set({
+            verificationStatus: input.decision,
+            verificationNote: reviewNote,
+            verifiedBy: actor.id,
+            verifiedAt: reviewedAt,
+          }).where(and(
+            eq(users.id, target.userId),
+            eq(users.verificationStatus, "pending"),
+          )).returning({ id: users.id });
+          if (userUpdate.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "The profile verification changed while it was being reviewed." });
+          }
+
+          await createNotification(tx, {
+            userId: target.userId,
+            type: `profile_verification_${input.decision}`,
+            title: input.decision === "approved" ? "Profile verification approved" : "Profile verification rejected",
+            content: input.decision === "approved"
+              ? "Your profile verification has been approved."
+              : `Your profile verification was rejected. Reason: ${reviewNote}`,
+            link: "/dashboard",
+            relatedEntityId: target.submissionId,
+            relatedEntityType: "profile_verification_submission",
+          });
+          return { success: true, verificationStatus: input.decision };
+        });
       }),
   }),
 
@@ -296,13 +645,68 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({ name: z.string().min(3).max(180), location: z.string().min(3).max(180), description: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         const normalized = normalizeCooperativeName(input.name);
         await db.insert(cooperatives).values({
           ...input,
           name: normalized.displayName,
           normalizedName: normalized.normalizedName,
+        });
+        return { success: true };
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        name: z.string().min(3).max(180).optional(),
+        location: z.string().min(3).max(180).optional(),
+        description: z.string().max(600).nullable().optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
+        const db = await dbOrThrow();
+        const patch: Partial<typeof cooperatives.$inferInsert> = {};
+        if (input.name !== undefined) {
+          const normalized = normalizeCooperativeName(input.name);
+          patch.name = normalized.displayName;
+          patch.normalizedName = normalized.normalizedName;
+        }
+        if (input.location !== undefined) patch.location = input.location;
+        if (input.description !== undefined) patch.description = input.description;
+        if (!Object.keys(patch).length) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Provide at least one cooperative field to update." });
+        }
+        const updated = await db.update(cooperatives).set(patch).where(eq(cooperatives.id, input.id)).returning({ id: cooperatives.id });
+        if (!updated.length) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
+        await recordAuditLog(db, {
+          actorUserId: actor.id,
+          action: "cooperative_updated",
+          entityType: "cooperative",
+          entityId: input.id,
+          cooperativeId: input.id,
+          metadata: patch,
+        });
+        return { success: true };
+      }),
+    setStatus: protectedProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        status: z.enum(["active", "inactive"]),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
+        const db = await dbOrThrow();
+        const updated = await db.update(cooperatives)
+          .set({ status: input.status })
+          .where(eq(cooperatives.id, input.id))
+          .returning({ id: cooperatives.id });
+        if (!updated.length) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
+        await recordAuditLog(db, {
+          actorUserId: actor.id,
+          action: input.status === "active" ? "cooperative_activated" : "cooperative_deactivated",
+          entityType: "cooperative",
+          entityId: input.id,
+          cooperativeId: input.id,
         });
         return { success: true };
       }),
@@ -332,8 +736,27 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        const { imageUrls, submitForVerification, ...productValues } = input; await db.insert(products).values({ ...productValues, sellerId: seller.id, cooperativeId: seller.cooperativeId, verificationStatus: submitForVerification ? "pending" : "draft", visibility: "hidden", primaryImageUrl: imageUrls[0] ?? null });
-        return { success: true };
+        validateProductImageUrls(input.imageUrls, seller.id);
+        const { imageUrls, submitForVerification, ...productValues } = input;
+        return db.transaction(async tx => {
+          const [created] = await tx.insert(products).values({
+            ...productValues,
+            sellerId: seller.id,
+            cooperativeId: seller.cooperativeId,
+            verificationStatus: submitForVerification ? "pending" : "draft",
+            visibility: "hidden",
+            primaryImageUrl: imageUrls[0] ?? null,
+          }).returning({ id: products.id });
+          if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Product creation did not return an ID." });
+          if (imageUrls.length) {
+            await tx.insert(productImages).values(imageUrls.map((imageUrl, displayOrder) => ({
+              productId: created.id,
+              imageUrl,
+              displayOrder,
+            })));
+          }
+          return { success: true };
+        });
       }),
     uploadImage: protectedProcedure
       .input(z.object({
@@ -348,7 +771,10 @@ export const appRouter = router({
         }
         const bytes = Buffer.from(input.base64, "base64");
         if (!isProductImageSizeAllowed(bytes.length)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be 5 MB or less." });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Product images must be 3 MB or less." });
+        }
+        if (!matchesImageContentTypeSignature(bytes, input.contentType)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected file is not a valid image of the declared type." });
         }
         const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "product-image";
         const uploaded = await storagePut(`products/${seller.id}/${Date.now()}-${safeName}`, bytes, input.contentType);
@@ -359,28 +785,86 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        const result = await db.update(products).set({ verificationStatus: "pending", visibility: "hidden", rejectionReason: null }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id)));
-        if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another Seller." });
+        const result = await db.update(products).set({ verificationStatus: "pending", visibility: "hidden", rejectionReason: null }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id))).returning({ id: products.id });
+        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another Seller." });
         return { success: true };
       }),
     update: protectedProcedure
-      .input(z.object({
-        id: z.number().int().positive(),
-        ...productFields,
-        qualityGrade: z.enum(["premium", "standard", "imperfect"]),
-        status: z.enum(["published", "archived"]),
-        primaryImageUrl: z.string().max(1000).refine(
-          imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
-          "Image must be a valid URL or local image path.",
-        ).nullable().optional(),
-      }).superRefine(validateProductQuantities))
+        .input(updateProductSchema)
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        const { id, ...values } = input;
-        const result = await db.update(products).set(values).where(and(eq(products.id, id), eq(products.sellerId, seller.id)));
-        if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
-        return { success: true };
+        const { id, imageUrls, primaryImageUrl, ...values } = input;
+        assertProductImageUpdateInput(imageUrls, primaryImageUrl);
+        return db.transaction(async tx => {
+          const [existingProduct] = await tx.select({
+            id: products.id,
+            cooperativeId: products.cooperativeId,
+            primaryImageUrl: products.primaryImageUrl,
+            verificationStatus: products.verificationStatus,
+            name: products.name,
+            category: products.category,
+            variety: products.variety,
+            description: products.description,
+            unit: products.unit,
+            priceCents: products.priceCents,
+            minOrderQty: products.minOrderQty,
+            qualityGrade: products.qualityGrade,
+          }).from(products)
+            .where(and(eq(products.id, id), eq(products.sellerId, seller.id)))
+            .for("update")
+            .limit(1);
+          if (!existingProduct) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
+          let currentImageUrls: string[] = [];
+          if (imageUrls !== undefined) {
+            const existingImages = await tx.select({ imageUrl: productImages.imageUrl })
+              .from(productImages)
+              .where(eq(productImages.productId, id));
+            currentImageUrls = existingImages.length
+              ? existingImages.map(row => row.imageUrl)
+              : existingProduct.primaryImageUrl ? [existingProduct.primaryImageUrl] : [];
+            validateProductImageUrls(
+              imageUrls,
+              seller.id,
+              [existingProduct.primaryImageUrl, ...existingImages.map(row => row.imageUrl)].filter((url): url is string => url !== null),
+            );
+          }
+          const nextPrimaryImageUrl = imageUrls === undefined ? existingProduct.primaryImageUrl : imageUrls[0] ?? null;
+          const reviewState = prepareProductUpdateReviewState(
+            existingProduct,
+            values,
+            currentImageUrls,
+            imageUrls ?? currentImageUrls,
+            nextPrimaryImageUrl,
+          );
+          const updateValues = {
+            ...(imageUrls === undefined ? values : { ...values, primaryImageUrl: nextPrimaryImageUrl }),
+            ...reviewState.moderationUpdate,
+          };
+          const result = await tx.update(products).set(updateValues).where(and(eq(products.id, id), eq(products.sellerId, seller.id))).returning({ id: products.id });
+          if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
+          if (reviewState.reviewRequired) {
+            await recordAuditLog(tx, {
+              actorUserId: seller.id,
+              action: "product.content_revised_for_review",
+              entityType: "product",
+              entityId: id,
+              cooperativeId: existingProduct.cooperativeId,
+              metadata: { verificationStatus: "pending", visibility: "hidden" },
+            });
+          }
+          if (imageUrls !== undefined) {
+            await tx.delete(productImages).where(eq(productImages.productId, id));
+            if (imageUrls.length) {
+              await tx.insert(productImages).values(imageUrls.map((imageUrl, displayOrder) => ({
+                productId: id,
+                imageUrl,
+                displayOrder,
+              })));
+            }
+          }
+          return { success: true, reviewRequired: reviewState.reviewRequired };
+        });
       }),
     archive: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
@@ -405,56 +889,98 @@ export const appRouter = router({
       .input(z.object({ productId: z.number().int().positive(), requestedQty: z.number().int().positive(), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
-        const product = await getProductById(input.productId);
-        if (!product || product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible") throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
-        try { assertNotSelfTransaction(buyer.id, product.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." }); }
         const db = await dbOrThrow();
-        const seller = (await db.select({ approvalStatus: users.approvalStatus }).from(users).where(eq(users.id, product.sellerId)).limit(1))[0];
-        if (!isSellerApproved(seller?.approvalStatus)) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive quotation requests." });
-        }
-        if (input.requestedQty < product.minOrderQty) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum order is ${product.minOrderQty} ${product.unit}.` });
-        }
-        if (input.requestedQty > product.stockQty) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${product.stockQty} ${product.unit} are currently available.` });
-        }
-        const [quotation] = await db.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).$returningId();
-        const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
-        return { success: true, conversationId };
+        return db.transaction(async tx => {
+          const [product] = await tx.select().from(products)
+            .where(eq(products.id, input.productId))
+            .for("update");
+          if (!product || product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible") {
+            throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
+          }
+          try {
+            assertNotSelfTransaction(buyer.id, product.sellerId);
+          } catch (error) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." });
+          }
+          const [seller] = await tx.select({ approvalStatus: users.approvalStatus })
+            .from(users)
+            .where(eq(users.id, product.sellerId))
+            .for("update");
+          if (!isSellerApproved(seller?.approvalStatus)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive quotation requests." });
+          }
+          if (input.requestedQty < product.minOrderQty) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum order is ${product.minOrderQty} ${product.unit}.` });
+          }
+          const reserved = await getOpenOrderReservationQuantities(tx, [product.id]);
+          const availableQty = availableStockAfterReservations(product.stockQty, reserved.get(product.id) ?? 0);
+          if (input.requestedQty > availableQty) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${availableQty} ${product.unit} are currently available.` });
+          }
+          const [quotation] = await tx.insert(quotations).values({ ...input, buyerId: buyer.id, sellerId: product.sellerId }).returning({ id: quotations.id });
+          const conversationId = await openSupportThread(tx, { buyerId: buyer.id, sellerId: product.sellerId, productId: product.id, quotationId: quotation.id, subject: `Quotation request: ${product.name}`, body: input.buyerNote || `I would like a quotation for ${input.requestedQty} ${product.unit} of ${product.name}.` });
+          return { success: true, conversationId };
+        });
       }),
     respond: protectedProcedure
-      .input(z.object({ quotationId: z.number().int().positive(), quotedPriceCents: z.number().int().positive(), sellerNote: z.string().max(600).optional(), status: z.enum(["responded", "declined"]) }))
+      .input(quotationResponseInputSchema)
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller"]);
         const db = await dbOrThrow();
-        const current = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
-        if (!current || current.sellerId !== seller.id || !isQuotationOpen(current.status)) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
-        const { quotationId, ...values } = input;
-        const result = await db.update(quotations).set({ ...values, respondedAt: new Date() }).where(and(eq(quotations.id, quotationId), eq(quotations.sellerId, seller.id), eq(quotations.status, "requested")));
-        if (!result[0].affectedRows) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
-        return { success: true };
+        return db.transaction(async tx => {
+          const [current] = await tx.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1);
+          if (!current || current.sellerId !== seller.id || !isQuotationOpen(current.status)) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
+          }
+          const { quotationId, ...values } = input;
+          const result = await tx.update(quotations).set({ ...values, respondedAt: new Date() }).where(and(eq(quotations.id, quotationId), eq(quotations.sellerId, seller.id), eq(quotations.status, "requested"))).returning({ id: quotations.id });
+          if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "That quotation cannot be updated." });
+          await createNotification(tx, {
+            userId: current.buyerId,
+            type: "quotation_updated",
+            title: "Seller responded to your quotation",
+            content: "Open your activity workspace to review the quoted price and decide.",
+            link: "/activity",
+            relatedEntityId: current.id,
+            relatedEntityType: "quotation",
+          });
+          return { success: true };
+        });
       }),
     decide: protectedProcedure
       .input(z.object({ quotationId: z.number().int().positive(), status: z.enum(["accepted", "declined"]) }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
-        const quotation = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
-        if (!quotation || !canDecideBuyerQuotation(buyer.id, quotation)) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
-        }
-        const result = await db.update(quotations)
-          .set({ status: input.status })
-          .where(and(
-            eq(quotations.id, input.quotationId),
-            eq(quotations.buyerId, buyer.id),
-            eq(quotations.status, "responded"),
-          ));
-        if (!result[0].affectedRows) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
-        }
-        return { success: true };
+        return db.transaction(async tx => {
+          const [quotation] = await tx.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1);
+          if (!quotation || !canDecideBuyerQuotation(buyer.id, quotation)) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
+          }
+          const result = await tx.update(quotations)
+            .set({ status: input.status })
+            .where(and(
+              eq(quotations.id, input.quotationId),
+              eq(quotations.buyerId, buyer.id),
+              eq(quotations.status, "responded"),
+            ))
+            .returning({ id: quotations.id });
+          if (!result.length) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "That quotation is unavailable or no longer awaiting your decision." });
+          }
+          await createNotification(tx, {
+            userId: quotation.sellerId,
+            type: "quotation_updated",
+            title: input.status === "accepted" ? "Quotation accepted" : "Quotation declined",
+            content: input.status === "accepted"
+              ? "A buyer accepted your quotation. They can place the order next."
+              : "A buyer declined your quotation.",
+            link: "/dashboard",
+            relatedEntityId: quotation.id,
+            relatedEntityType: "quotation",
+          });
+          return { success: true };
+        });
       }),
   }),
 
@@ -468,37 +994,133 @@ export const appRouter = router({
       return getSellerOrders(ctx.user.id);
     }),
     create: protectedProcedure
-      .input(z.object({ items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1), buyerNote: z.string().max(600).optional(), quotationId: z.number().int().positive().optional() }))
+      .input(z.object({
+        items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),
+        buyerNote: z.string().max(600).optional(),
+        quotationId: z.number().int().positive().optional(),
+        paymentMethod: z.enum(["cash_pickup", "cash_delivery", "gcash"]).default("cash_pickup"),
+        paymentOptionId: z.number().int().positive().optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
-        const listedProducts = await db.select().from(products).where(inArray(products.id, productIds));
-        if (listedProducts.length !== productIds.length || listedProducts.some(product => product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible")) throw new TRPCError({ code: "BAD_REQUEST", message: "One or more products are no longer available for purchase." });
-        let prepared;
-        try { prepared = prepareOrder(listedProducts, input.items); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
-        try { assertNotSelfTransaction(buyer.id, prepared.sellerId); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." }); }
-        const seller = (await db.select({ approvalStatus: users.approvalStatus }).from(users).where(eq(users.id, prepared.sellerId)).limit(1))[0];
-        if (!isSellerApproved(seller?.approvalStatus)) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive orders." });
-        }
-        let quotedPriceCents: number | undefined;
-        if (input.quotationId !== undefined) {
-          const quotation = (await db.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1))[0];
-          if (!quotation || !canPlaceAcceptedQuotationOrder(buyer.id, quotation, prepared.items)) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Only your accepted quotation and its quoted quantity can be used for this order." });
+        const createdOrder = await db.transaction(async tx => {
+          const currentProducts = await tx.select().from(products)
+            .where(inArray(products.id, productIds))
+            .orderBy(asc(products.id))
+            .for("update");
+          if (currentProducts.length !== productIds.length || currentProducts.some(product =>
+            product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible"
+          )) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "One or more products are no longer available for purchase." });
           }
-          if (quotation.quotedPriceCents === null) {
-            throw new TRPCError({ code: "BAD_REQUEST", message: "An accepted quotation can only be ordered for its product and quoted quantity." });
+          const reservedByProduct = await getOpenOrderReservationQuantities(tx, productIds);
+          // Open orders reserve availability; on-hand stock changes only when fulfillment is completed.
+          const availableProducts = currentProducts.map(product => ({
+            ...product,
+            stockQty: availableStockAfterReservations(
+              product.stockQty,
+              reservedByProduct.get(product.id) ?? 0,
+            ),
+          }));
+          let currentOrder;
+          try {
+            currentOrder = prepareOrder(availableProducts, input.items);
+            assertNotSelfTransaction(buyer.id, currentOrder.sellerId);
+          } catch (error) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." });
           }
-          quotedPriceCents = quotation.quotedPriceCents;
-        }
-        const pricing = priceOrderItems(prepared.items, prepared.productMap, quotedPriceCents);
-        const [newOrder] = await db.insert(orders).values({ buyerId: buyer.id, sellerId: prepared.sellerId, cooperativeId: prepared.cooperativeId, orderType: prepared.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: "f2f", paymentStatus: "F2F-pending-confirmation" }).$returningId();
-        await db.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
-        await db.insert(transactions).values({ orderId: newOrder.id, buyerId: buyer.id, sellerId: prepared.sellerId, amountCents: pricing.totalCents, paymentMethod: "f2f", status: "payment_coordinated" });
-        const conversationId = await openSupportThread(db, { buyerId: buyer.id, sellerId: prepared.sellerId, orderId: newOrder.id, quotationId: input.quotationId, subject: `Order #${newOrder.id} support`, body: "Please confirm availability, F2F payment coordination, and handover details." });
-        return { success: true, orderId: newOrder.id, conversationId };
+          const [currentSeller] = await tx.select({ approvalStatus: users.approvalStatus })
+            .from(users)
+            .where(eq(users.id, currentOrder.sellerId))
+            .for("update");
+          if (!isSellerApproved(currentSeller?.approvalStatus)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive orders." });
+          }
+
+          let selectedPaymentOptionId: number | undefined;
+          if (input.paymentMethod === "gcash" && input.paymentOptionId !== undefined) {
+            const optionScope = currentOrder.cooperativeId === null
+              ? isNull(paymentOptions.cooperativeId)
+              : eq(paymentOptions.cooperativeId, currentOrder.cooperativeId);
+            const [selectedOption] = await tx.select({
+              id: paymentOptions.id,
+              cooperativeId: paymentOptions.cooperativeId,
+              paymentMethod: paymentOptions.paymentMethod,
+              isActive: paymentOptions.isActive,
+            }).from(paymentOptions)
+              .where(and(
+                eq(paymentOptions.id, input.paymentOptionId),
+                eq(paymentOptions.isActive, true),
+                eq(paymentOptions.paymentMethod, "gcash"),
+                optionScope,
+              ))
+              .for("update");
+            if (selectedOption && isGcashCheckoutOption(selectedOption, currentOrder.cooperativeId)) {
+              selectedPaymentOptionId = selectedOption.id;
+            }
+          }
+          try {
+            assertPaymentOptionSelection(
+              input.paymentMethod,
+              input.paymentOptionId,
+              selectedPaymentOptionId !== undefined,
+            );
+          } catch (error) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: error instanceof Error ? error.message : "The selected payment option is unavailable.",
+            });
+          }
+
+          let currentQuotedPrice: number | undefined;
+          if (input.quotationId !== undefined) {
+            const [quotation] = await tx.select().from(quotations)
+              .where(eq(quotations.id, input.quotationId))
+              .for("update");
+            if (!quotation || quotation.sellerId !== currentOrder.sellerId || !canPlaceAcceptedQuotationOrder(buyer.id, quotation, currentOrder.items)) {
+              throw new TRPCError({ code: "FORBIDDEN", message: "Only your accepted quotation and its quoted quantity can be used for this order." });
+            }
+            if (quotation.quotedPriceCents === null) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "An accepted quotation can only be ordered for its product and quoted quantity." });
+            }
+            currentQuotedPrice = quotation.quotedPriceCents;
+          }
+
+          const pricing = priceOrderItems(currentOrder.items, currentOrder.productMap, currentQuotedPrice);
+          const [newOrder] = await tx.insert(orders).values({ buyerId: buyer.id, sellerId: currentOrder.sellerId, cooperativeId: currentOrder.cooperativeId, orderType: currentOrder.orderType, totalCents: pricing.totalCents, buyerNote: input.buyerNote, paymentMethod: input.paymentMethod, paymentStatus: "pending" }).returning({ id: orders.id });
+          await tx.insert(transactions).values({
+            orderId: newOrder.id,
+            buyerId: buyer.id,
+            sellerId: currentOrder.sellerId,
+            amountCents: pricing.totalCents,
+            paymentMethod: input.paymentMethod,
+            paymentOptionId: selectedPaymentOptionId ?? null,
+            status: "payment_coordinated",
+          });
+          await ensureOrderPaymentRecord(tx, {
+            id: newOrder.id,
+            buyerId: buyer.id,
+            sellerId: currentOrder.sellerId,
+            cooperativeId: currentOrder.cooperativeId,
+            totalCents: pricing.totalCents,
+            paymentMethod: input.paymentMethod,
+            paymentStatus: "pending",
+            paymentOptionId: selectedPaymentOptionId ?? null,
+          }, buyer.id);
+          await tx.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
+          await tx.insert(orderEvents).values({
+            orderId: newOrder.id,
+            actorUserId: buyer.id,
+            action: "stock_reserved",
+            toStatus: "submitted",
+            note: "Stock reserved against open-order availability; on-hand quantity remains unchanged until fulfillment.",
+          });
+          const conversationId = await openSupportThread(tx, { buyerId: buyer.id, sellerId: currentOrder.sellerId, orderId: newOrder.id, quotationId: input.quotationId, subject: `Order #${newOrder.id} support`, body: "Please confirm availability and arrange the selected payment handover." });
+          return { orderId: newOrder.id, conversationId };
+        });
+        return { success: true, ...createdOrder };
       }),
     updateStatus: protectedProcedure
       .input(z.object({
@@ -548,6 +1170,16 @@ export const appRouter = router({
                 throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Final delivered quantities are invalid." });
               }
 
+              const [transactionRow] = await tx.select().from(transactions)
+                .where(eq(transactions.orderId, input.orderId))
+                .for("update");
+              if (!transactionRow || orderRow.paymentStatus !== "paid" || transactionRow.status !== "paid") {
+                throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Payment must be verified before the order can be completed." });
+              }
+              if (transactionRow.amountCents !== completion.totalCents) {
+                throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The delivered total differs from the verified payment amount." });
+              }
+
               const productIds = Array.from(new Set(orderedItems.map(item => item.productId)));
               const lockedProducts = productIds.length
                 ? await tx.select().from(products).where(inArray(products.id, productIds)).orderBy(asc(products.id)).for("update")
@@ -563,13 +1195,13 @@ export const appRouter = router({
               } catch (error) {
                 throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Insufficient current inventory to complete this order." });
               }
-
               await applyInventoryDeductions(completion.items, async applyDeduction => {
                 await applyDeduction(async item => {
                   const result = await tx.update(products)
                     .set({ stockQty: sql`${products.stockQty} - ${item.quantity}` })
-                    .where(and(eq(products.id, item.productId), gte(products.stockQty, item.quantity)));
-                  return result[0].affectedRows > 0;
+                    .where(and(eq(products.id, item.productId), gte(products.stockQty, item.quantity)))
+                    .returning({ id: products.id });
+                  return result.length > 0;
                 });
               });
               const completedAt = new Date();
@@ -581,24 +1213,24 @@ export const appRouter = router({
               await tx.update(orders)
                 .set({ status: "completed", totalCents: completion.totalCents, completedAt })
                 .where(eq(orders.id, input.orderId));
-              await tx.insert(transactions).values({
-                orderId: orderRow.id,
-                buyerId: orderRow.buyerId,
-                sellerId: orderRow.sellerId,
-                amountCents: completion.totalCents,
-                paymentReferenceNote: input.paymentReferenceNote,
-                status: transactionStatusFor(input.paymentReferenceNote),
-                paymentMethod: "f2f",
-                completedAt,
-              }).onDuplicateKeyUpdate({
-                set: {
-                  amountCents: completion.totalCents,
-                  paymentReferenceNote: input.paymentReferenceNote,
-                  status: transactionStatusFor(input.paymentReferenceNote),
-                  paymentMethod: "f2f",
-                  completedAt,
-                },
+              await tx.insert(orderEvents).values({
+                orderId: input.orderId,
+                actorUserId: actor.id,
+                action: "stock_reservation_released",
+                fromStatus: previousStatus,
+                toStatus: "completed",
+                note: "Open-order stock reservation was consumed by completion; delivered quantities were deducted from on-hand stock.",
               });
+              const transactionUpdate = await tx.update(transactions)
+                .set({
+                  paymentReferenceNote: input.paymentReferenceNote ?? transactionRow.paymentReferenceNote,
+                  completedAt,
+                })
+                .where(and(eq(transactions.id, transactionRow.id), eq(transactions.status, "paid")))
+                .returning({ id: transactions.id });
+              if (transactionUpdate.length !== 1) {
+                throw new TRPCError({ code: "CONFLICT", message: "The order transaction changed while completing the order." });
+              }
               await tx.insert(orderEvents).values({
                 orderId: input.orderId,
                 actorUserId: actor.id,
@@ -608,11 +1240,44 @@ export const appRouter = router({
                 note: input.paymentReferenceNote ?? null,
               });
             } else {
+              if (input.status === "cancelled") {
+                const [transactionRow] = await tx.select().from(transactions)
+                  .where(eq(transactions.orderId, input.orderId))
+                  .for("update");
+                if (!transactionRow
+                  || transactionRow.orderId !== orderRow.id
+                  || transactionRow.buyerId !== orderRow.buyerId
+                  || transactionRow.sellerId !== orderRow.sellerId
+                  || transactionRow.amountCents !== orderRow.totalCents
+                  || transactionRow.paymentMethod !== orderRow.paymentMethod) {
+                  throw new TRPCError({ code: "CONFLICT", message: "The order transaction is inconsistent and cannot be cancelled." });
+                }
+                const paymentStatus = orderRow.paymentStatus === "paid" || orderRow.paymentStatus === "verified"
+                  ? "verified"
+                  : orderRow.paymentStatus === "F2F-pending-confirmation"
+                    ? "pending"
+                    : orderRow.paymentStatus;
+                if (!canCancelOrderPayment(paymentStatus, orderRow.paymentStatus, transactionRow.status)) {
+                  throw new TRPCError({
+                    code: "PRECONDITION_FAILED",
+                    message: "A verified payment must be fully refunded before its order can be cancelled.",
+                  });
+                }
+                await tx.insert(orderEvents).values({
+                  orderId: input.orderId,
+                  actorUserId: actor.id,
+                  action: "stock_reservation_released",
+                  fromStatus: previousStatus,
+                  toStatus: "cancelled",
+                  note: "Cancellation released the open-order stock reservation; payment and transaction records retain their last valid enum states.",
+                });
+              }
               await tx.update(orders).set({ status: input.status }).where(eq(orders.id, input.orderId));
-              await tx.update(transactions).set({
-                paymentReferenceNote: input.paymentReferenceNote,
-                status: transactionStatusFor(input.paymentReferenceNote),
-              }).where(eq(transactions.orderId, orderRow.id));
+              if (input.paymentReferenceNote !== undefined) {
+                await tx.update(transactions)
+                  .set({ paymentReferenceNote: input.paymentReferenceNote })
+                  .where(eq(transactions.orderId, orderRow.id));
+              }
               await tx.insert(orderEvents).values({
                 orderId: input.orderId,
                 actorUserId: actor.id,
@@ -622,6 +1287,15 @@ export const appRouter = router({
                 note: input.paymentReferenceNote ?? null,
               });
             }
+            await createNotification(tx, {
+              userId: orderRow.buyerId,
+              type: "order_status_updated",
+              title: `Order #${input.orderId} is now ${input.status}`,
+              content: `Your order status changed from ${previousStatus} to ${input.status}.`,
+              link: "/dashboard",
+              relatedEntityId: input.orderId,
+              relatedEntityType: "order",
+            });
           });
         } catch (error) {
           if (error instanceof TRPCError) throw error;
@@ -634,7 +1308,948 @@ export const appRouter = router({
       }),
   }),
 
+  payments: router({
+    mine: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
+      const db = await dbOrThrow();
+      if (actor.role === "admin" && actor.cooperativeId === null) return [];
+      const scope = actor.role === "buyer"
+        ? eq(orders.buyerId, actor.id)
+        : actor.role === "seller"
+          ? eq(orders.sellerId, actor.id)
+          : actor.role === "admin"
+            ? eq(orders.cooperativeId, actor.cooperativeId!)
+            : undefined;
+      const records = await db.select({ transaction: transactions, order: orders })
+        .from(transactions)
+        .innerJoin(orders, eq(transactions.orderId, orders.id))
+        .where(scope);
+      if (!records.length) return [];
+      const orderIds = records.map(record => record.order.id);
+      const proofs = await db.select({
+        id: paymentProofs.id,
+        orderId: paymentProofs.orderId,
+        verificationStatus: paymentProofs.verificationStatus,
+        reviewNote: paymentProofs.reviewNote,
+        reviewedAt: paymentProofs.reviewedAt,
+        createdAt: paymentProofs.createdAt,
+      }).from(paymentProofs)
+        .where(inArray(paymentProofs.orderId, orderIds))
+        .orderBy(desc(paymentProofs.createdAt), desc(paymentProofs.id));
+      const latestProofByOrder = new Map<number, typeof proofs[number]>();
+      for (const proof of proofs) {
+        if (!latestProofByOrder.has(proof.orderId)) latestProofByOrder.set(proof.orderId, proof);
+      }
+      return records.map(({ transaction, order }) => {
+        const proof = latestProofByOrder.get(order.id);
+        const status = order.status === "cancelled"
+          ? "cancelled"
+          : proof?.verificationStatus === "pending"
+          ? "awaiting_verification"
+          : proof?.verificationStatus === "verified"
+            ? "verified"
+            : proof?.verificationStatus === "rejected"
+              ? "failed"
+              : order.paymentStatus;
+        return {
+          ...transaction,
+          status,
+          orderStatus: order.status,
+          paymentStatus: order.paymentStatus,
+          proofStatus: proof?.verificationStatus ?? null,
+          reviewNote: proof?.reviewNote ?? null,
+          proofReviewedAt: proof?.reviewedAt ?? null,
+        };
+      });
+    }),
+    refundQueue: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const observed = await db.select().from(payments)
+        .where(inArray(payments.status, ["verified", "refunded"]))
+        .orderBy(desc(payments.createdAt));
+      const scoped = observed.filter(payment => canManageRefundRecord(actor, payment));
+      if (!scoped.length) return [];
+      const events = await db.select().from(paymentEvents)
+        .where(inArray(paymentEvents.paymentId, scoped.map(payment => payment.id)))
+        .orderBy(asc(paymentEvents.id));
+      return scoped.map(payment => {
+        try {
+          return {
+            payment,
+            refunds: parseRefundRecords(events.filter(event => event.paymentId === payment.id)),
+          };
+        } catch {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Refund history for payment ${payment.id} is inconsistent and requires review.`,
+          });
+        }
+      });
+    }),
+    reviewQueue: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      if (actor.role === "admin" && actor.cooperativeId === null) return [];
+      const scope = actor.role === "admin"
+        ? and(
+          eq(paymentProofs.verificationStatus, "pending"),
+          eq(orders.cooperativeId, actor.cooperativeId!),
+          eq(orders.paymentMethod, "gcash"),
+          inArray(orders.status, ["submitted", "confirmed", "ready"]),
+          inArray(orders.paymentStatus, ["pending", "awaiting_verification", "failed"]),
+        )
+        : and(
+          eq(paymentProofs.verificationStatus, "pending"),
+          eq(orders.paymentMethod, "gcash"),
+          inArray(orders.status, ["submitted", "confirmed", "ready"]),
+          inArray(orders.paymentStatus, ["pending", "awaiting_verification", "failed"]),
+        );
+      const pending = await db.select({ proof: paymentProofs, order: orders })
+        .from(paymentProofs)
+        .innerJoin(orders, eq(paymentProofs.orderId, orders.id))
+        .where(scope)
+        .orderBy(desc(paymentProofs.createdAt), desc(paymentProofs.id));
+      const authorized = pending.filter(({ order }) => canReviewPaymentProof(actor, order));
+      return Promise.all(authorized.map(async ({ proof, order }) => {
+        const [transaction] = await db.select().from(transactions)
+          .where(eq(transactions.orderId, order.id))
+          .limit(1);
+        let evidenceUrl: string | null = null;
+        let evidenceUnavailable = !isPaymentProofStorageKey(proof.storagePath, order.buyerId, order.id);
+        if (!evidenceUnavailable) {
+          try {
+            evidenceUrl = await storageGetSignedUrl(
+              proof.storagePath,
+              { bucket: PAYMENT_PROOF_BUCKET, public: false, expiresIn: 300 },
+            );
+          } catch {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Payment evidence could not be opened. Verify the private Storage bucket configuration.",
+            });
+          }
+        }
+        return { proof, order, transaction: transaction ?? null, evidenceUrl, evidenceUnavailable };
+      }));
+    }),
+    uploadProof: protectedProcedure.input(z.object({
+      orderId: z.number().int().positive(),
+      fileName: z.string().min(1).max(255),
+      contentType: z.enum(PAYMENT_PROOF_CONTENT_TYPES),
+    fileSizeBytes: z.number().int().min(1).max(PAYMENT_PROOF_MAX_BYTES),
+    })).mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      const db = await dbOrThrow();
+      const fileName = sanitizePaymentProofFileName(input.fileName);
+    const upload = await db.transaction(async tx => {
+      const [order] = await tx.select().from(orders)
+        .where(and(eq(orders.id, input.orderId), eq(orders.buyerId, actor.id)))
+        .for("update");
+      if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+      const [latestProof] = await tx.select({
+        id: paymentProofs.id,
+        verificationStatus: paymentProofs.verificationStatus,
+      }).from(paymentProofs)
+        .where(eq(paymentProofs.orderId, order.id))
+        .orderBy(desc(paymentProofs.createdAt), desc(paymentProofs.id))
+        .limit(1)
+        .for("update");
+      try {
+        assertOrderCanAcceptPaymentProof(order, latestProof);
+      } catch (error) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: error instanceof Error ? error.message : "This order cannot accept a payment proof.",
+        });
+      }
+      const [transaction] = await tx.select().from(transactions)
+        .where(eq(transactions.orderId, order.id))
+        .for("update");
+      if (!transaction) {
+        throw new TRPCError({ code: "CONFLICT", message: "The order has no existing transaction to associate with this payment proof." });
+      }
+      if (
+        transaction.buyerId !== order.buyerId
+        || transaction.sellerId !== order.sellerId
+        || transaction.amountCents !== order.totalCents
+        || transaction.paymentMethod !== order.paymentMethod
+      ) {
+        throw new TRPCError({ code: "CONFLICT", message: "The order transaction does not match this order." });
+      }
+      if (!["recorded", "payment_coordinated", "pending", "failed"].includes(transaction.status)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The order transaction cannot accept another payment proof." });
+      }
+      const storagePath = `${PAYMENT_PROOF_BUCKET}/${actor.id}/${order.id}/${crypto.randomUUID()}-${fileName}`;
+      const signedUpload = await storageCreateSignedUploadUrl(storagePath);
+      if (signedUpload.path !== storagePath || !isPaymentProofStorageKey(signedUpload.path, actor.id, order.id)) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Private Storage returned an invalid upload path." });
+      }
+      return {
+        storagePath,
+        uploadToken: signedUpload.token,
+        uploadIntent: createPaymentProofUploadIntent({
+          buyerId: actor.id,
+          orderId: order.id,
+          storagePath,
+          originalFileName: fileName,
+          mimeType: input.contentType,
+          fileSizeBytes: input.fileSizeBytes,
+        }),
+      };
+    });
+    return { success: true, ...upload };
+    }),
+    finalizeProofUpload: protectedProcedure.input(z.object({
+    orderId: z.number().int().positive(),
+    uploadIntent: z.string().min(1).max(2048),
+    }).strict()).mutation(async ({ ctx, input }) => {
+    const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+    const intent = verifyPaymentProofUploadIntent(input.uploadIntent, buyer.id, input.orderId);
+    if (!intent) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "The payment upload authorization is invalid or expired." });
+    }
+
+    let uploadedKey: string | null = intent.storagePath;
+    try {
+      const bytes = await storageDownloadPrivateProof(intent.storagePath);
+      if (bytes.length !== intent.fileSizeBytes || bytes.length > PAYMENT_PROOF_MAX_BYTES) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded payment proof size does not match its authorization." });
+      }
+      if (!matchesImageContentTypeSignature(bytes, intent.mimeType)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded payment proof does not match its image format." });
+      }
+
+      const db = await dbOrThrow();
+      const result = await db.transaction(async tx => {
+        const [order] = await tx.select().from(orders)
+          .where(and(eq(orders.id, input.orderId), eq(orders.buyerId, buyer.id)))
+          .for("update");
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+        const [latestProof] = await tx.select({
+          id: paymentProofs.id,
+          verificationStatus: paymentProofs.verificationStatus,
+        }).from(paymentProofs)
+          .where(eq(paymentProofs.orderId, order.id))
+          .orderBy(desc(paymentProofs.createdAt), desc(paymentProofs.id))
+          .limit(1)
+          .for("update");
+        try {
+          assertOrderCanAcceptPaymentProof(order, latestProof);
+        } catch (error) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: error instanceof Error ? error.message : "This order cannot accept a payment proof.",
+          });
+        }
+        const [transaction] = await tx.select().from(transactions)
+          .where(eq(transactions.orderId, order.id))
+          .for("update");
+        if (!transaction) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order has no existing transaction to associate with this payment proof." });
+        }
+        if (
+          transaction.buyerId !== order.buyerId
+          || transaction.sellerId !== order.sellerId
+          || transaction.amountCents !== order.totalCents
+          || transaction.paymentMethod !== order.paymentMethod
+        ) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order transaction does not match this order." });
+        }
+        if (!["recorded", "payment_coordinated", "pending", "failed"].includes(transaction.status)) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The order transaction cannot accept another payment proof." });
+        }
+
+        await tx.execute(sql`
+          select pg_advisory_xact_lock(
+            hashtext('agricoop_app.paymentProofs'),
+            hashtext('paymentProofs.id')
+          )
+        `);
+        const [idRow] = await tx.select({
+          nextId: sql<number>`coalesce(max(${paymentProofs.id}), 0) + 1`,
+        }).from(paymentProofs);
+        const [proof] = await tx.insert(paymentProofs).values({
+          id: idRow.nextId,
+          orderId: order.id,
+          transactionId: transaction.id,
+          uploadedBy: buyer.id,
+          storagePath: intent.storagePath,
+          originalFileName: intent.originalFileName,
+          mimeType: intent.mimeType,
+          fileSizeBytes: bytes.length,
+          verificationStatus: "pending",
+        }).returning({ id: paymentProofs.id });
+        if (!proof) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Payment proof metadata was not saved." });
+
+        const transactionUpdate = await tx.update(transactions)
+          .set({ status: "pending" })
+          .where(and(
+            eq(transactions.id, transaction.id),
+            inArray(transactions.status, ["recorded", "payment_coordinated", "pending", "failed"]),
+          ))
+          .returning({ id: transactions.id });
+        if (transactionUpdate.length !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order transaction changed while proof was being submitted." });
+        }
+        const orderUpdate = await tx.update(orders)
+          .set({ paymentStatus: "awaiting_verification" })
+          .where(and(
+            eq(orders.id, order.id),
+            inArray(orders.paymentStatus, ["pending", "failed"]),
+          ))
+          .returning({ id: orders.id });
+        if (orderUpdate.length !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order payment state changed while proof was being submitted." });
+        }
+        await tx.insert(orderEvents).values({
+          orderId: order.id,
+          actorUserId: buyer.id,
+          action: "payment_proof_submitted",
+          fromStatus: latestProof?.verificationStatus ?? null,
+          toStatus: "pending",
+        });
+        await createNotification(tx, {
+          userId: buyer.id,
+          type: "payment_proof_submitted",
+          title: "Payment proof submitted",
+          content: `Your payment proof for order #${order.id} is awaiting verification.`,
+          link: "/dashboard",
+          relatedEntityId: order.id,
+          relatedEntityType: "order",
+        });
+        return { success: true, proofId: proof.id };
+      });
+      uploadedKey = null;
+      return result;
+    } catch (error) {
+      if (uploadedKey) {
+        try {
+          await storageDeleteObject(
+            uploadedKey,
+            `${PAYMENT_PROOF_BUCKET}/${buyer.id}/${input.orderId}/`,
+            { bucket: PAYMENT_PROOF_BUCKET, public: false },
+          );
+        } catch (cleanupError) {
+          console.error("[payment-proof] Private upload cleanup failed.", cleanupError instanceof Error ? cleanupError.message : "unknown error");
+        }
+      }
+      throw error;
+    } }),
+    reviewProof: protectedProcedure.input(z.object({
+      proofId: z.number().int().positive(),
+      decision: z.enum(["verified", "rejected"]),
+      reviewNote: z.string().trim().max(600).optional(),
+    }).strict().superRefine((input, context) => {
+      if (input.decision === "rejected" && !input.reviewNote) {
+        context.addIssue({ code: "custom", path: ["reviewNote"], message: "A review note is required when rejecting payment proof." });
+      }
+    })).mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      await db.transaction(async tx => {
+        const [observedProof] = await tx.select({ orderId: paymentProofs.orderId })
+          .from(paymentProofs)
+          .where(eq(paymentProofs.id, input.proofId))
+          .limit(1);
+        if (!observedProof) throw new TRPCError({ code: "NOT_FOUND", message: "Payment proof not found." });
+        const [order] = await tx.select().from(orders)
+          .where(eq(orders.id, observedProof.orderId))
+          .for("update");
+        const [proof] = await tx.select().from(paymentProofs)
+          .where(eq(paymentProofs.id, input.proofId))
+          .for("update");
+        const [transaction] = await tx.select().from(transactions)
+          .where(eq(transactions.orderId, observedProof.orderId))
+          .for("update");
+        if (!order || !proof || !canReviewPaymentProof(actor, order)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Access denied." });
+        }
+        if (proof.uploadedBy !== order.buyerId
+          || order.paymentMethod !== "gcash"
+          || !isPaymentProofStorageKey(proof.storagePath, order.buyerId, order.id)) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This payment proof is not linked to an eligible buyer order." });
+        }
+        if (!transaction || (proof.transactionId !== null && proof.transactionId !== transaction.id)) {
+          throw new TRPCError({ code: "CONFLICT", message: "The payment proof does not match an existing order transaction." });
+        }
+        if (
+          transaction.buyerId !== order.buyerId
+          || transaction.sellerId !== order.sellerId
+          || transaction.amountCents !== order.totalCents
+          || transaction.paymentMethod !== order.paymentMethod
+        ) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order transaction does not match the order." });
+        }
+        try {
+          assertPaymentProofReadyForReview(order, proof);
+        } catch (error) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: error instanceof Error ? error.message : "This payment proof is not eligible for review.",
+          });
+        }
+
+        const reviewedAt = new Date();
+        const proofUpdate = await tx.update(paymentProofs).set({
+          verificationStatus: input.decision,
+          reviewNote: input.reviewNote?.trim() || null,
+          reviewedBy: actor.id,
+          reviewedAt,
+          updatedAt: reviewedAt,
+        }).where(and(
+          eq(paymentProofs.id, proof.id),
+          eq(paymentProofs.verificationStatus, "pending"),
+        )).returning({ id: paymentProofs.id });
+        if (proofUpdate.length !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "This payment proof has already been reviewed." });
+        }
+
+        const nextPaymentStatus = input.decision === "verified" ? "paid" : "failed";
+        const orderUpdate = await tx.update(orders)
+          .set({ paymentStatus: nextPaymentStatus })
+          .where(and(eq(orders.id, order.id), inArray(orders.paymentStatus, ["pending", "awaiting_verification", "failed"])))
+          .returning({ id: orders.id });
+        if (orderUpdate.length !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order payment state changed while the proof was being reviewed." });
+        }
+        const transactionUpdate = await tx.update(transactions)
+          .set({ status: nextPaymentStatus })
+          .where(and(eq(transactions.id, transaction.id), inArray(transactions.status, ["pending", "payment_coordinated", "recorded", "failed"])))
+          .returning({ id: transactions.id });
+        if (transactionUpdate.length !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "The order transaction changed while payment was being reviewed." });
+        }
+        const paymentRecord = await ensureOrderPaymentRecord(tx, {
+          id: order.id,
+          buyerId: order.buyerId,
+          sellerId: order.sellerId,
+          cooperativeId: order.cooperativeId,
+          totalCents: order.totalCents,
+          paymentMethod: order.paymentMethod,
+          paymentStatus: input.decision === "verified" ? "paid" : "failed",
+          paymentOptionId: transaction.paymentOptionId,
+        }, actor.id);
+        if (paymentRecord) {
+          const paymentStatus = input.decision === "verified" ? "verified" : "failed";
+          await tx.update(payments)
+            .set({
+              status: paymentStatus,
+              paidAt: input.decision === "verified" ? reviewedAt : paymentRecord.paidAt,
+              verifiedAt: input.decision === "verified" ? reviewedAt : null,
+              verifiedByUserId: input.decision === "verified" ? actor.id : null,
+            })
+            .where(eq(payments.id, paymentRecord.id));
+          await tx.insert(paymentEvents).values({
+            paymentId: paymentRecord.id,
+            actorUserId: actor.id,
+            eventType: input.decision === "verified" ? "payment_proof_verified" : "payment_proof_rejected",
+            fromStatus: paymentRecord.status,
+            toStatus: paymentStatus,
+            reason: input.reviewNote?.trim() || null,
+          });
+        }
+        await tx.insert(orderEvents).values({
+          orderId: order.id,
+          actorUserId: actor.id,
+          action: input.decision === "verified" ? "payment_proof_verified" : "payment_proof_rejected",
+          fromStatus: "pending",
+          toStatus: input.decision,
+          note: input.reviewNote?.trim() || null,
+        });
+        await createNotification(tx, {
+          userId: order.buyerId,
+          type: input.decision === "verified" ? "payment_proof_verified" : "payment_proof_rejected",
+          title: input.decision === "verified" ? "Payment verified" : "Payment proof needs resubmission",
+          content: input.decision === "verified"
+            ? `Your payment for order #${order.id} has been verified.`
+            : `Your payment proof for order #${order.id} was rejected. Review the note and submit a new proof.`,
+          link: "/dashboard",
+          relatedEntityId: order.id,
+          relatedEntityType: "order",
+        });
+      });
+      return { success: true };
+    }),
+    recordRefund: protectedProcedure.input(z.object({
+      paymentId: z.number().int().positive(),
+      refundId: z.string().uuid(),
+      amountCents: z.number().int().positive(),
+      reason: z.string().trim().min(1).max(600),
+    }).strict()).mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const [observedPayment] = await db.select().from(payments)
+        .where(eq(payments.id, input.paymentId))
+        .limit(1);
+      if (!observedPayment || !canManageRefundRecord(actor, observedPayment)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage refunds for this payment." });
+      }
+      let resultingStatus: RefundState = "recorded";
+      await db.transaction(async tx => {
+        const [order] = await tx.select().from(orders)
+          .where(eq(orders.id, observedPayment.orderId))
+          .for("update");
+        const [payment] = await tx.select().from(payments)
+          .where(eq(payments.id, input.paymentId))
+          .for("update");
+        const [transaction] = await tx.select().from(transactions)
+          .where(eq(transactions.orderId, observedPayment.orderId))
+          .for("update");
+        if (!order || !payment || !canManageRefundRecord(actor, payment)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage refunds for this payment." });
+        }
+        if (!transaction || !isPaymentOrderConsistent(payment, order) || !isPaymentTransactionConsistent(payment, transaction)) {
+          throw new TRPCError({ code: "CONFLICT", message: "The payment does not match its order and cannot be refunded." });
+        }
+        const events = await tx.select().from(paymentEvents)
+          .where(eq(paymentEvents.paymentId, payment.id))
+          .orderBy(asc(paymentEvents.id));
+        let refunds;
+        try {
+          refunds = parseRefundRecords(events);
+        } catch {
+          throw new TRPCError({ code: "CONFLICT", message: "Refund history is inconsistent and requires review." });
+        }
+        let result;
+        try {
+          result = createRefundRecord(refunds, input, payment.amountCents);
+        } catch (error) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: error instanceof Error ? error.message : "The refund request is invalid.",
+          });
+        }
+        if (!result.created) {
+          resultingStatus = result.record.status;
+          return;
+        }
+        if (payment.status !== "verified" || order.paymentStatus !== "paid") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only a verified, paid order can accept a refund request." });
+        }
+        if (transaction.status !== "paid") {
+          if (transaction.status === "failed") {
+            throw new TRPCError({ code: "CONFLICT", message: "The order transaction is not in a refundable state." });
+          }
+          const transactionUpdate = await tx.update(transactions)
+            .set({ status: "paid", completedAt: payment.paidAt ?? new Date() })
+            .where(and(eq(transactions.id, transaction.id), eq(transactions.status, transaction.status)))
+            .returning({ id: transactions.id });
+          if (transactionUpdate.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "The order transaction changed while recording the refund." });
+          }
+        }
+        const totalReserved = reservedRefundAmountCents(refunds) + result.record.amountCents;
+        if (!Number.isSafeInteger(totalReserved) || totalReserved > payment.amountCents) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Total refunds cannot exceed the verified payment amount." });
+        }
+        await tx.insert(paymentEvents).values({
+          paymentId: payment.id,
+          actorUserId: actor.id,
+          eventType: "refund_recorded",
+          fromStatus: null,
+          toStatus: "recorded",
+          reason: result.record.reason,
+          metadata: JSON.stringify({
+            refundId: result.record.refundId,
+            amountCents: result.record.amountCents,
+            status: result.record.status,
+          }),
+        });
+        resultingStatus = result.record.status;
+      });
+      return { success: true, refundId: input.refundId, status: resultingStatus };
+    }),
+    updateRefundStatus: protectedProcedure.input(z.object({
+      paymentId: z.number().int().positive(),
+      refundId: z.string().uuid(),
+      status: z.enum(["pending", "completed", "cancelled"]),
+      confirmationReference: z.string().trim().min(1).max(160).optional(),
+    }).strict().superRefine((input, context) => {
+      if (input.status === "completed" && !input.confirmationReference) {
+        context.addIssue({
+          code: "custom",
+          path: ["confirmationReference"],
+          message: "A confirmation reference is required before completing a refund.",
+        });
+      }
+    })).mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const [observedPayment] = await db.select().from(payments)
+        .where(eq(payments.id, input.paymentId))
+        .limit(1);
+      if (!observedPayment || !canManageRefundRecord(actor, observedPayment)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage refunds for this payment." });
+      }
+      await db.transaction(async tx => {
+        const [order] = await tx.select().from(orders)
+          .where(eq(orders.id, observedPayment.orderId))
+          .for("update");
+        const [payment] = await tx.select().from(payments)
+          .where(eq(payments.id, input.paymentId))
+          .for("update");
+        const [transaction] = await tx.select().from(transactions)
+          .where(eq(transactions.orderId, observedPayment.orderId))
+          .for("update");
+        if (!order || !payment || !canManageRefundRecord(actor, payment)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage refunds for this payment." });
+        }
+        if (!transaction || !isPaymentOrderConsistent(payment, order) || !isPaymentTransactionConsistent(payment, transaction)) {
+          throw new TRPCError({ code: "CONFLICT", message: "The payment does not match its order and cannot be updated." });
+        }
+        const events = await tx.select().from(paymentEvents)
+          .where(eq(paymentEvents.paymentId, payment.id))
+          .orderBy(asc(paymentEvents.id));
+        let refunds;
+        try {
+          refunds = parseRefundRecords(events);
+        } catch {
+          throw new TRPCError({ code: "CONFLICT", message: "Refund history is inconsistent and requires review." });
+        }
+        const current = refunds.find(refund => refund.refundId === input.refundId);
+        if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Refund record not found." });
+        let transition: ReturnType<typeof transitionRefundRecord>;
+        try {
+          transition = transitionRefundRecord(refunds, input.refundId, input.status, input.confirmationReference);
+        } catch (error) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: error instanceof Error ? error.message : "The refund transition is invalid.",
+          });
+        }
+        if (!transition.changed) return;
+        if (payment.status !== "verified" || order.paymentStatus !== "paid") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The payment is no longer in a refundable state." });
+        }
+        if (transaction.status !== "paid") {
+          throw new TRPCError({ code: "CONFLICT", message: "The order transaction is not in a refundable state." });
+        }
+        const updatedRefunds = refunds.map(refund => refund.refundId === input.refundId ? transition.record : refund);
+        const completedAmount = completedRefundAmountCents(updatedRefunds);
+        if (completedAmount > payment.amountCents) {
+          throw new TRPCError({ code: "CONFLICT", message: "Completed refunds cannot exceed the verified payment amount." });
+        }
+        if (input.status === "completed" && completedAmount === payment.amountCents) {
+          const paymentUpdate = await tx.update(payments)
+            .set({ status: "refunded" })
+            .where(and(eq(payments.id, payment.id), eq(payments.status, "verified")))
+            .returning({ id: payments.id });
+          const orderUpdate = await tx.update(orders)
+            .set({ paymentStatus: "refunded" })
+            .where(and(eq(orders.id, order.id), eq(orders.paymentStatus, "paid")))
+            .returning({ id: orders.id });
+          if (paymentUpdate.length !== 1 || orderUpdate.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "Payment state changed while completing the refund." });
+          }
+        }
+        await tx.insert(paymentEvents).values({
+          paymentId: payment.id,
+          actorUserId: actor.id,
+          eventType: "refund_status_changed",
+          fromStatus: current.status,
+          toStatus: transition.record.status,
+          reason: transition.record.confirmationReference ?? null,
+          metadata: JSON.stringify({
+            refundId: transition.record.refundId,
+            amountCents: transition.record.amountCents,
+            status: transition.record.status,
+            ...(transition.record.confirmationReference
+              ? { confirmationReference: transition.record.confirmationReference }
+              : {}),
+          }),
+        });
+      });
+      return { success: true, status: input.status as RefundState };
+    }),
+    recordCashReceipt: protectedProcedure
+      .input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().max(600).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const db = await dbOrThrow();
+        await db.transaction(async tx => {
+          const [order] = await tx.select().from(orders)
+            .where(eq(orders.id, input.orderId))
+            .for("update");
+          const [transaction] = await tx.select().from(transactions)
+            .where(eq(transactions.orderId, input.orderId))
+            .for("update");
+          if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Order not found." });
+          const payment = {
+            buyerId: order.buyerId,
+            sellerId: order.sellerId,
+            cooperativeId: order.cooperativeId,
+            orderId: order.id,
+            amountCents: order.totalCents,
+            paymentMethod: order.paymentMethod ?? "",
+            status: order.paymentStatus === "paid" || order.paymentStatus === "verified"
+              ? "verified"
+              : order.paymentStatus === "failed" || order.paymentStatus === "expired" || order.paymentStatus === "refunded"
+                ? order.paymentStatus
+                : "pending",
+          };
+          if (!transaction || !canManageCashReceipt(actor, payment)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot record a cash receipt for this payment." });
+          }
+          if (!canRecordCashReceipt(actor, payment, order, transaction)) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Cash receipt requires a matching pending cash payment for a ready order." });
+          }
+          const receivedAt = new Date();
+          const orderUpdate = await tx.update(orders)
+            .set({ paymentStatus: "paid" })
+            .where(and(eq(orders.id, order.id), inArray(orders.paymentStatus, ["pending", "F2F-pending-confirmation"])))
+            .returning({ id: orders.id });
+          if (orderUpdate.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "Order payment state changed while cash receipt was being recorded." });
+          }
+          const transactionUpdate = await tx.update(transactions).set({
+            status: "paid",
+            paymentReferenceNote: input.note?.trim() || transaction.paymentReferenceNote,
+            completedAt: receivedAt,
+          }).where(and(
+            eq(transactions.id, transaction.id),
+            inArray(transactions.status, ["recorded", "payment_coordinated", "pending"]),
+          )).returning({ id: transactions.id });
+          if (transactionUpdate.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "Order transaction changed while cash receipt was being recorded." });
+          }
+          const paymentRecord = await ensureOrderPaymentRecord(tx, {
+            id: order.id,
+            buyerId: order.buyerId,
+            sellerId: order.sellerId,
+            cooperativeId: order.cooperativeId,
+            totalCents: order.totalCents,
+            paymentMethod: order.paymentMethod,
+            paymentStatus: "pending",
+            paymentOptionId: transaction.paymentOptionId,
+          }, actor.id);
+          if (paymentRecord) {
+            await tx.update(payments)
+              .set({ status: "verified", paidAt: receivedAt, verifiedAt: receivedAt, verifiedByUserId: actor.id })
+              .where(and(eq(payments.id, paymentRecord.id), inArray(payments.status, ["pending", "awaiting_verification"])));
+            await tx.insert(paymentEvents).values({
+              paymentId: paymentRecord.id,
+              actorUserId: actor.id,
+              eventType: "cash_payment_received",
+              fromStatus: paymentRecord.status,
+              toStatus: "verified",
+              reason: input.note?.trim() || null,
+            });
+          }
+          await tx.insert(orderEvents).values({
+            orderId: order.id,
+            actorUserId: actor.id,
+            action: "cash_payment_received",
+            fromStatus: order.paymentStatus,
+            toStatus: "paid",
+            note: input.note?.trim() || null,
+          });
+          await createNotification(tx, {
+            userId: order.buyerId,
+            type: "cash_payment_received",
+            title: "Cash payment recorded",
+            content: `Cash payment for order #${order.id} has been recorded.`,
+            link: "/dashboard",
+            relatedEntityId: order.id,
+            relatedEntityType: "order",
+          });
+        });
+        return { success: true };
+      }),
+  }),
+
+  cooperativeAssociations: router({
+    activeCooperatives: protectedProcedure.query(async ({ ctx }) => {
+      if (!canRequestCooperativeAssociation(ctx.user)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only an unassigned Seller can request a cooperative association." });
+      }
+      const db = await dbOrThrow();
+      return db.select({ id: cooperatives.id, name: cooperatives.name })
+        .from(cooperatives)
+        .where(eq(cooperatives.status, "active"))
+        .orderBy(asc(cooperatives.name));
+    }),
+    mine: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "seller") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only Sellers can view cooperative association requests." });
+      }
+      const db = await dbOrThrow();
+      return db.select({ request: cooperativeAssociationRequests, cooperativeName: cooperatives.name })
+        .from(cooperativeAssociationRequests)
+        .innerJoin(cooperatives, eq(cooperativeAssociationRequests.cooperativeId, cooperatives.id))
+        .where(eq(cooperativeAssociationRequests.sellerId, ctx.user.id))
+        .orderBy(desc(cooperativeAssociationRequests.createdAt));
+    }),
+    request: protectedProcedure
+      .input(z.object({
+        cooperativeId: z.number().int().positive(),
+        message: z.string().trim().max(600).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [seller] = await tx.select({
+            id: users.id,
+            role: users.role,
+            approvalStatus: users.approvalStatus,
+            cooperativeId: users.cooperativeId,
+          }).from(users)
+            .where(eq(users.id, ctx.user.id))
+            .for("update")
+            .limit(1);
+          if (!seller || !canRequestCooperativeAssociation(seller)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Only an unassigned, non-suspended Seller can request a cooperative association." });
+          }
+          const [cooperative] = await tx.select({ id: cooperatives.id })
+            .from(cooperatives)
+            .where(and(eq(cooperatives.id, input.cooperativeId), eq(cooperatives.status, "active")))
+            .for("share")
+            .limit(1);
+          if (!cooperative) throw new TRPCError({ code: "NOT_FOUND", message: "This cooperative is not available for association requests." });
+          const [pendingRequest] = await tx.select({ id: cooperativeAssociationRequests.id })
+            .from(cooperativeAssociationRequests)
+            .where(and(
+              eq(cooperativeAssociationRequests.sellerId, seller.id),
+              eq(cooperativeAssociationRequests.status, "pending"),
+            ))
+            .limit(1);
+          if (pendingRequest) throw new TRPCError({ code: "CONFLICT", message: "You already have a pending cooperative association request." });
+          const [created] = await tx.insert(cooperativeAssociationRequests).values({
+            sellerId: seller.id,
+            cooperativeId: cooperative.id,
+            message: input.message || null,
+          }).returning({ id: cooperativeAssociationRequests.id });
+          if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The association request was not saved." });
+          await recordAuditLog(tx, {
+            actorUserId: seller.id,
+            action: "cooperative_association_requested",
+            entityType: "cooperative_association_request",
+            entityId: created.id,
+            cooperativeId: cooperative.id,
+          });
+          const admins = await tx.select({ id: users.id }).from(users).where(and(
+            eq(users.role, "admin"),
+            eq(users.cooperativeId, cooperative.id),
+            eq(users.approvalStatus, "approved"),
+          ));
+          for (const admin of admins) {
+            await createNotification(tx, {
+              userId: admin.id,
+              type: "cooperative_association_request",
+              title: "Seller cooperative request",
+              content: "A Seller submitted a cooperative association request for review.",
+              link: "/dashboard",
+              relatedEntityId: created.id,
+              relatedEntityType: "cooperative_association_request",
+            });
+          }
+          return { success: true, requestId: created.id };
+        });
+      }),
+  }),
+
   cooperativeAdmin: router({
+    associationRequests: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const conditions = [eq(cooperativeAssociationRequests.status, "pending")];
+      if (actor.role === "admin" && actor.cooperativeId !== null) {
+        conditions.push(eq(cooperativeAssociationRequests.cooperativeId, actor.cooperativeId));
+      }
+      return db.select({
+        request: cooperativeAssociationRequests,
+        sellerName: users.name,
+        sellerEmail: users.email,
+        cooperativeName: cooperatives.name,
+      }).from(cooperativeAssociationRequests)
+        .innerJoin(users, eq(cooperativeAssociationRequests.sellerId, users.id))
+        .innerJoin(cooperatives, eq(cooperativeAssociationRequests.cooperativeId, cooperatives.id))
+        .where(and(...conditions))
+        .orderBy(asc(cooperativeAssociationRequests.createdAt));
+    }),
+    reviewAssociationRequest: protectedProcedure
+      .input(z.object({
+        requestId: z.number().int().positive(),
+        decision: z.enum(["approved", "rejected"]),
+        reviewNote: z.string().trim().max(600).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [request] = await tx.select().from(cooperativeAssociationRequests)
+            .where(eq(cooperativeAssociationRequests.id, input.requestId))
+            .for("update")
+            .limit(1);
+          if (!request || request.status !== "pending") {
+            throw new TRPCError({ code: "CONFLICT", message: "This association request is no longer pending." });
+          }
+          if (!canReviewCooperativeAssociation(actor, request.cooperativeId)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review requests for another cooperative." });
+          }
+          const [cooperative] = await tx.select({
+            name: cooperatives.name,
+            status: cooperatives.status,
+          }).from(cooperatives)
+            .where(eq(cooperatives.id, request.cooperativeId))
+            .for("share")
+            .limit(1);
+          if (!cooperative) throw new TRPCError({ code: "CONFLICT", message: "The requested cooperative is no longer available." });
+          if (input.decision === "approved" && cooperative.status !== "active") {
+            throw new TRPCError({ code: "CONFLICT", message: "An inactive cooperative cannot accept new Sellers." });
+          }
+          const [seller] = await tx.select({
+            id: users.id,
+            role: users.role,
+            approvalStatus: users.approvalStatus,
+            cooperativeId: users.cooperativeId,
+          }).from(users)
+            .where(eq(users.id, request.sellerId))
+            .for("update")
+            .limit(1);
+          if (!seller || seller.role !== "seller" || seller.cooperativeId !== null || seller.approvalStatus === "suspended") {
+            throw new TRPCError({ code: "CONFLICT", message: "The Seller's account changed and this request can no longer be reviewed." });
+          }
+          if (input.decision === "approved") {
+            const assigned = await tx.update(users)
+              .set({ cooperativeId: request.cooperativeId })
+              .where(and(eq(users.id, seller.id), isNull(users.cooperativeId), eq(users.role, "seller")))
+              .returning({ id: users.id });
+            if (!assigned.length) throw new TRPCError({ code: "CONFLICT", message: "The Seller was assigned to a cooperative before this request completed." });
+          }
+          const reviewed = await tx.update(cooperativeAssociationRequests).set({
+            status: input.decision,
+            reviewedBy: actor.id,
+            reviewNote: input.reviewNote || null,
+            reviewedAt: new Date(),
+          }).where(and(
+            eq(cooperativeAssociationRequests.id, request.id),
+            eq(cooperativeAssociationRequests.status, "pending"),
+          )).returning({ id: cooperativeAssociationRequests.id });
+          if (reviewed.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "This association request changed while being reviewed." });
+          }
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: `cooperative_association_${input.decision}`,
+            entityType: "cooperative_association_request",
+            entityId: request.id,
+            cooperativeId: request.cooperativeId,
+          });
+          await createNotification(tx, {
+            userId: seller.id,
+            type: `cooperative_association_${input.decision}`,
+            title: input.decision === "approved" ? "Cooperative association approved" : "Cooperative association declined",
+            content: input.decision === "approved"
+              ? `You have been assigned to ${cooperative.name}. A separate account approval step may remain.`
+              : `Your request to join ${cooperative.name} was declined.${input.reviewNote ? ` Admin note: ${input.reviewNote}` : ""}`,
+            link: "/dashboard",
+            relatedEntityId: request.id,
+            relatedEntityType: "cooperative_association_request",
+          });
+          return { success: true };
+        });
+      }),
     overview: protectedProcedure.query(({ ctx }) => {
       const cooperativeAdmin = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       return getOfficerOverview(cooperativeAdmin.cooperativeId);
@@ -649,12 +2264,27 @@ export const appRouter = router({
         if (!canAccessOrderForCooperative(actor, orderDetail.order.cooperativeId)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only view orders in their cooperative." });
         }
-        const seller = await db.select().from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);
-        const buyer = await db.select().from(users).where(eq(users.id, orderDetail.order.buyerId)).limit(1);
+        const seller = await db.select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          contactNumber: users.contactNumber,
+          phone: users.phone,
+          address: users.address,
+        }).from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);
+        const buyer = await db.select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          contactNumber: users.contactNumber,
+          phone: users.phone,
+          address: users.address,
+        }).from(users).where(eq(users.id, orderDetail.order.buyerId)).limit(1);
         return {
           order: orderDetail.order,
           buyer: buyer[0],
           seller: seller[0],
+          payment: orderDetail.payment,
           items: orderDetail.items,
           events: orderDetail.events,
         };
@@ -663,10 +2293,50 @@ export const appRouter = router({
       .input(z.object({ userId: z.number().int().positive(), approvalStatus: z.enum(["approved", "suspended"]) }))
       .mutation(async ({ ctx, input }) => {
         const cooperativeAdmin = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
-        if (!cooperativeAdmin.cooperativeId) throw new TRPCError({ code: "BAD_REQUEST", message: "Assign this officer to a cooperative before validating members." });
+        const cooperativeId = cooperativeAdmin.cooperativeId;
+        if (cooperativeId === null) throw new TRPCError({ code: "BAD_REQUEST", message: "Assign this officer to a cooperative before validating members." });
         const db = await dbOrThrow();
-        await db.update(users).set({ approvalStatus: input.approvalStatus }).where(and(eq(users.id, input.userId), eq(users.cooperativeId, cooperativeAdmin.cooperativeId)));
-        return { success: true };
+        return db.transaction(async tx => {
+          const [target] = await tx.select({
+            id: users.id,
+            role: users.role,
+            approvalStatus: users.approvalStatus,
+            cooperativeId: users.cooperativeId,
+          }).from(users)
+            .where(eq(users.id, input.userId))
+            .for("update")
+            .limit(1);
+          if (!target || target.id === cooperativeAdmin.id
+            || (target.role !== "buyer" && target.role !== "seller")
+            || target.cooperativeId !== cooperativeId) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You can only manage Buyer or Seller accounts assigned to your cooperative." });
+          }
+          const result = await tx.update(users)
+            .set({ approvalStatus: input.approvalStatus })
+            .where(and(
+              eq(users.id, target.id),
+              eq(users.cooperativeId, cooperativeId),
+              inArray(users.role, ["buyer", "seller"]),
+            ))
+            .returning({ id: users.id });
+          if (!result.length) throw new TRPCError({ code: "CONFLICT", message: "This account changed while it was being updated." });
+          await recordAuditLog(tx, {
+            actorUserId: cooperativeAdmin.id,
+            action: "member_approval_status_updated",
+            entityType: "user",
+            entityId: target.id,
+            cooperativeId,
+            metadata: { from: target.approvalStatus, to: input.approvalStatus },
+          });
+          await createNotification(tx, {
+            userId: target.id,
+            type: "account_approval_status",
+            title: "Account status updated",
+            content: `Your account has been ${input.approvalStatus}.`,
+            link: "/dashboard",
+          });
+          return { success: true };
+        });
       }),
   }),
 
@@ -675,16 +2345,71 @@ export const appRouter = router({
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       return getAdminOverview(adminOverviewCooperativeScope(actor));
     }),
-    reviewProduct: protectedProcedure.input(z.object({ productId: z.number().int().positive(), decision: z.enum(["approved", "rejected"]), rejectionReason: z.string().max(600).optional() })).mutation(async ({ ctx, input }) => {
+    reviewProduct: protectedProcedure.input(z.object({
+      productId: z.number().int().positive(),
+      decision: z.enum(["approved", "rejected"]),
+      rejectionReason: z.string().trim().max(600).optional(),
+    }).strict().superRefine((input, refinement) => {
+      if (input.decision === "rejected" && !input.rejectionReason) {
+        refinement.addIssue({ code: "custom", path: ["rejectionReason"], message: "A rejection reason is required." });
+      }
+    })).mutation(async ({ ctx, input }) => {
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       const db = await dbOrThrow();
-      const target = (await db.select({ cooperativeId: products.cooperativeId }).from(products).where(eq(products.id, input.productId)).limit(1))[0];
-      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
-      if (!canManageCooperativeResource(actor, target.cooperativeId)) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
-      const scope = actor.role === "superadmin" ? eq(products.id, input.productId) : and(eq(products.id, input.productId), eq(products.cooperativeId, actor.cooperativeId!));
-      const result = await db.update(products).set({ verificationStatus: input.decision, visibility: input.decision === "approved" ? "visible" : "hidden", rejectionReason: input.rejectionReason ?? null, status: input.decision === "approved" ? "published" : "archived" }).where(scope);
-      if (!result[0].affectedRows) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
-      return { success: true };
+      return db.transaction(async tx => {
+        const [target] = await tx.select({
+          id: products.id,
+          sellerId: products.sellerId,
+          cooperativeId: products.cooperativeId,
+          verificationStatus: products.verificationStatus,
+        }).from(products)
+          .where(eq(products.id, input.productId))
+          .for("update")
+          .limit(1);
+        if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+        if (!canManageCooperativeResource(actor, target.cooperativeId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review a product outside your cooperative." });
+        }
+        let review;
+        try {
+          review = prepareProductReview(target.verificationStatus, input.decision, input.rejectionReason);
+        } catch (error) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: error instanceof Error ? error.message : "The product cannot be reviewed.",
+          });
+        }
+        const scope = actor.role === "superadmin"
+          ? eq(products.id, input.productId)
+          : and(eq(products.id, input.productId), eq(products.cooperativeId, actor.cooperativeId!));
+        const result = await tx.update(products)
+          .set(review)
+          .where(and(scope, eq(products.verificationStatus, "pending")))
+          .returning({ id: products.id });
+        if (!result.length) {
+          throw new TRPCError({ code: "CONFLICT", message: "The product changed while it was being reviewed." });
+        }
+        await recordAuditLog(tx, {
+          actorUserId: actor.id,
+          action: `product_${input.decision}`,
+          entityType: "product",
+          entityId: target.id,
+          cooperativeId: target.cooperativeId,
+          metadata: input.decision === "rejected" ? { rejectionReason: review.rejectionReason } : undefined,
+        });
+        await createNotification(tx, {
+          userId: target.sellerId,
+          type: `product_${input.decision}`,
+          title: input.decision === "approved" ? "Product listing approved" : "Product listing needs changes",
+          content: input.decision === "approved"
+            ? "Your product listing is approved and visible to marketplace buyers."
+            : `Your product listing was rejected. Reason: ${review.rejectionReason}`,
+          link: "/dashboard",
+          relatedEntityId: target.id,
+          relatedEntityType: "product",
+        });
+        return { success: true };
+      });
     }),
     updateUser: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), role: z.enum(APP_ROLES), approvalStatus: z.enum(["approved", "pending", "suspended"]), cooperativeId: z.number().int().positive().nullable() }))
@@ -692,16 +2417,728 @@ export const appRouter = router({
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && !actor.cooperativeId) throw new TRPCError({ code: "FORBIDDEN", message: "Assign this officer to a cooperative before managing users." });
-        const target = (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, input.userId)).limit(1))[0];
-        if (!target || !canUpdateCooperativeUser(actor, target.cooperativeId, input.cooperativeId, input.role)) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
+        return db.transaction(async tx => {
+          const [target] = await tx.select({
+            id: users.id,
+            role: users.role,
+            approvalStatus: users.approvalStatus,
+            cooperativeId: users.cooperativeId,
+          }).from(users)
+            .where(eq(users.id, input.userId))
+            .for("update")
+            .limit(1);
+          if (!target || actor.id === target.id
+            || !canUpdateCooperativeUser(actor, target.cooperativeId, input.cooperativeId, input.role, target.role)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
+          }
+          const scope = actor.role === "superadmin"
+            ? eq(users.id, input.userId)
+            : and(eq(users.id, input.userId), eq(users.cooperativeId, actor.cooperativeId!));
+          const result = await tx.update(users)
+            .set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId })
+            .where(scope)
+            .returning({ id: users.id });
+          if (!result.length) {
+            throw new TRPCError({ code: "CONFLICT", message: "This account changed while it was being updated." });
+          }
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "user_access_updated",
+            entityType: "user",
+            entityId: target.id,
+            cooperativeId: input.cooperativeId,
+            metadata: {
+              before: { role: target.role, approvalStatus: target.approvalStatus, cooperativeId: target.cooperativeId },
+              after: { role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId },
+            },
+          });
+          await createNotification(tx, {
+            userId: target.id,
+            type: "account_access_updated",
+            title: "Account access updated",
+            content: "An administrator updated your account role, approval status, or cooperative assignment.",
+            link: "/dashboard",
+          });
+          return { success: true };
+        });
+      }),
+  }),
+
+  adminPayment: router({
+    listOptions: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      if (actor.role === "admin" && actor.cooperativeId === null) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
+      }
+      const options = actor.role === "superadmin"
+        ? await db.select().from(paymentOptions).orderBy(asc(paymentOptions.displayName))
+        : await db.select().from(paymentOptions)
+          .where(eq(paymentOptions.cooperativeId, actor.cooperativeId!))
+          .orderBy(asc(paymentOptions.displayName));
+      return Promise.all(options.map(async ({ qrImagePath, ...option }) => ({
+        ...option,
+        methodName: option.displayName,
+        qrImageUrl: qrImagePath ? (await storageGet(qrImagePath)).url : null,
+      })));
+    }),
+    checkoutOptions: protectedProcedure
+      .input(z.object({
+        cooperativeId: z.number().int().positive().nullable(),
+        productIds: z.array(z.number().int().positive()).min(1).max(50)
+          .refine(ids => new Set(ids).size === ids.length, "Product IDs must be unique."),
+      }))
+      .query(async ({ ctx, input }) => {
+        requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const db = await dbOrThrow();
+        const basketProducts = await db.select({
+          id: products.id,
+          cooperativeId: products.cooperativeId,
+          status: products.status,
+          verificationStatus: products.verificationStatus,
+          visibility: products.visibility,
+          sellerApprovalStatus: users.approvalStatus,
+        }).from(products)
+          .innerJoin(users, eq(products.sellerId, users.id))
+          .where(inArray(products.id, input.productIds));
+        if (basketProducts.length !== input.productIds.length
+          || basketProducts.some(product =>
+            product.cooperativeId !== input.cooperativeId
+            || product.status !== "published"
+            || product.verificationStatus !== "approved"
+            || product.visibility !== "visible"
+            || !isSellerApproved(product.sellerApprovalStatus)
+          )) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Payment options are unavailable for this checkout basket.",
+          });
         }
-        const scope = actor.role === "superadmin"
-          ? eq(users.id, input.userId)
-          : and(eq(users.id, input.userId), eq(users.cooperativeId, actor.cooperativeId!));
-        const result = await db.update(users).set({ role: input.role, approvalStatus: input.approvalStatus, cooperativeId: input.cooperativeId }).where(scope);
-        if (!result[0].affectedRows) throw new TRPCError({ code: "FORBIDDEN", message: "You cannot manage this user or change their cooperative assignment." });
+        const scope = input.cooperativeId === null
+          ? isNull(paymentOptions.cooperativeId)
+          : eq(paymentOptions.cooperativeId, input.cooperativeId);
+        return db.select({
+          id: paymentOptions.id,
+          cooperativeId: paymentOptions.cooperativeId,
+          methodName: paymentOptions.displayName,
+          accountName: paymentOptions.accountName,
+          accountNumber: paymentOptions.accountNumber,
+          qrImagePath: paymentOptions.qrImagePath,
+          instructions: paymentOptions.instructions,
+        }).from(paymentOptions)
+          .where(and(eq(paymentOptions.isActive, true), eq(paymentOptions.paymentMethod, "gcash"), scope))
+          .orderBy(asc(paymentOptions.displayName))
+          .then(options => Promise.all(options.map(async ({ qrImagePath, ...option }) => ({
+            ...option,
+            qrImageUrl: qrImagePath ? (await storageGet(qrImagePath)).url : null,
+          }))));
+      }),
+    uploadQrImage: protectedProcedure
+      .input(z.object({
+        cooperativeId: z.number().int().positive().nullable().optional(),
+        fileName: z.string().min(1).max(255),
+        contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+        base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
+        if (cooperativeId !== null) {
+          const [cooperative] = await db.select({ id: cooperatives.id })
+            .from(cooperatives)
+            .where(eq(cooperatives.id, cooperativeId))
+            .limit(1);
+          if (!cooperative) throw new TRPCError({ code: "NOT_FOUND", message: "The selected cooperative was not found." });
+        }
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected QR image file is invalid." });
+        }
+        const bytes = Buffer.from(input.base64, "base64");
+        if (!isProductImageSizeAllowed(bytes.length)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "QR images must be 3 MB or less." });
+        }
+        if (!matchesImageContentTypeSignature(bytes, input.contentType)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected file is not a valid image of the declared type." });
+        }
+        const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120) || "payment-qr";
+        const uploaded = await storagePut(
+          `${getPaymentQrStoragePrefix(cooperativeId)}${actor.id}/${crypto.randomUUID()}-${safeName}`,
+          bytes,
+          input.contentType,
+        );
+        return { url: uploaded.url, path: uploaded.key };
+      }),
+    createOption: protectedProcedure
+      .input(z.object({
+        cooperativeId: z.number().int().positive().nullable().optional(),
+        methodName: z.string().trim().min(1).max(150),
+        accountName: z.string().trim().max(150).optional(),
+        accountNumber: z.string().max(100).optional(),
+        qrImageUrl: z.string().url().max(1000).refine(value => value.startsWith("https://")).nullable().optional(),
+        instructions: z.string().max(5000).optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        if (actor.role === "admin" && actor.cooperativeId === null) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
+        }
+        const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
+        const qrImagePath = input.qrImageUrl
+          ? storageKeyFromPublicUrlWithinPrefix(input.qrImageUrl, getPaymentQrStoragePrefix(cooperativeId))
+          : null;
+        if (input.qrImageUrl && !qrImagePath) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "QR images must be uploaded to the authorized AgriCoop Storage location." });
+        }
+        await db.insert(paymentOptions).values({
+          cooperativeId,
+          paymentMethod: "gcash",
+          displayName: input.methodName,
+          accountName: input.accountName?.trim() || null,
+          accountNumber: input.accountNumber?.trim() || null,
+          qrImagePath,
+          instructions: input.instructions?.trim() || null,
+          isActive: input.isActive ?? true,
+          createdBy: actor.id,
+        });
         return { success: true };
+      }),
+    updateOption: protectedProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        methodName: z.string().trim().min(1).max(150),
+        accountName: z.string().trim().max(150).nullable(),
+        accountNumber: z.string().max(100).nullable(),
+        qrImageUrl: z.string().url().max(1000).refine(value => value.startsWith("https://")).nullable(),
+        instructions: z.string().max(5000).nullable(),
+        isActive: z.boolean(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        if (actor.role === "admin" && actor.cooperativeId === null) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
+        }
+        let previousPath: string | null = null;
+        let cooperativeId: number | null = null;
+        await db.transaction(async tx => {
+          const scope = actor.role === "superadmin"
+            ? eq(paymentOptions.id, input.id)
+            : and(eq(paymentOptions.id, input.id), eq(paymentOptions.cooperativeId, actor.cooperativeId!));
+          const [previous] = await tx.select().from(paymentOptions)
+            .where(scope)
+            .limit(1)
+            .for("update");
+          if (!previous) throw new TRPCError({ code: "NOT_FOUND", message: "Payment option was not found." });
+          cooperativeId = previous.cooperativeId;
+          previousPath = previous.qrImagePath;
+          const nextPath = input.qrImageUrl
+            ? storageKeyFromPublicUrlWithinPrefix(input.qrImageUrl, getPaymentQrStoragePrefix(previous.cooperativeId))
+            : null;
+          if (input.qrImageUrl && !nextPath) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Replacement QR images must be uploaded to the authorized AgriCoop Storage location." });
+          }
+          const [linkedTransaction] = await tx.select({ id: transactions.id })
+            .from(transactions)
+            .where(eq(transactions.paymentOptionId, input.id))
+            .limit(1);
+          const nextDetails = {
+            paymentMethod: "gcash",
+            displayName: input.methodName,
+            accountName: input.accountName?.trim() || null,
+            accountNumber: input.accountNumber?.trim() || null,
+            qrImagePath: nextPath,
+            instructions: input.instructions?.trim() || null,
+          };
+          if (linkedTransaction && paymentOptionDetailsChanged(previous, nextDetails)) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "This payment option is referenced by an order. Deactivate it and create a new option to preserve payment history.",
+            });
+          }
+          const updated = await tx.update(paymentOptions).set({
+            ...nextDetails,
+            isActive: input.isActive,
+            updatedAt: new Date(),
+          }).where(scope).returning({ id: paymentOptions.id });
+          if (!updated.length) throw new TRPCError({ code: "NOT_FOUND", message: "Payment option was not found." });
+          previousPath = previous.qrImagePath === nextPath ? null : previous.qrImagePath;
+        });
+        let cleanupWarning = false;
+        if (previousPath) {
+          try {
+            const removed = await storageDeleteObject(
+              previousPath,
+              getPaymentQrStoragePrefix(cooperativeId),
+            );
+            cleanupWarning = !removed;
+          } catch {
+            cleanupWarning = true;
+            console.error("[payment-options] Previous QR image cleanup failed.");
+          }
+        }
+        return { success: true, cleanupWarning };
+      }),
+    deleteOption: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        if (actor.role === "admin" && actor.cooperativeId === null) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
+        }
+        let targetPath: string | null = null;
+        let cooperativeId: number | null = null;
+        await db.transaction(async tx => {
+          const scope = actor.role === "superadmin"
+            ? eq(paymentOptions.id, input.id)
+            : and(eq(paymentOptions.id, input.id), eq(paymentOptions.cooperativeId, actor.cooperativeId!));
+          const [target] = await tx.select().from(paymentOptions)
+            .where(scope)
+            .limit(1)
+            .for("update");
+          if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Payment option was not found." });
+          const [linkedTransaction] = await tx.select({ id: transactions.id })
+            .from(transactions)
+            .where(eq(transactions.paymentOptionId, input.id))
+            .limit(1);
+          if (linkedTransaction) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "This payment option is referenced by an order and cannot be deleted. Deactivate it instead.",
+            });
+          }
+          const [deleted] = await tx.delete(paymentOptions).where(scope).returning({ id: paymentOptions.id });
+          if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "Payment option was not found." });
+          targetPath = target.qrImagePath;
+          cooperativeId = target.cooperativeId;
+        });
+        let cleanupWarning = false;
+        if (targetPath) {
+          try {
+            const removed = await storageDeleteObject(
+              targetPath,
+              getPaymentQrStoragePrefix(cooperativeId),
+            );
+            cleanupWarning = !removed;
+          } catch {
+            cleanupWarning = true;
+            console.error("[payment-options] Deleted option QR image cleanup failed.");
+          }
+        }
+        return { success: true, cleanupWarning };
+      }),
+  }),
+
+  notifications: router({
+    mine: protectedProcedure.query(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      return db.select().from(notifications).where(eq(notifications.userId, ctx.user.id)).orderBy(desc(notifications.createdAt));
+    }),
+    markRead: protectedProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      const db = await dbOrThrow();
+      await db.update(notifications).set({ isRead: 1 }).where(and(eq(notifications.id, input.id), eq(notifications.userId, ctx.user.id)));
+      return { success: true };
+    }),
+  }),
+
+  auditLogs: router({
+    list: protectedProcedure
+      .input(z.object({
+        limit: z.number().int().min(1).max(100).default(50),
+        offset: z.number().int().min(0).default(0),
+        action: z.string().trim().min(1).max(100).optional(),
+        entityType: z.string().trim().min(1).max(50).optional(),
+        cooperativeId: z.number().int().positive().optional(),
+      }).strict().optional())
+      .query(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const limit = input?.limit ?? 50;
+        const offset = input?.offset ?? 0;
+        const conditions = [];
+        if (actor.role === "admin") {
+          if (actor.cooperativeId === null) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before viewing audit logs." });
+          }
+          conditions.push(eq(auditLogs.cooperativeId, actor.cooperativeId));
+        } else if (input?.cooperativeId !== undefined) {
+          conditions.push(eq(auditLogs.cooperativeId, input.cooperativeId));
+        }
+        if (input?.action) conditions.push(eq(auditLogs.action, input.action));
+        if (input?.entityType) conditions.push(eq(auditLogs.entityType, input.entityType));
+        const where = conditions.length ? and(...conditions) : undefined;
+        const rows = await db.select({
+          id: auditLogs.id,
+          actorUserId: auditLogs.actorUserId,
+          action: auditLogs.action,
+          entityType: auditLogs.entityType,
+          entityId: auditLogs.entityId,
+          cooperativeId: auditLogs.cooperativeId,
+          metadata: auditLogs.metadata,
+          createdAt: auditLogs.createdAt,
+          actorName: users.name,
+        }).from(auditLogs)
+          .leftJoin(users, eq(auditLogs.actorUserId, users.id))
+          .where(where)
+          .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+          .limit(limit)
+          .offset(offset);
+        return { items: rows, limit, offset };
+      }),
+  }),
+
+  support: router({
+    createTicket: protectedProcedure.input(z.object({
+      subject: z.string().min(3).max(255),
+      category: z.string().min(1),
+      description: z.string().min(1),
+      priority: z.enum(["low", "medium", "high"]).default("medium"),
+      cooperativeId: z.number().int().positive().nullable().optional(),
+    }).strict()).mutation(async ({ ctx, input }) => {
+      const db = await dbOrThrow();
+      const activeCooperativeIds = new Set<number>();
+      if (input.cooperativeId !== undefined && input.cooperativeId !== null) {
+        const activeCooperative = await db.select({ id: cooperatives.id })
+          .from(cooperatives)
+          .where(and(eq(cooperatives.id, input.cooperativeId), eq(cooperatives.status, "active")))
+          .limit(1);
+        if (activeCooperative[0]) activeCooperativeIds.add(activeCooperative[0].id);
+      }
+      let assignedCooperativeId: number | null;
+      try {
+        assignedCooperativeId = resolveSupportTicketCooperativeId(
+          ctx.user.cooperativeId,
+          input.cooperativeId,
+          activeCooperativeIds,
+        );
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "The selected support queue is unavailable.",
+        });
+      }
+      return db.transaction(async tx => {
+        const [ticket] = await tx.insert(supportTickets).values({
+          subject: input.subject,
+          category: input.category,
+          description: input.description,
+          priority: input.priority,
+          userId: ctx.user.id,
+          cooperativeId: assignedCooperativeId,
+        }).returning({ id: supportTickets.id });
+        if (!ticket) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The support ticket was not saved." });
+        await tx.insert(supportTicketMessages).values({
+          ticketId: ticket.id,
+          senderId: ctx.user.id,
+          body: input.description,
+        });
+        await recordAuditLog(tx, {
+          actorUserId: ctx.user.id,
+          action: "support_ticket_created",
+          entityType: "support_ticket",
+          entityId: ticket.id,
+          cooperativeId: assignedCooperativeId,
+          metadata: { category: input.category, priority: input.priority },
+        });
+        const recipients = assignedCooperativeId === null
+          ? await tx.select({ id: users.id }).from(users)
+            .where(and(eq(users.role, "superadmin"), eq(users.approvalStatus, "approved")))
+          : await tx.select({ id: users.id }).from(users).where(and(
+            eq(users.role, "admin"),
+            eq(users.cooperativeId, assignedCooperativeId),
+            eq(users.approvalStatus, "approved"),
+          ));
+        for (const recipient of recipients) {
+          await createNotification(tx, {
+            userId: recipient.id,
+            type: "support_ticket_created",
+            title: "New support ticket",
+            content: "A member opened a support ticket in your scope.",
+            link: "/support-tickets",
+            relatedEntityId: ticket.id,
+            relatedEntityType: "support_ticket",
+          });
+        }
+        return { success: true, ticketId: ticket.id };
+      });
+    }),
+    myTickets: protectedProcedure.query(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      return db.select().from(supportTickets).where(eq(supportTickets.userId, ctx.user.id)).orderBy(desc(supportTickets.createdAt));
+    }),
+    listAll: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const rows = await db.select({
+        ticket: supportTickets,
+        userName: users.name,
+      }).from(supportTickets)
+        .innerJoin(users, eq(supportTickets.userId, users.id))
+        .where(actor.role === "superadmin" ? undefined : eq(supportTickets.cooperativeId, actor.cooperativeId!))
+        .orderBy(desc(supportTickets.createdAt));
+      const assignedIds = Array.from(new Set(rows.flatMap(({ ticket }) => ticket.assignedToUserId === null ? [] : [ticket.assignedToUserId])));
+      const assignees = assignedIds.length
+        ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, assignedIds))
+        : [];
+      const assigneeNames = new Map(assignees.map(assignee => [assignee.id, assignee.name]));
+      return rows.map(({ ticket, userName }) => ({
+        ticket,
+        userName,
+        assignedToName: ticket.assignedToUserId === null ? null : assigneeNames.get(ticket.assignedToUserId) ?? null,
+      }));
+    }),
+    assignableUsers: protectedProcedure
+      .input(z.object({ ticketId: z.number().int().positive() }).strict())
+      .query(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [ticket] = await db.select({
+          userId: supportTickets.userId,
+          cooperativeId: supportTickets.cooperativeId,
+        }).from(supportTickets)
+          .where(eq(supportTickets.id, input.ticketId))
+          .limit(1);
+        if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Support ticket not found." });
+        if (!canAccessSupportTicket(actor, ticket)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot assign this support ticket." });
+        }
+        const staffScope = ticket.cooperativeId === null
+          ? eq(users.role, "superadmin")
+          : actor.role === "superadmin"
+            ? or(
+              eq(users.role, "superadmin"),
+              and(eq(users.role, "admin"), eq(users.cooperativeId, ticket.cooperativeId)),
+            )
+            : and(eq(users.role, "admin"), eq(users.cooperativeId, actor.cooperativeId!));
+        return db.select({
+          id: users.id,
+          name: users.name,
+          role: users.role,
+          cooperativeId: users.cooperativeId,
+        }).from(users)
+          .where(and(eq(users.approvalStatus, "approved"), staffScope))
+          .orderBy(asc(users.name));
+      }),
+    assign: protectedProcedure
+      .input(z.object({
+        ticketId: z.number().int().positive(),
+        assignedToUserId: z.number().int().positive().nullable(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [ticket] = await tx.select({
+            id: supportTickets.id,
+            userId: supportTickets.userId,
+            cooperativeId: supportTickets.cooperativeId,
+            assignedToUserId: supportTickets.assignedToUserId,
+          }).from(supportTickets)
+            .where(eq(supportTickets.id, input.ticketId))
+            .for("update")
+            .limit(1);
+          if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Support ticket not found." });
+          if (!canAccessSupportTicket(actor, ticket)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot assign this support ticket." });
+          }
+          const target = input.assignedToUserId === null
+            ? null
+            : (await tx.select({
+              id: users.id,
+              role: users.role,
+              cooperativeId: users.cooperativeId,
+              approvalStatus: users.approvalStatus,
+            }).from(users)
+              .where(eq(users.id, input.assignedToUserId))
+              .limit(1)
+              .for("update"))[0] ?? null;
+          if (input.assignedToUserId !== null && !target) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "The selected support assignee is unavailable." });
+          }
+          if (!canAssignSupportTicket(actor, ticket, target)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "The selected support assignee is outside this ticket's authorized scope." });
+          }
+          if (ticket.assignedToUserId === input.assignedToUserId) return { success: true };
+          await tx.update(supportTickets)
+            .set({ assignedToUserId: input.assignedToUserId, updatedAt: new Date() })
+            .where(eq(supportTickets.id, ticket.id));
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "support_ticket_assigned",
+            entityType: "support_ticket",
+            entityId: ticket.id,
+            cooperativeId: ticket.cooperativeId,
+            metadata: { from: ticket.assignedToUserId, to: input.assignedToUserId },
+          });
+          if (input.assignedToUserId !== null) {
+            await createNotification(tx, {
+              userId: input.assignedToUserId,
+              type: "support_ticket_assigned",
+              title: "Support ticket assigned",
+              content: "A support ticket has been assigned to you.",
+              link: "/support-tickets",
+              relatedEntityId: ticket.id,
+              relatedEntityType: "support_ticket",
+            });
+          }
+          return { success: true };
+        });
+      }),
+    messages: protectedProcedure
+      .input(z.object({ ticketId: z.number().int().positive() }))
+      .query(async ({ ctx, input }) => {
+        const actor = ctx.user;
+        if (actor.role === "admin" || actor.role === "superadmin") {
+          requireOperationalRole(actor, ["admin", "superadmin"]);
+        }
+        const db = await dbOrThrow();
+        const [ticket] = await db.select({
+          id: supportTickets.id,
+          userId: supportTickets.userId,
+          cooperativeId: supportTickets.cooperativeId,
+        }).from(supportTickets).where(eq(supportTickets.id, input.ticketId)).limit(1);
+        if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Support ticket not found." });
+        if (!canAccessSupportTicket(actor, ticket)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot access this support ticket." });
+        }
+        return db.select({
+          message: supportTicketMessages,
+          senderName: users.name,
+        }).from(supportTicketMessages)
+          .innerJoin(users, eq(supportTicketMessages.senderId, users.id))
+          .where(eq(supportTicketMessages.ticketId, ticket.id))
+          .orderBy(asc(supportTicketMessages.createdAt), asc(supportTicketMessages.id));
+      }),
+    reply: protectedProcedure
+      .input(z.object({ ticketId: z.number().int().positive(), body: z.string().trim().min(1).max(2000) }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = ctx.user;
+        if (actor.role === "admin" || actor.role === "superadmin") {
+          requireOperationalRole(actor, ["admin", "superadmin"]);
+        }
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [ticket] = await tx.select({
+            id: supportTickets.id,
+            userId: supportTickets.userId,
+            cooperativeId: supportTickets.cooperativeId,
+            status: supportTickets.status,
+          }).from(supportTickets)
+            .where(eq(supportTickets.id, input.ticketId))
+            .for("update")
+            .limit(1);
+          if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Support ticket not found." });
+          if (!canAccessSupportTicket(actor, ticket)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot reply to this support ticket." });
+          }
+          const currentStatus = supportTicketStatusSchema.safeParse(ticket.status);
+          if (!currentStatus.success) throw new TRPCError({ code: "CONFLICT", message: "This ticket has an unsupported status and cannot be changed." });
+          const nextStatus = supportTicketStatusAfterReply(currentStatus.data, actor.role);
+          if (!nextStatus) throw new TRPCError({ code: "CONFLICT", message: "This support ticket is closed." });
+          await tx.insert(supportTicketMessages).values({
+            ticketId: ticket.id,
+            senderId: actor.id,
+            body: input.body,
+          });
+          if (nextStatus !== ticket.status) {
+            await tx.update(supportTickets).set({ status: nextStatus, updatedAt: new Date() }).where(eq(supportTickets.id, ticket.id));
+          }
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "support_ticket_reply_sent",
+            entityType: "support_ticket",
+            entityId: ticket.id,
+            cooperativeId: ticket.cooperativeId,
+          });
+          if (actor.role === "admin" || actor.role === "superadmin") {
+            await createNotification(tx, {
+              userId: ticket.userId,
+              type: "support_ticket_reply",
+              title: "Support replied to your ticket",
+              content: "An AgriCoop administrator replied to your support ticket.",
+              link: "/support-tickets",
+              relatedEntityId: ticket.id,
+              relatedEntityType: "support_ticket",
+            });
+          } else {
+            const recipients = ticket.cooperativeId === null
+              ? await tx.select({ id: users.id }).from(users).where(and(eq(users.role, "superadmin"), eq(users.approvalStatus, "approved")))
+              : await tx.select({ id: users.id }).from(users).where(and(
+                eq(users.role, "admin"),
+                eq(users.cooperativeId, ticket.cooperativeId),
+                eq(users.approvalStatus, "approved"),
+              ));
+            for (const recipient of recipients) {
+              await createNotification(tx, {
+                userId: recipient.id,
+                type: "support_ticket_reply",
+                title: "New support ticket reply",
+                content: "A member replied to a support ticket in your scope.",
+                link: "/support-tickets",
+                relatedEntityId: ticket.id,
+                relatedEntityType: "support_ticket",
+              });
+            }
+          }
+          return { success: true, status: nextStatus };
+        });
+      }),
+    updateStatus: protectedProcedure
+      .input(z.object({
+        ticketId: z.number().int().positive(),
+        status: supportTicketStatusSchema,
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [ticket] = await tx.select({
+            id: supportTickets.id,
+            userId: supportTickets.userId,
+            cooperativeId: supportTickets.cooperativeId,
+            status: supportTickets.status,
+          }).from(supportTickets)
+            .where(eq(supportTickets.id, input.ticketId))
+            .for("update")
+            .limit(1);
+          if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Support ticket not found." });
+          if (!canAccessSupportTicket(actor, ticket)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot update this support ticket." });
+          }
+          const currentStatus = supportTicketStatusSchema.safeParse(ticket.status);
+          if (!currentStatus.success) throw new TRPCError({ code: "CONFLICT", message: "This ticket has an unsupported status and cannot be changed." });
+          if (!canTransitionSupportTicketStatus(currentStatus.data, input.status)) {
+            throw new TRPCError({ code: "CONFLICT", message: `Cannot change a ${currentStatus.data} ticket to ${input.status}.` });
+          }
+          const updated = await tx.update(supportTickets)
+            .set({ status: input.status, updatedAt: new Date() })
+            .where(and(eq(supportTickets.id, ticket.id), eq(supportTickets.status, currentStatus.data)))
+            .returning({ id: supportTickets.id });
+          if (updated.length !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "This ticket changed while its status was being updated." });
+          }
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "support_ticket_status_updated",
+            entityType: "support_ticket",
+            entityId: ticket.id,
+            cooperativeId: ticket.cooperativeId,
+            metadata: { from: currentStatus.data, to: input.status },
+          });
+          await createNotification(tx, {
+            userId: ticket.userId,
+            type: "support_ticket_status",
+            title: "Support ticket updated",
+            content: `Your support ticket is now ${input.status.replace("_", " ")}.`,
+            link: "/support-tickets",
+            relatedEntityId: ticket.id,
+            relatedEntityType: "support_ticket",
+          });
+          return { success: true };
+        });
       }),
   }),
 });

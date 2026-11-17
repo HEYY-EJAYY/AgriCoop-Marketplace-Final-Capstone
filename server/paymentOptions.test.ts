@@ -1,0 +1,68 @@
+import { describe, expect, it } from "vitest";
+import {
+  assertPaymentOptionSelection,
+  getPaymentOptionCooperativeId,
+  getPaymentQrStoragePrefix,
+  isGcashCheckoutOption,
+  paymentOptionDetailsChanged,
+} from "./paymentOptions";
+
+describe("payment option storage scope", () => {
+  it("keeps Admin options within the actor's cooperative", () => {
+    expect(getPaymentOptionCooperativeId("admin", 12)).toBe(12);
+    expect(getPaymentOptionCooperativeId("admin", 12, 99)).toBe(12);
+    expect(() => getPaymentOptionCooperativeId("admin", null)).toThrow(
+      "Admin accounts must be assigned to a cooperative.",
+    );
+    expect(() => getPaymentOptionCooperativeId("buyer", null)).toThrow(
+      "Only an Admin or SuperAdmin can manage payment option storage.",
+    );
+  });
+
+  it("allows SuperAdmin to choose a cooperative or platform-wide scope", () => {
+    expect(getPaymentOptionCooperativeId("superadmin", null)).toBeNull();
+    expect(getPaymentOptionCooperativeId("superadmin", null, 12)).toBe(12);
+  });
+
+  it("uses disjoint storage prefixes for platform and cooperative QR images", () => {
+    expect(getPaymentQrStoragePrefix(null)).toBe("payment-options/platform/");
+    expect(getPaymentQrStoragePrefix(12)).toBe("payment-options/cooperative-12/");
+  });
+
+  it("requires a matching active option for GCash and rejects options on cash orders", () => {
+    expect(() => assertPaymentOptionSelection("gcash", 4, true)).not.toThrow();
+    expect(() => assertPaymentOptionSelection("gcash", undefined, true)).toThrow(
+      "Choose an active GCash option",
+    );
+    expect(() => assertPaymentOptionSelection("gcash", 4, false)).toThrow(
+      "Choose an active GCash option",
+    );
+    expect(() => assertPaymentOptionSelection("cash_pickup", 4, true)).toThrow(
+      "Cash orders cannot include",
+    );
+    expect(() => assertPaymentOptionSelection("cash_delivery", undefined, false)).not.toThrow();
+  });
+
+  it("only exposes active GCash options assigned to the order's cooperative", () => {
+    const option = { cooperativeId: 12, paymentMethod: "gcash", isActive: true };
+    expect(isGcashCheckoutOption(option, 12)).toBe(true);
+    expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, 12)).toBe(false);
+    expect(isGcashCheckoutOption({ ...option, isActive: false }, 12)).toBe(false);
+    expect(isGcashCheckoutOption({ ...option, paymentMethod: "bank" }, 12)).toBe(false);
+    expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, null)).toBe(true);
+  });
+
+  it("detects payment-detail changes that must be blocked after an option is used", () => {
+    const option = {
+      paymentMethod: "gcash",
+      displayName: "GCash QR",
+      accountName: "Farm Co-op",
+      accountNumber: "123",
+      qrImagePath: "payment-options/cooperative-12/qr.png",
+      instructions: "Pay exact amount",
+    };
+    expect(paymentOptionDetailsChanged(option, { ...option })).toBe(false);
+    expect(paymentOptionDetailsChanged(option, { ...option, qrImagePath: "payment-options/cooperative-12/new.png" })).toBe(true);
+    expect(paymentOptionDetailsChanged(option, { ...option, accountNumber: null })).toBe(true);
+  });
+});

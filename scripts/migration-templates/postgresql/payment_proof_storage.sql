@@ -1,0 +1,6 @@
+-- DEPRECATED / UNSAFE AS-IS: do not execute.
+-- ON CONFLICT DO UPDATE overwrites existing bucket settings and can clobber production.
+-- payment-proofs already exists in production (user-confirmed). Prefer a refuse-on-mismatch
+-- script (see supabase/storage/profile_verification_bucket.sql pattern) if changes are needed.
+-- REVIEW ONLY.
+-- INSERT intentionally removed to prevent accidental overwrite.

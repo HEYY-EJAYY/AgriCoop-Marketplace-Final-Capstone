@@ -24,6 +24,170 @@ export function canManageSellerOrder(
   return actor.role === "admin" || actor.role === "superadmin" || (actor.role === "seller" && actor.id === sellerId);
 }
 
+export function canAccessPaymentRecord(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+) {
+  if (actor.role === "superadmin") return true;
+  if (actor.role === "buyer") return actor.id === payment.buyerId;
+  if (actor.role === "seller") return actor.id === payment.sellerId;
+  if (actor.role === "admin") {
+    return actor.cooperativeId !== null
+      && payment.cooperativeId !== null
+      && actor.cooperativeId === payment.cooperativeId;
+  }
+  return false;
+}
+
+export function canVerifyPaymentRecord(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+) {
+  if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
+  if (actor.role === "superadmin") return true;
+  if (actor.role !== "admin") return false;
+  return actor.cooperativeId !== null
+    && payment.cooperativeId !== null
+    && actor.cooperativeId === payment.cooperativeId
+}
+
+export function canReviewPaymentProof(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  order: { buyerId: number; sellerId: number; cooperativeId: number | null },
+) {
+  if (actor.role !== "admin" && actor.role !== "superadmin") return false;
+  if (actor.id === order.buyerId || actor.id === order.sellerId) return false;
+  if (actor.role === "superadmin") return true;
+  return actor.cooperativeId !== null
+    && order.cooperativeId !== null
+    && actor.cooperativeId === order.cooperativeId;
+}
+
+export function canManagePaymentRecord(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+) {
+  return canAccessPaymentRecord(actor, payment) || canVerifyPaymentRecord(actor, payment);
+}
+
+export function canRecordCashReceipt(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  payment: {
+    buyerId: number;
+    sellerId: number;
+    cooperativeId: number | null;
+    orderId: number;
+    amountCents: number;
+    paymentMethod: string;
+    status: string;
+  },
+  order: {
+    id: number;
+    buyerId: number;
+    sellerId: number;
+    cooperativeId: number | null;
+    totalCents: number;
+    paymentMethod: string | null;
+    paymentStatus: string;
+    status: string;
+  },
+  transaction?: {
+    orderId: number;
+    buyerId: number;
+    sellerId: number;
+    amountCents: number;
+    paymentMethod: string | null;
+    status: string;
+  },
+) {
+  return canManageCashReceipt(actor, payment)
+    && isPaymentOrderConsistent(payment, order)
+    && transaction !== undefined
+    && isPaymentTransactionConsistent(payment, transaction)
+    && (transaction.status === "recorded" || transaction.status === "payment_coordinated" || transaction.status === "pending")
+    && payment.status === "pending"
+    && order.status === "ready"
+    && (order.paymentStatus === "pending" || order.paymentStatus === "F2F-pending-confirmation")
+    && (payment.paymentMethod === "cash_pickup" || payment.paymentMethod === "cash_delivery");
+}
+
+export function isPaymentTransactionConsistent(
+  payment: {
+    buyerId: number;
+    sellerId: number;
+    orderId: number;
+    amountCents: number;
+    paymentMethod: string;
+  },
+  transaction: {
+    orderId: number;
+    buyerId: number;
+    sellerId: number;
+    amountCents: number;
+    paymentMethod: string | null;
+    status: string;
+  },
+) {
+  return transaction.orderId === payment.orderId
+    && transaction.buyerId === payment.buyerId
+    && transaction.sellerId === payment.sellerId
+    && transaction.amountCents === payment.amountCents
+    && transaction.paymentMethod === payment.paymentMethod;
+}
+
+export function canManageCashReceipt(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+) {
+  if (actor.role === "seller") return actor.id === payment.sellerId;
+  if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
+  if (actor.role === "superadmin") return true;
+  return actor.role === "admin"
+    && actor.cooperativeId !== null
+    && payment.cooperativeId !== null
+    && actor.cooperativeId === payment.cooperativeId;
+}
+
+export function isPaymentOrderConsistent(
+  payment: {
+    buyerId: number;
+    sellerId: number;
+    cooperativeId: number | null;
+    orderId: number;
+    amountCents: number;
+    paymentMethod: string;
+  },
+  order: {
+    id: number;
+    buyerId: number;
+    sellerId: number;
+    cooperativeId: number | null;
+    totalCents: number;
+    paymentMethod: string | null;
+  },
+) {
+  return payment.orderId === order.id
+    && payment.buyerId === order.buyerId
+    && payment.sellerId === order.sellerId
+    && payment.cooperativeId === order.cooperativeId
+    && Number.isSafeInteger(payment.amountCents)
+    && payment.amountCents > 0
+    && payment.amountCents === order.totalCents
+    && payment.paymentMethod === order.paymentMethod;
+}
+
+export function canManageRefundRecord(
+  actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
+  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+) {
+  if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
+  if (actor.role === "superadmin") return true;
+  return actor.role === "admin"
+    && actor.cooperativeId !== null
+    && payment.cooperativeId !== null
+    && actor.cooperativeId === payment.cooperativeId;
+}
+
 export function canUpdateOrderStatus(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
   order: { sellerId: number; cooperativeId: number | null },
@@ -63,12 +227,14 @@ export function canUpdateCooperativeUser(
   targetCooperativeId: number | null,
   requestedCooperativeId: number | null,
   requestedRole: AppRole,
+  targetRole?: AppRole,
 ) {
   if (actor.role === "superadmin") return true;
   return actor.role === "admin"
     && actor.cooperativeId !== null
     && actor.cooperativeId === targetCooperativeId
     && actor.cooperativeId === requestedCooperativeId
+    && targetRole !== "superadmin"
     && requestedRole !== "superadmin";
 }
 
@@ -86,8 +252,8 @@ export function canAccessConversation(
 }
 
 export function canSubmitProfileVerification(user: Pick<OperationalUser, "role" | "verificationStatus">) {
-  if (!hasRole(user.role, ["buyer", "seller", "admin"])) return false;
-  return user.verificationStatus !== "approved";
+  if (!hasRole(user.role, ["buyer", "seller"])) return false;
+  return user.verificationStatus === "unverified" || user.verificationStatus === "rejected";
 }
 
 export function requireOperationalRole(user: OperationalUser | null, allowed: readonly AppRole[]) {
@@ -110,6 +276,12 @@ export function requireOperationalRole(user: OperationalUser | null, allowed: re
         message: "Your role registration is pending cooperative approval.",
       });
     }
+  }
+  if (user.role === "admin" && user.cooperativeId === null) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "An Admin must be assigned to a cooperative before using operational features.",
+    });
   }
   return user;
 }

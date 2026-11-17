@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, priceOrderItems, transactionStatusFor } from "./marketplaceRules";
+import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertPaymentConfirmed, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, reconcilePaymentAmount, STOCK_RESERVING_ORDER_STATUSES, transactionStatusFor } from "./marketplaceRules";
 
 const products = [
   { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, minOrderQty: 2, priceCents: 5500, unit: "kg", status: "published", name: "Fresh Cabbage" },
@@ -96,8 +96,9 @@ describe("marketplace order rules", () => {
   });
 
   it("uses edited delivered quantities to calculate the final amount and stock deduction", async () => {
+    const orderedItems = [{ id: 101, productId: 1, quantity: 5, unitPriceCents: 5500 }];
     const completed = prepareOrderCompletion(
-      [{ id: 101, productId: 1, quantity: 5, unitPriceCents: 5500 }],
+      orderedItems,
       [{ orderItemId: 101, quantity: 3 }],
     );
     const stocks = new Map([[1, 20]]);
@@ -113,6 +114,23 @@ describe("marketplace order rules", () => {
 
     expect(completed.totalCents).toBe(16500);
     expect(stocks.get(1)).toBe(17);
+  });
+
+  it("rejects completion quantities that exceed the order quantity", () => {
+    const orderedItems = [
+      { id: 101, productId: 1, quantity: 5, unitPriceCents: 5500 },
+      { id: 102, productId: 2, quantity: 4, unitPriceCents: 4000 },
+    ];
+    expect(() => prepareOrderCompletion(orderedItems, [
+      { orderItemId: 101, quantity: 6 },
+      { orderItemId: 102, quantity: 4 },
+    ])).toThrow("cannot exceed the quantity ordered");
+  });
+
+  it("reserves availability across open orders without changing on-hand stock", () => {
+    expect(availableStockAfterReservations(10, 7)).toBe(3);
+    expect(availableStockAfterReservations(10, 11)).toBe(0);
+    expect(STOCK_RESERVING_ORDER_STATUSES).toEqual(["submitted", "confirmed", "ready"]);
   });
 
   it("rejects insufficient current stock without deducting any item", async () => {
@@ -164,6 +182,40 @@ describe("marketplace order rules", () => {
     expect(() => assertInventorySufficient(products, [{ productId: 2, quantity: 13 }])).toThrow("Insufficient current inventory");
     expect(transactionStatusFor()).toBe("recorded");
     expect(transactionStatusFor("Cash received at the cooperative office")).toBe("payment_coordinated");
+    expect(transactionStatusFor(undefined, "paid")).toBe("paid");
+    expect(transactionStatusFor(undefined, "refunded")).toBe("paid");
+    expect(transactionStatusFor(undefined, "failed")).toBe("failed");
+    expect(transactionStatusFor(undefined, "awaiting_verification")).toBe("pending");
+  });
+
+  it("only permits cancellation when payment, order, and transaction states agree", () => {
+    expect(canCancelOrderPayment("pending", "pending", "payment_coordinated")).toBe(true);
+    expect(canCancelOrderPayment("awaiting_verification", "pending", "payment_coordinated")).toBe(true);
+    expect(canCancelOrderPayment("verified", "paid", "paid")).toBe(false);
+    expect(canCancelOrderPayment("refunded", "refunded", "paid")).toBe(true);
+    expect(canCancelOrderPayment("pending", "paid", "payment_coordinated")).toBe(false);
+    expect(canCancelOrderPayment("refunded", "paid", "paid")).toBe(false);
+    expect(canCancelOrderPayment("pending", "verified", "payment_coordinated")).toBe(false);
+  });
+
+  it("reconciles an unpaid payment amount and blocks changes to non-pending payments", () => {
+    expect(reconcilePaymentAmount({ amountCents: 1000, status: "pending" }, 800)).toEqual({
+      previousAmountCents: 1000,
+      amountCents: 800,
+    });
+    expect(reconcilePaymentAmount({ amountCents: 1000, status: "pending" }, 1000)).toBeNull();
+    expect(() => reconcilePaymentAmount({ amountCents: 1000, status: "verified" }, 800))
+      .toThrow("payment is no longer pending");
+    expect(() => reconcilePaymentAmount({ amountCents: 1000, status: "awaiting_verification" }, 800))
+      .toThrow("payment is no longer pending");
+  });
+
+  it("requires a verified payment before order completion", () => {
+    expect(() => assertPaymentConfirmed({ status: "verified" })).not.toThrow();
+    for (const status of ["pending", "awaiting_verification", "failed", "cancelled", "refunded", "expired"]) {
+      expect(() => assertPaymentConfirmed({ status }))
+        .toThrow("Payment must be verified before the order can be completed.");
+    }
   });
 });
 
@@ -172,6 +224,81 @@ describe("quotation workflow rule", () => {
     expect(isQuotationOpen("requested")).toBe(true);
     expect(isQuotationOpen("responded")).toBe(false);
     expect(isQuotationOpen("declined")).toBe(false);
+  });
+
+  describe("product review rules", () => {
+    const currentProduct = {
+      verificationStatus: "approved",
+      name: "Fresh Cabbage",
+      category: "Vegetables",
+      variety: "Green",
+      description: "Harvested this week",
+      unit: "kg",
+      priceCents: 5500,
+      minOrderQty: 2,
+      qualityGrade: "standard",
+      primaryImageUrl: "seller-image-1",
+    };
+
+    it("only reviews pending submissions and requires a reason for rejection", () => {
+      expect(prepareProductReview("pending", "approved")).toEqual({
+        verificationStatus: "approved",
+        visibility: "visible",
+        status: "published",
+        rejectionReason: null,
+      });
+      expect(() => prepareProductReview("approved", "rejected", "Needs correction")).toThrow("Only a pending");
+      expect(() => prepareProductReview("pending", "rejected", "  ")).toThrow("rejection reason");
+      expect(prepareProductReview("pending", "rejected", "  Missing quality details  ").rejectionReason)
+        .toBe("Missing quality details");
+    });
+
+    it("requires re-review when approved listing content or its image gallery changes", () => {
+      expect(prepareProductUpdateReviewState(
+        currentProduct,
+        { description: "Updated harvest details" },
+        ["seller-image-1"],
+        ["seller-image-1"],
+        "seller-image-1",
+      )).toEqual({
+        reviewRequired: true,
+        moderationUpdate: {
+          verificationStatus: "pending",
+          visibility: "hidden",
+          rejectionReason: null,
+        },
+      });
+      expect(prepareProductUpdateReviewState(
+        currentProduct,
+        {},
+        ["seller-image-1", "seller-image-2"],
+        ["seller-image-2", "seller-image-1"],
+        "seller-image-2",
+      ).reviewRequired).toBe(true);
+    });
+
+    it("does not require moderation for inventory or archive-only changes", () => {
+      expect(prepareProductUpdateReviewState(
+        currentProduct,
+        { stockQty: 0, status: "archived" },
+        ["seller-image-1"],
+        ["seller-image-1"],
+        "seller-image-1",
+      )).toEqual({
+        reviewRequired: false,
+        moderationUpdate: {},
+      });
+    });
+
+    it("leaves unapproved edits in their existing review workflow", () => {
+      expect(prepareProductUpdateReviewState(
+        { ...currentProduct, verificationStatus: "pending" },
+        { description: "Updated before review" },
+        ["seller-image-1"],
+        ["seller-image-1"],
+        "seller-image-1",
+      )).toEqual({ reviewRequired: false, moderationUpdate: {} });
+    });
   });
 
   it("prevents a farmer from creating a transaction against their own listing", () => {

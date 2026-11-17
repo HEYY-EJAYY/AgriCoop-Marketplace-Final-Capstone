@@ -33,6 +33,12 @@ export function aggregateOrderItems(items: OrderItemRequest[]) {
   return Array.from(quantities, ([productId, quantity]) => ({ productId, quantity }));
 }
 
+export const STOCK_RESERVING_ORDER_STATUSES = ["submitted", "confirmed", "ready"] as const;
+
+export function availableStockAfterReservations(stockQty: number, reservedQty: number) {
+  return Math.max(0, stockQty - reservedQty);
+}
+
 export async function applyInventoryDeductions(
   items: OrderItemRequest[],
   runInTransaction: (work: (applyDeduction: (item: OrderItemRequest) => Promise<boolean>) => Promise<void>) => Promise<void>,
@@ -117,6 +123,24 @@ export function canTransitionOrder(current: string, next: string) {
   return transitions[current]?.includes(next) ?? false;
 }
 
+export function canCancelOrderPayment(
+  paymentStatus: string,
+  orderPaymentStatus: string,
+  transactionStatus: string,
+) {
+  if (paymentStatus === "refunded" || orderPaymentStatus === "refunded") {
+    return paymentStatus === "refunded"
+      && orderPaymentStatus === "refunded"
+      && transactionStatus === "paid";
+  }
+  if (paymentStatus === "verified" || orderPaymentStatus === "paid" || orderPaymentStatus === "verified" || transactionStatus === "paid") {
+    return false;
+  }
+  return ["pending", "awaiting_verification", "failed", "expired"].includes(paymentStatus)
+    && ["pending", "failed", "F2F-pending-confirmation", "awaiting_verification", "expired"].includes(orderPaymentStatus)
+    && ["recorded", "payment_coordinated", "pending", "failed"].includes(transactionStatus);
+}
+
 export function assertInventorySufficient(products: AvailableProduct[], items: OrderItemRequest[]) {
   const productMap = new Map(products.map(product => [product.id, product]));
   for (const item of aggregateOrderItems(items)) {
@@ -151,7 +175,11 @@ export function prepareOrderCompletion(
     if (!quantitiesByItemId.has(item.id)) {
       throw new Error("Enter a final delivered quantity for every order item.");
     }
-    return { ...item, quantity: quantitiesByItemId.get(item.id)! };
+    const quantity = quantitiesByItemId.get(item.id)!;
+    if (quantity > item.quantity) {
+      throw new Error("Final delivered quantity cannot exceed the quantity ordered.");
+    }
+    return { ...item, quantity };
   });
   if (!completedItems.some(item => item.quantity > 0)) {
     throw new Error("At least one final delivered quantity must be greater than zero.");
@@ -163,14 +191,180 @@ export function prepareOrderCompletion(
   };
 }
 
+export function reconcilePaymentAmount(
+  payment: { amountCents: number; status: string },
+  orderAmountCents: number,
+) {
+  if (payment.amountCents === orderAmountCents) return null;
+  if (payment.status !== "pending") {
+    throw new Error("The order total cannot change because its payment is no longer pending.");
+  }
+  return {
+    previousAmountCents: payment.amountCents,
+    amountCents: orderAmountCents,
+  };
+}
+
+export function assertPaymentConfirmed(payment: { status: string }) {
+  if (payment.status !== "verified") {
+    throw new Error("Payment must be verified before the order can be completed.");
+  }
+}
+
+export function assertPaymentReadyForVerification(
+  payment: { status: string },
+  attempt: { status: string } | undefined,
+) {
+  if (payment.status !== "awaiting_verification") {
+    throw new Error("Only a payment awaiting review can be verified.");
+  }
+  if (!attempt || (attempt.status !== "submitted" && attempt.status !== "under_review")) {
+    throw new Error("A submitted payment proof is required before review.");
+  }
+}
+
+export function assertPaymentOrderEligibleForVerification(order: {
+  status: string;
+  paymentStatus: string;
+}) {
+  if (!["submitted", "confirmed", "ready"].includes(order.status)
+    || !["pending", "awaiting_verification", "failed"].includes(order.paymentStatus)) {
+    throw new Error("This order is not eligible for payment verification.");
+  }
+}
+
+export function latestPaymentReviewNotes(events: Array<{
+  paymentId: number;
+  eventType: string;
+  reason: string | null;
+}>) {
+  const notes = new Map<number, string | null>();
+  for (const event of events) {
+    if (event.eventType === "verification_decision" && !notes.has(event.paymentId)) {
+      notes.set(event.paymentId, event.reason);
+    }
+  }
+  return notes;
+}
+
+export function assertPaymentCanAcceptProof(payment: { paymentMethod: string; status: string }) {
+  if (payment.paymentMethod !== "gcash") {
+    throw new Error("Online proof can only be submitted for an explicit GCash payment.");
+  }
+  if (payment.status !== "pending" && payment.status !== "failed") {
+    throw new Error("Only pending or previously rejected payments can accept new proof.");
+  }
+}
+
+export function assertOrderCanAcceptPaymentProof(
+  order: { status: string; paymentStatus: string; paymentMethod: string | null },
+  latestProof: { verificationStatus: string } | undefined,
+) {
+  if (order.paymentMethod !== "gcash") {
+    throw new Error("Online proof can only be submitted for an explicit GCash order.");
+  }
+  if (!["submitted", "confirmed", "ready"].includes(order.status)) {
+    throw new Error("Cancelled or completed orders cannot accept payment proof.");
+  }
+  if (order.paymentStatus !== "pending" && order.paymentStatus !== "failed") {
+    throw new Error("Only unpaid or rejected GCash orders can accept payment proof.");
+  }
+  if (latestProof && latestProof.verificationStatus !== "rejected") {
+    throw new Error("A payment proof is already awaiting review or has been verified.");
+  }
+}
+
+export function assertPaymentProofReadyForReview(
+  order: { status: string; paymentStatus: string },
+  proof: { verificationStatus: string },
+) {
+  assertPaymentOrderEligibleForVerification(order);
+  if (proof.verificationStatus !== "pending") {
+    throw new Error("Only a pending payment proof can be reviewed.");
+  }
+}
+
 export function isQuotationOpen(status: string) {
   return status === "requested";
+}
+
+type ProductReviewFields = {
+  verificationStatus: string;
+  name: string;
+  category: string;
+  variety: string;
+  description: string | null;
+  unit: string;
+  priceCents: number;
+  minOrderQty: number;
+  qualityGrade: string;
+  primaryImageUrl: string | null;
+};
+
+const productReviewFieldNames = [
+  "name",
+  "category",
+  "variety",
+  "description",
+  "unit",
+  "priceCents",
+  "minOrderQty",
+  "qualityGrade",
+] as const satisfies readonly (keyof ProductReviewFields)[];
+
+export function prepareProductUpdateReviewState(
+  current: ProductReviewFields,
+  updates: Partial<Omit<ProductReviewFields, "primaryImageUrl">> & { stockQty?: number; status?: string },
+  currentImageUrls: readonly string[],
+  nextImageUrls: readonly string[],
+  nextPrimaryImageUrl: string | null,
+) {
+  const listingContentChanged = productReviewFieldNames.some(
+    field => updates[field] !== undefined && updates[field] !== current[field],
+  );
+  const galleryChanged = currentImageUrls.length !== nextImageUrls.length
+    || currentImageUrls.some((url, index) => url !== nextImageUrls[index]);
+  const contentChanged = listingContentChanged || galleryChanged || current.primaryImageUrl !== nextPrimaryImageUrl;
+  const reviewRequired = contentChanged && current.verificationStatus === "approved";
+  return {
+    reviewRequired,
+    moderationUpdate: reviewRequired
+      ? {
+          verificationStatus: "pending" as const,
+          visibility: "hidden" as const,
+          rejectionReason: null,
+        }
+      : {},
+  };
+}
+
+export function prepareProductReview(
+  currentStatus: string,
+  decision: "approved" | "rejected",
+  rejectionReason?: string,
+) {
+  if (currentStatus !== "pending") {
+    throw new Error("Only a pending product submission can be reviewed.");
+  }
+  const reason = rejectionReason?.trim();
+  if (decision === "rejected" && !reason) {
+    throw new Error("A rejection reason is required.");
+  }
+  return {
+    verificationStatus: decision,
+    visibility: decision === "approved" ? "visible" as const : "hidden" as const,
+    status: decision === "approved" ? "published" as const : "archived" as const,
+    rejectionReason: decision === "rejected" ? reason! : null,
+  };
 }
 
 export function assertNotSelfTransaction(actorId: number, sellerId: number) {
   if (actorId === sellerId) throw new Error("You cannot request a quotation or place an order for your own listing.");
 }
 
-export function transactionStatusFor(paymentReferenceNote?: string) {
+export function transactionStatusFor(paymentReferenceNote?: string, paymentStatus?: string) {
+  if (paymentStatus === "paid" || paymentStatus === "verified" || paymentStatus === "refunded") return "paid" as const;
+  if (paymentStatus === "failed" || paymentStatus === "expired") return "failed" as const;
+  if (paymentStatus === "awaiting_verification") return "pending" as const;
   return paymentReferenceNote ? "payment_coordinated" as const : "recorded" as const;
 }

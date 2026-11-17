@@ -10,5 +10,9 @@ const clientOptions = {
   },
 };
 
-export const supabase = createClient(supabaseUrl, supabaseKey, clientOptions);
+export function createPublicAuthClient() {
+  return createClient(supabaseUrl, supabaseKey, clientOptions);
+}
+
+export const supabase = createPublicAuthClient();
 export const supabaseAdmin = supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey, clientOptions) : supabase;

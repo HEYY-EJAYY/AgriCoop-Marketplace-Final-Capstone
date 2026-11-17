@@ -1,6 +1,7 @@
 export function readSupabaseConfig(environment: Record<string, string | undefined>) {
   if (environment.NODE_ENV === "production") {
     const missing = [
+      ["APP_URL", environment.APP_URL],
       ["NEXT_PUBLIC_SUPABASE_URL", environment.NEXT_PUBLIC_SUPABASE_URL],
       ["NEXT_PUBLIC_SUPABASE_ANON_KEY", environment.NEXT_PUBLIC_SUPABASE_ANON_KEY],
       ["SUPABASE_SERVICE_ROLE_KEY", environment.SUPABASE_SERVICE_ROLE_KEY],

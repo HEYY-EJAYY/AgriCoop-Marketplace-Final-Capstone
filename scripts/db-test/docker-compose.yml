@@ -1,0 +1,18 @@
+# Local disposable Postgres for RLS / concurrency tests.
+# NEVER point this at production. Port 55432 avoids colliding with local 5432.
+services:
+  agricoop-test-db:
+    image: postgres:16-alpine
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_USER: agricoop_login
+      POSTGRES_PASSWORD: agricoop_test_password
+      POSTGRES_DB: agricoop_test
+    volumes:
+      - ./bootstrap:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agricoop_login -d agricoop_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

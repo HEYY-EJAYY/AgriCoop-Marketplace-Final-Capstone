@@ -4,15 +4,13 @@ import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerStorageProxy } from "./storageProxy";
+import { registerConversationStreamRoute } from "./conversationStream";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { supabaseAdmin } from "../clients";
-import { conversations, users } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
-import { getDb, getUserByOpenId } from "../db";
-import { subscribeConversation } from "../realtime";
-import { canAccessConversation } from "../authz";
+import { getHealthStatus } from "../health";
+import { systemRouter } from "./systemRouter";
+import { MAX_IMAGE_UPLOAD_REQUEST_BODY_BYTES } from "../../shared/productOptions";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,28 +34,13 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  app.get("/api/conversations/:conversationId/stream", async (req, res) => {
-    const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "") || (typeof req.query.access_token === "string" ? req.query.access_token : undefined);
-    if (!bearer) return res.status(401).end();
-    const { data } = await supabaseAdmin.auth.getUser(bearer);
-    if (!data.user) return res.status(401).end();
-    const localUser = await getUserByOpenId(data.user.id);
-    const conversationId = Number(req.params.conversationId);
-    const db = await getDb();
-    if (!localUser || !db || !Number.isInteger(conversationId)) return res.status(403).end();
-    const thread = (await db.select().from(conversations).where(eq(conversations.id, conversationId)).limit(1))[0];
-    const seller = thread?.sellerId === null || thread?.sellerId === undefined
-      ? undefined
-      : (await db.select({ cooperativeId: users.cooperativeId }).from(users).where(eq(users.id, thread.sellerId)).limit(1))[0];
-    if (!thread || !canAccessConversation(localUser, thread, seller?.cooperativeId ?? null)) return res.status(403).end();
-    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
-    res.write(`event: ready\ndata: ${JSON.stringify({ conversationId })}\n\n`);
-    const unsubscribe = subscribeConversation(conversationId, event => res.write(`event: message\ndata: ${JSON.stringify(event)}\n\n`));
-    req.on("close", unsubscribe);
+  app.get("/api/health", async (_req, res) => {
+    const health = await getHealthStatus();
+    res.status(health.status === "ok" ? 200 : 503).json(health);
   });
+  app.use(express.json({ limit: MAX_IMAGE_UPLOAD_REQUEST_BODY_BYTES }));
+  app.use(express.urlencoded({ limit: MAX_IMAGE_UPLOAD_REQUEST_BODY_BYTES, extended: true }));
+  registerConversationStreamRoute(app);
   registerStorageProxy(app);
   // tRPC API
   app.use(
@@ -67,6 +50,11 @@ async function startServer() {
       createContext,
     })
   );
+  // Mount systemRouter for health and notification operations
+  app.use("/api/system", createExpressMiddleware({
+    router: systemRouter,
+    createContext,
+  }));
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
