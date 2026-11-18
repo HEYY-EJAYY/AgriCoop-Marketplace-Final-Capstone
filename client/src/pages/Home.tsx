@@ -1,4 +1,4 @@
-import { PageFrame, shellContainerClass } from "@/components/AgriShell";
+import { PageFrame, marketingShellClass } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ArrowRight, BadgeCheck, Handshake, Layers3, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -36,7 +36,7 @@ export default function Home() {
         <section className="agri-full-bleed relative overflow-hidden bg-[#e5efe0]" data-testid="home-hero" data-full-bleed>
           <div className="grain absolute inset-0 opacity-30" aria-hidden />
           <div
-            className={`${shellContainerClass} relative grid items-start gap-8 py-12 lg:min-h-[560px] lg:grid-cols-2 lg:gap-10 lg:py-16`}
+            className={`${marketingShellClass} relative grid items-start gap-8 py-12 lg:min-h-[560px] lg:grid-cols-2 lg:gap-10 lg:py-16`}
           >
             <div className="relative z-10 flex flex-col justify-center" data-testid="hero-text">
               <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#c7dabc] bg-[#f5f9f1] px-3 py-1.5 text-xs font-extrabold tracking-[.08em] text-[#2e6a41]">
@@ -107,7 +107,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={`${shellContainerClass} py-20`}>
+        <section className={`${marketingShellClass} py-20`}>
           <div className="grid gap-12 lg:grid-cols-[.78fr_1.22fr]">
             <div>
               <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#3f5f28]">Built around the cooperative</p>
@@ -134,7 +134,7 @@ export default function Home() {
         </section>
 
         <section className="agri-full-bleed border-y border-[#dce6d6] bg-[#eff5eb]" data-full-bleed>
-          <div className={`${shellContainerClass} grid gap-12 py-16 lg:grid-cols-2`}>
+          <div className={`${marketingShellClass} grid gap-12 py-16 lg:grid-cols-2`}>
             <div>
               <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#3f5f28]">Designed for every participant</p>
               <h2 className="mt-3 font-display text-4xl font-bold text-[#1d4932]">One shared market, each role with the right tools.</h2>

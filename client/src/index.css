@@ -6,12 +6,15 @@
   background: #f8f5ee;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  /* Shared layout tokens — full-bleed content with small side gaps only */
+  /* App / marketplace shell — full viewport width with small gutters */
   --agri-content-max: 100%;
   --agri-gutter: 0.75rem;
   --agri-gutter-sm: 1rem;
   --agri-gutter-lg: 1rem;
   --agri-gutter-xl: 1.25rem;
+  /* Marketing shell — boxed content for Home / How It Works / Support */
+  --agri-marketing-max: 80rem; /* 1280px */
+  --agri-marketing-pad: clamp(1rem, 4vw, 3rem);
   --agri-hero-badge-inset: 1rem;
   --agri-hero-badge-inset-lg: 1.5rem;
   --agri-radius-card: 1.25rem;
@@ -25,6 +28,8 @@
 html {
   scroll-behavior: smooth;
   overflow-x: clip;
+  /* Avoid asymmetric layout from classic scrollbar occupying one side */
+  scrollbar-gutter: stable;
 }
 body {
   margin: 0;
@@ -36,7 +41,7 @@ body {
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
-/* Content column: full viewport width + small side gutters (shared by shell) */
+/* Content column: full viewport width + small side gutters (marketplace / app) */
 .agri-shell {
   width: 100%;
   max-width: var(--agri-content-max);
@@ -54,7 +59,16 @@ button { cursor: pointer; }
   .agri-shell { padding-inline: var(--agri-gutter-xl); }
 }
 
-/* Full-viewport band; nest .agri-shell inside for aligned content */
+/* Boxed marketing content — equal fluid side padding, centered max width */
+.agri-marketing-shell {
+  width: 100%;
+  max-width: var(--agri-marketing-max);
+  margin-inline: auto;
+  padding-inline: var(--agri-marketing-pad);
+  box-sizing: border-box;
+}
+
+/* Full-viewport band; nest a shell inside for aligned content */
 .agri-full-bleed {
   width: 100%;
   max-width: 100%;

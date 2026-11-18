@@ -1,4 +1,4 @@
-import { PageFrame, shellContainerClass } from "@/components/AgriShell";
+import { PageFrame, marketingShellClass } from "@/components/AgriShell";
 import { ArrowRight, ClipboardList, PackageCheck, Quote, UsersRound } from "lucide-react";
 import { Link } from "wouter";
 
@@ -14,7 +14,7 @@ export default function About() {
     <PageFrame>
       <main>
         <section className="agri-full-bleed bg-[#1f4f36] py-18 text-[#fffdf8]">
-          <div className={`${shellContainerClass} text-center`}>
+          <div className={`${marketingShellClass} text-center`}>
             <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#b7d494]">How AgriCoop works</p>
             <h1 className="mt-4 font-display text-5xl font-bold leading-tight">Digital tools built around real cooperative relationships.</h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-[#d8e9d6]">
@@ -22,7 +22,7 @@ export default function About() {
             </p>
           </div>
         </section>
-        <section className={`${shellContainerClass} py-20`}>
+        <section className={`${marketingShellClass} py-20`}>
           <div className="space-y-5">
             {stages.map(({ icon: Icon, tag, title, body }, idx) => (
               <article className="agri-card grid gap-5 p-6 sm:grid-cols-[70px_1fr] sm:p-8" key={title}>
@@ -39,7 +39,7 @@ export default function About() {
             ))}
           </div>
         </section>
-        <section className={`${shellContainerClass} pb-20`}>
+        <section className={`${marketingShellClass} pb-20`}>
           <div className="rounded-[2rem] bg-[#e3efd8] p-8 text-center sm:p-12">
             <h2 className="font-display text-3xl font-bold text-[#1c4b34]">Ready to discover what local farms have to offer?</h2>
             <p className="mx-auto mt-3 max-w-xl text-[#56715d]">Browse available listings and connect directly with the farmers and cooperatives preparing them.</p>

@@ -30,10 +30,13 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
-/** Shared full-width content shell — small side gutters only (.agri-shell in index.css) */
+/** App / marketplace shell — full width + small gutters (.agri-shell) */
 const SHELL = "agri-shell";
+/** Marketing shell — boxed ~1280px + equal fluid side padding (.agri-marketing-shell) */
+const MARKETING_SHELL = "agri-marketing-shell";
 
 export const shellContainerClass = SHELL;
+export const marketingShellClass = MARKETING_SHELL;
 export const fullBleedClass = "agri-full-bleed";
 
 const navLinkClass = (active: boolean) =>
@@ -44,13 +47,45 @@ const navLinkClass = (active: boolean) =>
 function NavLinks({ items, className = "", onNavigate }: { items: NavItem[]; className?: string; onNavigate?: () => void }) {
   const [location] = useLocation();
   return (
-    <nav className={className} aria-label="Primary navigation">
-      {items.map(item => (
-        <Link key={item.href + item.label} href={item.href} onClick={onNavigate} className={navLinkClass(isNavActive(location, item))}>
-          {item.label}
-        </Link>
-      ))}
+    <nav className={className} aria-label="Primary navigation" data-testid="primary-nav">
+      {items.map(item => {
+        const active = isNavActive(location, item);
+        return (
+          <Link
+            key={item.href + item.label}
+            href={item.href}
+            onClick={onNavigate}
+            className={navLinkClass(active)}
+            aria-current={active ? "page" : undefined}
+            data-testid={`nav-link-${item.label}`}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
     </nav>
+  );
+}
+
+function LoggedOutAuthActions({ source }: { source: string }) {
+  return (
+    <div className="hidden shrink-0 items-center gap-2 whitespace-nowrap lg:flex" data-testid="nav-auth-actions">
+      <Link
+        href="/auth"
+        className="inline-flex min-h-11 items-center rounded-xl px-4 text-sm font-bold text-[#315640] no-underline hover:bg-[#edf3e9]"
+        data-testid="nav-login"
+      >
+        Login
+      </Link>
+      <Button
+        type="button"
+        className="min-h-11 rounded-xl bg-[#1f4f36] px-4 text-sm font-bold text-white hover:bg-[#1a4330]"
+        data-testid="nav-join"
+        onClick={() => goToAuth(source, { register: true })}
+      >
+        Join AgriCoop
+      </Button>
+    </div>
   );
 }
 
@@ -328,26 +363,11 @@ function HeaderRightActions({
 }) {
   const { user, loading } = useAuth();
 
-  if (loading) {
-    return <MobileMenuToggle open={menuOpen} onToggle={onToggleMenu} toggleRef={toggleRef} />;
-  }
-
-  if (user) {
+  // While auth resolves, keep logged-out Login/Join visible (same size) so the nav never empties.
+  if (loading || !user) {
     return (
       <>
-        <div className="hidden shrink-0 items-center gap-1 sm:gap-2 lg:flex">
-          {user.role === "buyer" && (
-            <Link
-              href="/marketplace#order"
-              className="relative grid h-11 w-11 place-items-center rounded-xl text-[#315640] hover:bg-[#edf3e9] no-underline"
-              aria-label="Open order basket"
-            >
-              <ShoppingBasket size={18} />
-            </Link>
-          )}
-          <NotificationBell />
-          <ProfileMenu />
-        </div>
+        <LoggedOutAuthActions source="PublicHeader" />
         <MobileMenuToggle open={menuOpen} onToggle={onToggleMenu} toggleRef={toggleRef} />
       </>
     );
@@ -355,20 +375,18 @@ function HeaderRightActions({
 
   return (
     <>
-      <div className="hidden shrink-0 items-center gap-2 whitespace-nowrap lg:flex">
-        <Link
-          href="/auth"
-          className="inline-flex min-h-11 items-center rounded-xl px-4 text-sm font-bold text-[#315640] no-underline hover:bg-[#edf3e9]"
-        >
-          Login
-        </Link>
-        <Button
-          type="button"
-          className="min-h-11 rounded-xl bg-[#1f4f36] px-4 text-sm font-bold text-white hover:bg-[#1a4330]"
-          onClick={() => goToAuth("PublicHeader")}
-        >
-          Join AgriCoop
-        </Button>
+      <div className="hidden shrink-0 items-center gap-1 sm:gap-2 lg:flex">
+        {user.role === "buyer" && (
+          <Link
+            href="/marketplace#order"
+            className="relative grid h-11 w-11 place-items-center rounded-xl text-[#315640] hover:bg-[#edf3e9] no-underline"
+            aria-label="Open order basket"
+          >
+            <ShoppingBasket size={18} />
+          </Link>
+        )}
+        <NotificationBell />
+        <ProfileMenu />
       </div>
       <MobileMenuToggle open={menuOpen} onToggle={onToggleMenu} toggleRef={toggleRef} />
     </>
@@ -379,11 +397,13 @@ export function PublicHeader() {
   const { user, loading, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
+  // Prefer logged-out center links until auth resolves — avoids empty/role flash on public routes.
   const centerItems = !loading && user ? centerNavForRole(user.role) : LOGGED_OUT_CENTER;
+  const overlayUser = !loading && user ? { name: user.name, role: user.role } : null;
 
   return (
     <header className="sticky top-0 z-50 border-b border-[#e4e7da] bg-[#fffdf8]" data-testid="site-header">
-      <div className={`${SHELL} relative flex h-16 flex-nowrap items-center gap-3 lg:h-[4.25rem] lg:gap-4`}>
+      <div className={`${MARKETING_SHELL} relative flex h-16 flex-nowrap items-center gap-3 lg:h-[4.25rem] lg:gap-4`}>
         <div className="flex shrink-0 items-center gap-2">
           <BrandMark />
           {!loading && user && (
@@ -410,7 +430,7 @@ export function PublicHeader() {
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         navItems={centerItems}
-        user={user ? { name: user.name, role: user.role } : null}
+        user={overlayUser}
         onLogout={() => void logout()}
         toggleRef={toggleRef}
       />
@@ -420,8 +440,8 @@ export function PublicHeader() {
 
 export function PublicFooter() {
   return (
-    <footer className="border-t border-[#dbe4d7] bg-[#eef4ea]">
-      <div className={`${SHELL} grid gap-6 py-9 md:grid-cols-2`}>
+    <footer className="border-t border-[#dbe4d7] bg-[#eef4ea]" data-testid="site-footer">
+      <div className={`${MARKETING_SHELL} grid gap-6 py-9 md:grid-cols-2`}>
         <div>
           <BrandMark />
           <p className="mt-3 max-w-md text-sm leading-6 text-[#57705e]">
@@ -449,10 +469,11 @@ export function PageFrame({ children }: { children: ReactNode }) {
 }
 
 export function WorkspaceHeader({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
-  const { user, logout } = useAuth();
-  const compactNav = centerNavForRole(user?.role);
+  const { user, loading, logout } = useAuth();
+  const compactNav = !loading && user ? centerNavForRole(user.role) : LOGGED_OUT_CENTER;
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const overlayUser = !loading && user ? { name: user.name, role: user.role } : null;
 
   return (
     <header className="sticky top-0 z-50 border-b border-[#dde4d9] bg-[#fffdf8]" data-testid="site-header">
@@ -474,16 +495,22 @@ export function WorkspaceHeader({ title, description, children }: { title: strin
         />
 
         <div className="hidden shrink-0 flex-wrap items-center gap-2 lg:flex">
-          <NotificationBell />
-          <ProfileMenu />
-          {children}
+          {loading || !user ? (
+            <LoggedOutAuthActions source="WorkspaceHeader" />
+          ) : (
+            <>
+              <NotificationBell />
+              <ProfileMenu />
+              {children}
+            </>
+          )}
         </div>
       </div>
       <MobileMenuOverlay
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         navItems={compactNav}
-        user={user ? { name: user.name, role: user.role } : null}
+        user={overlayUser}
         onLogout={() => void logout()}
         toggleRef={toggleRef}
       />
