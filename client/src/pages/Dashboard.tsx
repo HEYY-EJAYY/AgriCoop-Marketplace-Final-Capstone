@@ -746,7 +746,7 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   const cooperativeRemoved = user?.cooperativeId != null && !assignedCooperative;
   const needsCooperative = user?.cooperativeId == null || cooperativeRemoved;
   const sellerCooperativeName = assignedCooperative?.name
-    ?? (cooperativeRemoved ? "Cooperative removed — choose another" : "Not assigned — request a cooperative before publishing");
+    ?? (cooperativeRemoved ? "Your cooperative was removed. Choose another before publishing new listings." : "Not assigned — request a cooperative before publishing");
   const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true });
   const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFiles, setImageFiles] = useState<File[]>([]); const [imageError, setImageError] = useState("");
   const uploadImage = trpc.products.uploadImage.useMutation();
