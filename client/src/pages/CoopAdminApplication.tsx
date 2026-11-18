@@ -1,0 +1,322 @@
+import { useMemo, useState } from "react";
+import { Link } from "wouter";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
+import { WorkspaceHeader, shellContainerClass } from "@/components/AgriShell";
+import { CooperativeSelect, type CooperativeSelectValue } from "@/components/CooperativeSelect";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { supabase } from "@/lib/supabase";
+import { trpc } from "@/lib/trpc";
+import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { COOP_ADMIN_APPLICATION_BUCKET, COOP_ADMIN_APPLICATION_MAX_BYTES } from "@shared/coopAdminApplication";
+
+type LocalImage = {
+  file: File;
+  previewUrl: string;
+  contentType: "image/jpeg" | "image/png" | "image/webp";
+};
+
+async function compressImage(file: File): Promise<LocalImage> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("Use a JPEG, PNG, or WebP image.");
+  }
+  if (file.size <= COOP_ADMIN_APPLICATION_MAX_BYTES && file.type !== "image/png") {
+    return { file, previewUrl: URL.createObjectURL(file), contentType: file.type as LocalImage["contentType"] };
+  }
+  const bitmap = await createImageBitmap(file);
+  const maxEdge = 1600;
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not process the image.");
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", 0.82));
+  if (!blob) throw new Error("Could not compress the image.");
+  if (blob.size > COOP_ADMIN_APPLICATION_MAX_BYTES) {
+    throw new Error("Each image must be 5 MB or smaller after compression.");
+  }
+  const next = new File([blob], file.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
+  return { file: next, previewUrl: URL.createObjectURL(next), contentType: "image/jpeg" };
+}
+
+export default function CoopAdminApplication() {
+  const { user, loading } = useAuth();
+  const utils = trpc.useUtils();
+  const mine = trpc.officerApplications.mine.useQuery(undefined, {
+    enabled: !!user && user.role === "buyer" && user.requestedRole === "admin",
+  });
+  const createIntent = trpc.officerApplications.createUploadIntent.useMutation();
+  const submit = trpc.officerApplications.submit.useMutation({
+    onSuccess: () => {
+      toast.success("Application submitted for review.");
+      void utils.officerApplications.mine.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+
+  const [fullName, setFullName] = useState(user?.name ?? "");
+  const [positionTitle, setPositionTitle] = useState("");
+  const [coop, setCoop] = useState<CooperativeSelectValue>({
+    cooperativeId: null,
+    newCooperativeName: "",
+    newCooperativeLocation: "Philippines",
+    addNew: false,
+  });
+  const [idImage, setIdImage] = useState<LocalImage | null>(null);
+  const [proofImage, setProofImage] = useState<LocalImage | null>(null);
+  const [coopSuggestion, setCoopSuggestion] = useState<{
+    id: number;
+    name: string;
+    normalizedName: string;
+    location: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const pending = mine.data?.application.status === "pending";
+  const awaiting = !mine.data || mine.data.application.status === "awaiting_documents" || mine.data.application.status === "rejected";
+
+  const canSubmit = useMemo(() => (
+    fullName.trim().length >= 2
+    && positionTitle.trim().length >= 2
+    && (coop.cooperativeId || (coop.addNew && coop.newCooperativeName.trim().length >= 3))
+    && idImage
+    && proofImage
+  ), [fullName, positionTitle, coop, idImage, proofImage]);
+
+  const onPick = async (kind: "id" | "proof", file: File | null) => {
+    if (!file) return;
+    try {
+      const compressed = await compressImage(file);
+      if (kind === "id") {
+        if (idImage) URL.revokeObjectURL(idImage.previewUrl);
+        setIdImage(compressed);
+      } else {
+        if (proofImage) URL.revokeObjectURL(proofImage.previewUrl);
+        setProofImage(compressed);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not read that image.");
+    }
+  };
+
+  const uploadOne = async (kind: "id" | "proof", image: LocalImage) => {
+    const intent = await createIntent.mutateAsync({
+      kind,
+      contentType: image.contentType,
+      fileSizeBytes: image.file.size,
+    });
+    const { error } = await supabase.storage
+      .from(COOP_ADMIN_APPLICATION_BUCKET)
+      .uploadToSignedUrl(intent.storagePath, intent.uploadToken, image.file, {
+        contentType: image.contentType,
+        upsert: true,
+      });
+    if (error) throw error;
+    return intent;
+  };
+
+  const buildSubmitPayload = (
+    idIntent: { storagePath: string; uploadIntent: string },
+    proofIntent: { storagePath: string; uploadIntent: string },
+    confirmSimilarNormalizedName?: string,
+  ) => {
+    const payload: Parameters<typeof submit.mutateAsync>[0] = {
+      fullName: fullName.trim(),
+      positionTitle: positionTitle.trim(),
+      cooperativeId: coop.addNew ? undefined : coop.cooperativeId ?? undefined,
+      newCooperativeName: coop.addNew ? coop.newCooperativeName.trim() : undefined,
+      newCooperativeLocation: coop.addNew ? (coop.newCooperativeLocation.trim() || "Philippines") : undefined,
+      idDocumentPath: idIntent.storagePath,
+      proofDocumentPath: proofIntent.storagePath,
+      idUploadIntent: idIntent.uploadIntent,
+      proofUploadIntent: proofIntent.uploadIntent,
+    };
+    if (confirmSimilarNormalizedName) {
+      payload.confirmSimilarNormalizedName = confirmSimilarNormalizedName;
+    }
+    return payload;
+  };
+
+  const runSubmit = async (
+    idIntent: { storagePath: string; uploadIntent: string },
+    proofIntent: { storagePath: string; uploadIntent: string },
+    confirmSimilarNormalizedName?: string,
+  ) => {
+    try {
+      await submit.mutateAsync(buildSubmitPayload(idIntent, proofIntent, confirmSimilarNormalizedName));
+      setCoopSuggestion(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Submit failed.";
+      const suggestionMatch = /Did you mean "([^"]+)"/i.exec(message);
+      if (suggestionMatch && coop.addNew) {
+        const list = await utils.cooperatives.listActive.fetch();
+        const found = list.find(row => row.name === suggestionMatch[1]);
+        if (found) {
+          setCoopSuggestion({
+            id: found.id,
+            name: found.name,
+            normalizedName: found.normalizedName,
+            location: found.location,
+          });
+          return;
+        }
+      }
+      throw error;
+    }
+  };
+
+  const onSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!idImage || !proofImage || !canSubmit) return;
+    setBusy(true);
+    try {
+      const idIntent = await uploadOne("id", idImage);
+      const proofIntent = await uploadOne("proof", proofImage);
+      await runSubmit(idIntent, proofIntent);
+    } catch (error) {
+      if (error instanceof Error && /Did you mean "/i.test(error.message) && coop.addNew) return;
+      toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="grid min-h-[40vh] place-items-center"><Loader2 className="animate-spin text-[#4e8257]" /></div>;
+  }
+  if (!user || user.role !== "buyer" || user.requestedRole !== "admin") {
+    return (
+      <>
+        <WorkspaceHeader title="Cooperative Admin application" description="Applicant access only." />
+        <main className={`${shellContainerClass} py-10`}>
+          <div className="agri-card p-8 text-center">
+            <h1 className="font-display text-3xl font-bold text-[#254f37]">Applicant access required</h1>
+            <p className="mt-3 text-[#65766b]">Register as Cooperative Admin, verify your email, then return here.</p>
+            <Link href="/dashboard" className="agri-button mt-6 inline-flex min-h-11 no-underline">Back to dashboard</Link>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <WorkspaceHeader
+        title="Complete your Cooperative Admin application"
+        description="Upload your ID and proof of position. Officer Admin access is granted only after SuperAdmin approval."
+      />
+      <main className={`${shellContainerClass} py-8`}>
+        {pending ? (
+          <div className="agri-card p-6" role="status">
+            <h1 className="font-display text-2xl font-bold text-[#254f37]">Application pending</h1>
+            <p className="mt-3 text-sm text-[#5f7164]">
+              Your application is waiting for approval. We will contact you once it is reviewed.
+            </p>
+          </div>
+        ) : (
+          <form className="agri-card space-y-5 p-6" onSubmit={onSubmit}>
+            {mine.data?.application.status === "rejected" && (
+              <p className="rounded-xl bg-[#fff1ec] p-3 text-sm text-[#a34838]" role="alert">
+                Previous application rejected{mine.data.application.rejectionReason ? `: ${mine.data.application.rejectionReason}` : "."} Update your documents and resubmit.
+              </p>
+            )}
+            <label className="field-label">Full name
+              <input className="field-control" required value={fullName} onChange={e => setFullName(e.target.value)} />
+            </label>
+            <CooperativeSelect
+              value={coop}
+              onChange={next => {
+                setCoop(next);
+                setCoopSuggestion(null);
+              }}
+              required
+            />
+            {coopSuggestion && (
+              <section role="alertdialog" aria-labelledby="coop-admin-app-did-you-mean-title" className="rounded-xl border border-[#e2c48a] bg-[#fff8ea] p-4">
+                <h2 id="coop-admin-app-did-you-mean-title" className="font-bold text-[#6a4e16]">Did you mean…?</h2>
+                <p className="mt-2 text-sm text-[#6a4e16]">
+                  A similar cooperative already exists: <strong>{coopSuggestion.name}</strong> ({coopSuggestion.location}).
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="agri-button text-sm"
+                    disabled={busy}
+                    onClick={() => {
+                      if (!idImage || !proofImage) return;
+                      setBusy(true);
+                      void (async () => {
+                        try {
+                          const idIntent = await uploadOne("id", idImage);
+                          const proofIntent = await uploadOne("proof", proofImage);
+                          await runSubmit(idIntent, proofIntent, coopSuggestion.normalizedName);
+                        } catch (error) {
+                          toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
+                        } finally {
+                          setBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Use {coopSuggestion.name}
+                  </button>
+                  <button
+                    type="button"
+                    className="agri-ghost text-sm"
+                    disabled={busy}
+                    onClick={() => {
+                      if (!idImage || !proofImage) return;
+                      const normalized = coop.newCooperativeName.trim().toLowerCase().replace(/[^a-z0-9]+/gi, "");
+                      setBusy(true);
+                      void (async () => {
+                        try {
+                          const idIntent = await uploadOne("id", idImage);
+                          const proofIntent = await uploadOne("proof", proofImage);
+                          await runSubmit(idIntent, proofIntent, normalized || coopSuggestion.normalizedName);
+                        } catch (error) {
+                          toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
+                        } finally {
+                          setBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Create mine anyway
+                  </button>
+                </div>
+              </section>
+            )}
+            <label className="field-label">Position or title
+              <input className="field-control" required value={positionTitle} onChange={e => setPositionTitle(e.target.value)} placeholder="e.g. Board Secretary" />
+            </label>
+            <div className="grid gap-4 md:grid-cols-2">
+              {(["id", "proof"] as const).map(kind => {
+                const image = kind === "id" ? idImage : proofImage;
+                return (
+                  <label key={kind} className="field-label">
+                    {kind === "id" ? "Government ID image" : "Proof of position image"}
+                    <input
+                      className="field-control"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={e => void onPick(kind, e.target.files?.[0] ?? null)}
+                    />
+                    {image && (
+                      <img src={image.previewUrl} alt="" className="mt-3 max-h-48 w-full rounded-xl object-cover" />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            <button type="submit" className="agri-button min-h-11" disabled={!canSubmit || busy || !awaiting}>
+              {busy ? <Loader2 className="animate-spin" size={16} /> : null}
+              Submit application
+            </button>
+          </form>
+        )}
+      </main>
+    </>
+  );
+}

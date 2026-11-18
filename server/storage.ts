@@ -212,7 +212,11 @@ export async function storageGetSignedUrl(
 
 export async function storageCreateSignedUploadUrl(key: string, bucketName = PAYMENT_PROOF_BUCKET) {
   assertConfigured();
-  if (bucketName !== PAYMENT_PROOF_BUCKET && bucketName !== PROFILE_VERIFICATION_BUCKET) {
+  if (
+    bucketName !== PAYMENT_PROOF_BUCKET
+    && bucketName !== PROFILE_VERIFICATION_BUCKET
+    && bucketName !== "coop-admin-applications"
+  ) {
     throw new Error("Signed upload capabilities are not enabled for this Storage bucket.");
   }
   await ensureBucket(bucketName, false);
@@ -228,7 +232,11 @@ export async function storageCreateSignedUploadUrl(key: string, bucketName = PAY
 
 export async function storageDownloadPrivateObject(key: string, bucketName: string) {
   assertConfigured();
-  if (bucketName !== PAYMENT_PROOF_BUCKET && bucketName !== PROFILE_VERIFICATION_BUCKET) {
+  if (
+    bucketName !== PAYMENT_PROOF_BUCKET
+    && bucketName !== PROFILE_VERIFICATION_BUCKET
+    && bucketName !== "coop-admin-applications"
+  ) {
     throw new Error("Private evidence downloads are not enabled for this Storage bucket.");
   }
   await ensureBucket(bucketName, false);

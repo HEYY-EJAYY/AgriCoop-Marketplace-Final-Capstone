@@ -560,6 +560,9 @@ function BuyerDashboard() {
   });
   const utils = trpc.useUtils();
   const [quotedPaymentMethod, setQuotedPaymentMethod] = useState<"cash_pickup" | "cash_delivery">("cash_pickup");
+  const officerApplication = trpc.officerApplications.mine.useQuery(undefined, {
+    enabled: !!buyerUser && buyerUser.role === "buyer" && buyerUser.requestedRole === "admin",
+  });
   const ordersQuery = trpc.orders.buyerMine.useQuery();
   const { data: orders = [], isLoading } = ordersQuery;
   const quotationsQuery = trpc.quotations.buyerMine.useQuery();
@@ -596,11 +599,20 @@ function BuyerDashboard() {
   return <>
     <WorkspaceHeader title="Buyer workspace" description="Track direct orders, quotation requests, and face-to-face coordination."/>
     <main className={`${shellContainerClass} py-8`}>
-      {buyerUser?.requestedRole === "admin" && (
+      {buyerUser?.requestedRole === "admin" && officerApplication.data?.application.status !== "approved" && (
         <div className="mb-6 rounded-2xl border border-[#d7e4cf] bg-[#f3f8ef] p-4" role="status">
-          <p className="font-bold text-[#2f5a3d]">Complete your Cooperative Admin application</p>
-          <p className="mt-1 text-sm text-[#5f7164]">Upload your ID and proof of position so a SuperAdmin can review Officer Admin access.</p>
-          <Link href="/applications/cooperative-admin" className="agri-button mt-3 inline-flex min-h-11 text-sm no-underline">Open application</Link>
+          {officerApplication.data?.application.status === "pending" ? (
+            <>
+              <p className="font-bold text-[#2f5a3d]">Application waiting for approval</p>
+              <p className="mt-1 text-sm text-[#5f7164]">Your Cooperative Admin documents are under review. We will contact you once they are reviewed.</p>
+            </>
+          ) : (
+            <>
+              <p className="font-bold text-[#2f5a3d]">Complete your Cooperative Admin application</p>
+              <p className="mt-1 text-sm text-[#5f7164]">Upload your ID and proof of position so a SuperAdmin can review Officer Admin access.</p>
+              <Link href="/applications/cooperative-admin" className="agri-button mt-3 inline-flex min-h-11 text-sm no-underline">Open application</Link>
+            </>
+          )}
         </div>
       )}
       <div className="grid gap-4 md:grid-cols-3">

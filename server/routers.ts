@@ -1113,13 +1113,16 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({ name: z.string().min(3).max(180), location: z.string().min(3).max(180), description: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        requireOperationalRole(ctx.user, ["superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         const normalized = normalizeCooperativeName(input.name);
         await db.insert(cooperatives).values({
-          ...input,
           name: normalized.displayName,
           normalizedName: normalized.normalizedName,
+          location: input.location,
+          description: input.description,
+          source: "staff",
+          createdBy: actor.id,
         });
         return { success: true };
       }),

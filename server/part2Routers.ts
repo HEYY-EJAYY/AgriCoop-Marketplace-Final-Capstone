@@ -454,6 +454,7 @@ export const adminAccountsRouter = router({
       }
 
       let inviteLink: string | null = null;
+      let inviteEmailSent = false;
       const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
         type: "recovery",
         email: input.email,
@@ -462,9 +463,13 @@ export const adminAccountsRouter = router({
       if (!linkError && linkData?.properties?.action_link) {
         inviteLink = linkData.properties.action_link;
         try {
-          await createPublicAuthClient().auth.resetPasswordForEmail(input.email, { redirectTo });
+          const { error: inviteEmailError } = await createPublicAuthClient().auth.resetPasswordForEmail(
+            input.email,
+            { redirectTo },
+          );
+          inviteEmailSent = !inviteEmailError;
         } catch {
-          // Keep one-time link for the creating admin if email delivery fails.
+          inviteEmailSent = false;
         }
       }
 
@@ -557,11 +562,10 @@ export const adminAccountsRouter = router({
         });
       }
 
-      // Never log inviteLink. Return only when email path is unavailable.
-      const emailLikelySent = !linkError;
+      // Never log inviteLink. Return only when the set-password email did not send.
       return {
         success: true,
-        inviteLink: emailLikelySent ? null : inviteLink,
+        inviteLink: inviteEmailSent ? null : inviteLink,
       };
     }),
 });

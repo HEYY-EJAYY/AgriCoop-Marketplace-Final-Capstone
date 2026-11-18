@@ -147,3 +147,24 @@ This supersedes the earlier assumption that checkout online payment uses the sel
 - Checkout offers online payment only when online is enabled and the active account has a QR. Buyers receive a short-lived signed QR URL. Anonymous users and sellers do not.
 - Sellers see payment status as read-only, including “Waiting for payment confirmation” while unpaid. Officers verify receipts and record cash received. Sellers are notified for fulfillment, then again when an officer confirms payment.
 - Listing flags `allowsPickup` and `allowsDelivery` stay seller-controlled. `acceptsOnlinePayment` is forced off on create/update and is not a marketplace badge.
+
+## Part 2 — registration, Cooperative Admin applications, Add account, order archive (2026-11-18)
+
+### Roles (no fifth role)
+- Registration choices: **Buyer**, **Seller**, **Cooperative Admin**.
+- **Cooperative Admin** is the existing application role `admin`, displayed as **Officer Admin**. Choosing it at signup never grants Admin privileges: the account is created as **Buyer** with `requestedRole = admin` and an application in `awaiting_documents`.
+- After SuperAdmin approval, the user becomes `admin` (Officer Admin) with the **same global Admin powers as today**. Scoping Officer Admins to their own cooperative is **not** implemented in Part 2.
+
+### Cooperatives at signup
+- Searchable active-cooperative select + “My cooperative isn't listed” add-new. Required for Seller and Cooperative Admin; optional for Buyers.
+- New cooperatives use Part 1 rules (normalize, Did you mean…?, rate limit, `source = 'user'`, `createdBy`). Anonymous visitors have no direct write access.
+
+### Applications storage & notifications
+- ID and proof images live in private bucket `coop-admin-applications`, path prefixed by Auth user id. Readable only by the uploader and SuperAdmin via signed URLs after server authz. Officer Admins / sellers / buyers cannot read others' files.
+- Approve/reject notifies via the existing in-app `create_notification` path. **No app transactional email provider exists** beyond Supabase Auth (signup / recovery). Application decisions do not send a separate product email.
+
+### Add account
+- Admin may create Buyer and Seller. SuperAdmin may also create Officer Admin. Nobody creates SuperAdmin from the UI. Accounts are created email-confirmed with a set-password invitation; if email cannot be sent, the creating admin sees a one-time copyable link (never logged/stored).
+
+### Buyer order archive
+- Per-user `threadStates` channel `order`. Archiving never changes seller/admin views, order status, payment, or history. Orders are never deleted.
