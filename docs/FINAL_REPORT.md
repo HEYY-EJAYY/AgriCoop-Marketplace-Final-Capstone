@@ -2,25 +2,25 @@
 
 Branch: `finish/agricoop-complete`  
 Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
-Updated: 2026-11-18 (Part 2 Item E documentation polish)
+Updated: 2026-11-18 (Part 2 Item E verified — production READY)
 
 ---
 
 ## Part 2 — registration, applications, add account, order archive (2026-11-18)
 
 **Branch:** `finish/agricoop-complete`  
+**Production:** READY — https://agricoop-marketplace-final-capstone.vercel.app (`275dfe7`, `dpl_HwEghTtkP5s6eo2vL7gqTVz2SUUm`)  
 **Design freeze:** No new marketing/shell layout changes in Part 2; additive DB and targeted surfaces only (Auth coop select, Cooperative Admin application, SuperAdmin Applications tab, buyer Activity Active/Archived, Add account). Officer Admin (`admin` role) remains **global** — not scoped to a single cooperative.
 
 ### Deliverables (A–E)
 
 | Item | Scope | Commit |
 |------|--------|--------|
-| **A** | Cooperative choice at registration (searchable select, add-new, Did you mean…?, `source`/`createdBy`) | `4930460` |
-| **B** | Registration intent → `upsertUser` with `requestedRole` for Cooperative Admin applicants | `61dc596` |
-| **C** | Buyer per-user order archive via `threadStates.channel = 'order'`; Activity Active/Archived | `51a5879` |
-| **D** | Admin-managed account creation (Buyer/Seller; SuperAdmin may create Officer Admin) + invite recovery | `c4994ad` |
-| **D₂** | Cooperative Admin application + SuperAdmin review (`/applications/cooperative-admin`, dashboard `?tab=applications`) | `54ecacd` |
-| **E** | Storage key hardening (`{openId}/…`), `coop-admin-applications` bucket ensure, access tests, docs/MANUAL_SQL/PDF | _(this commit)_ |
+| **A** | Cooperative choice at registration (searchable select, add-new, Did you mean…?, `source`/`createdBy`) | `4930460` (+ `61dc596` upsert intent, `9e95cd6` coop persist) |
+| **D** | Buyer per-user order archive via `threadStates.channel = 'order'`; Activity Active/Archived | `51a5879` |
+| **C** | Admin-managed account creation (Buyer/Seller; SuperAdmin may create Officer Admin) + invite recovery | `c4994ad` |
+| **B** | Cooperative Admin application + SuperAdmin review (`/applications/cooperative-admin`, Applications tab) | `54ecacd` |
+| **E** | Storage keys, access/RLS tests, MANUAL_SQL BLOCK 20–21, docs/PDF, prod migrate + READY, CI green | `b98f1f0` → `275dfe7` |
 
 ### Database (additive only)
 
@@ -29,7 +29,7 @@ Updated: 2026-11-18 (Part 2 Item E documentation polish)
 | `20261118120000_part2_registration_applications_order_archive.sql` | **BLOCK 20** | `cooperativeAdminApplications`, `requestedRole`, coop provenance, private application bucket + RLS, notification types, `create_user_cooperative` |
 | `20261118121000_buyer_order_archive_channel.sql` | **BLOCK 21** | `threadStates` channel check includes `order` |
 
-**Production apply status:** Pending owner run of BLOCK 20–21 in Supabase SQL Editor (parent agent may apply via MCP separately). No DROP/TRUNCATE/unscoped DELETE.
+**Production apply status:** **Applied** via Supabase MCP (`part2_registration_applications_order_archive`, `part2_notification_allowlist_coop_admin_apps`, `buyer_order_archive_channel`). Verified: apps table, `requestedRole`, coop `source`, `create_user_cooperative`, private `coop-admin-applications` bucket, `threadStates` channel includes `order`.
 
 ### Item E code polish (uncommitted → this commit)
 
@@ -53,11 +53,18 @@ Updated: 2026-11-18 (Part 2 Item E documentation polish)
 
 Regenerated via `pnpm run docs:system` (`scripts/build-system-docs.mjs` → `docs/AgriCoop_System_Documentation.pdf`) with Part 2 registration/application/archive notes in §3.
 
-### Deploy / verify blockers
+### Deploy / verification (Item E)
 
-- Apply **BLOCK 20** then **BLOCK 21** on production Postgres before Cooperative Admin uploads and buyer archive persist correctly.
-- Ensure `write_audit_log` allowlist includes `user_access_updated` for SuperAdmin application decisions (parent migration).
-- QA password env vars still required for authenticated Playwright (`QA_*`).
+| Gate | Result |
+|------|--------|
+| Production deploy | **READY** `dpl_HwEghTtkP5s6eo2vL7gqTVz2SUUm` @ `275dfe7` |
+| DB Part 2 schema | Applied + SQL verified on linked project |
+| DB RLS harness | **Green** https://github.com/HEYY-EJAYY/AgriCoop-Marketplace-Final-Capstone/actions/runs/44238913529 — 381 unit + 15 harness tests |
+| Auth smoke | Create-account shows Buyer/Seller/Cooperative Admin + CooperativeSelect + add-new |
+| Application review audit | Uses allowlisted `user_access_updated` (no new audit action names) |
+| QA leftover rows | No `hotfix_qa` / `part2_qa` app users remaining |
+
+Authenticated Playwright still needs `QA_*` secrets when exercised. Recommend keeping **DB RLS harness** as a required check.
 
 Companion: `docs/UX_DECISIONS.md` (Part 2), `docs/UX_AUDIT.md` (Part 2 surfaces), `docs/MANUAL_SQL.md` BLOCK 20–21.
 
