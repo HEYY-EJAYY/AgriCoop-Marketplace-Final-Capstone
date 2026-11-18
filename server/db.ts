@@ -102,8 +102,15 @@ export async function applyRequestDatabaseSettings(
   authUserId: string | null,
 ) {
   const { role, claims, subject } = buildRequestDatabaseClaims(authUserId);
+  // set_config('role', ...) alone does not change privilege checks. Column-level
+  // GRANTs for authenticated/anon only apply after SET LOCAL ROLE. Without it,
+  // registration INSERT fails with "permission denied for table users" while
+  // marketplace SELECTs still work under the login role's broader grants.
+  const localRole = role === "authenticated" ? "authenticated" : "anon";
   await inDatabasePhase("request_role_switch", () =>
     tx.execute(sql`select set_config('role', ${role}, true)`));
+  await inDatabasePhase("request_set_local_role", () =>
+    tx.execute(sql.raw(`set local role ${localRole}`)));
   await inDatabasePhase("request_search_path", () =>
     tx.execute(sql`select set_config('search_path', 'public, agricoop_app', true)`));
   await inDatabasePhase("request_jwt_claims", () =>
@@ -191,8 +198,7 @@ export async function upsertUser(user: InsertUser, executor?: RootDb | RootTrans
       name = coalesce(excluded.name, agricoop_app.users.name),
       email = coalesce(excluded.email, agricoop_app.users.email),
       "loginMethod" = coalesce(excluded."loginMethod", agricoop_app.users."loginMethod"),
-      "lastSignedIn" = excluded."lastSignedIn",
-      "updatedAt" = now()
+      "lastSignedIn" = excluded."lastSignedIn"
     returning role, "approvalStatus", "cooperativeId"
   `);
   const persisted = (rows as unknown as Array<{

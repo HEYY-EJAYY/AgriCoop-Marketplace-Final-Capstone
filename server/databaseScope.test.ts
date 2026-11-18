@@ -46,6 +46,7 @@ describe("request-scoped PostgreSQL identity", () => {
 
     expect(tx.queries).toEqual([
       { sql: "select set_config('role', $1, true)", params: ["authenticated"] },
+      { sql: "set local role authenticated", params: [] },
       { sql: "select set_config('search_path', 'public, agricoop_app', true)", params: [] },
       {
         sql: "select set_config('request.jwt.claims', $1, true)",
@@ -75,12 +76,13 @@ describe("request-scoped PostgreSQL identity", () => {
     await applyRequestDatabaseSettings(tx, firstIdentity);
     await applyRequestDatabaseSettings(tx, null);
 
-    expect(tx.queries.slice(4)).toEqual([
+    expect(tx.queries.slice(5)).toEqual([
       { sql: "select set_config('role', $1, true)", params: ["anon"] },
+      { sql: "set local role anon", params: [] },
       { sql: "select set_config('search_path', 'public, agricoop_app', true)", params: [] },
       { sql: "select set_config('request.jwt.claims', $1, true)", params: [JSON.stringify({ role: "anon" })] },
       { sql: "select set_config('request.jwt.claim.sub', $1, true)", params: [""] },
     ]);
-    expect(tx.queries.slice(4).some(query => query.params.includes(firstIdentity))).toBe(false);
+    expect(tx.queries.slice(5).some(query => query.params.includes(firstIdentity))).toBe(false);
   });
 });

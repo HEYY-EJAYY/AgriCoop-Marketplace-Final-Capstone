@@ -3475,7 +3475,9 @@ END $$;
 
 **Root cause (after deadlock fix):** `upsertUser` used Drizzle `insert(users).values(...)`, which expands to every `agricoop_app.users` column (including `onlinePayment*` as `DEFAULT`). BLOCK 17 revoked authenticated INSERT/SELECT on those columns → Postgres `42501` during provisioning. Correlation showed the expanded INSERT in logs.
 
-**Fix (code):** `upsertUser` uses an explicit SQL column list:
-`openId, name, email, loginMethod, role, approvalStatus, cooperativeId, lastSignedIn` only.
+**Fix (code):**
+1. `upsertUser` uses an explicit SQL column list:
+   `openId, name, email, loginMethod, role, approvalStatus, cooperativeId, lastSignedIn` only.
+2. `applyRequestDatabaseSettings` now runs `SET LOCAL ROLE authenticated|anon` after `set_config('role', ...)`. Column-level GRANTs only apply to the active role; without `SET LOCAL ROLE`, registration hit `permission denied for table users` while marketplace SELECTs still worked under the login role.
 
 **Migration:** `supabase/migrations/20261118043000_registration_insert_column_contract.sql` (notice guard; no payment GRANT restore).

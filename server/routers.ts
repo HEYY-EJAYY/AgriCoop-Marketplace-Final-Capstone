@@ -393,6 +393,10 @@ export const appRouter = router({
         } catch (error) {
           const cleanupFailed = error instanceof RegistrationCleanupError;
           const cause = error instanceof Error ? error.cause : undefined;
+          const nestedCause = cause instanceof Error ? cause.cause : undefined;
+          const postgresCarrier = [error, cause, nestedCause].find(
+            candidate => typeof candidate === "object" && candidate && "code" in candidate,
+          ) as { code?: unknown; detail?: unknown; message?: unknown } | undefined;
           console.error("[registration] provisioning_failed", {
             correlationId,
             cleanupFailed,
@@ -404,11 +408,16 @@ export const appRouter = router({
               : typeof error === "object" && error && "causeMessage" in error
                 ? String((error as { causeMessage: unknown }).causeMessage)
                 : undefined,
-            postgresErrorCode: typeof error === "object" && error && "postgresErrorCode" in error
-              ? String((error as { postgresErrorCode: unknown }).postgresErrorCode)
-              : typeof cause === "object" && cause && "code" in cause
-                ? String((cause as { code: unknown }).code)
-                : undefined,
+            nestedCauseType: nestedCause instanceof Error ? nestedCause.name : typeof nestedCause,
+            nestedCauseMessage: nestedCause instanceof Error ? nestedCause.message.slice(0, 400) : undefined,
+            postgresErrorCode: String(
+              (typeof error === "object" && error && "postgresErrorCode" in error
+                ? (error as { postgresErrorCode: unknown }).postgresErrorCode
+                : undefined)
+              ?? postgresCarrier?.code
+              ?? "unknown",
+            ),
+            postgresDetail: typeof postgresCarrier?.detail === "string" ? postgresCarrier.detail.slice(0, 240) : undefined,
             databasePhase: typeof cause === "object" && cause && "databasePhase" in cause
               ? String((cause as { databasePhase: unknown }).databasePhase)
               : undefined,
