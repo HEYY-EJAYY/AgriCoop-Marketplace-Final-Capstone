@@ -2,6 +2,9 @@
 /**
  * Apply bootstrap + ordered migrations to TEST_DATABASE_URL (localhost only).
  * Usage: TEST_DATABASE_URL=postgresql://agricoop_login:agricoop_test_password@127.0.0.1:55432/agricoop_test node scripts/db-test/setup.mjs
+ *
+ * supabase/migrations/*.sql is the executable form of docs/MANUAL_SQL.md BLOCKs
+ * (anon / authenticated / service_role grants + RLS). Do not point at production.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";

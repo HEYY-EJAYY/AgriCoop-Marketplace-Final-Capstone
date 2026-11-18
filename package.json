@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": "22.x",
+    "pnpm": "10.4.1"
+  },
   "scripts": {
     "dev": "cross-env DOTENV_CONFIG_PATH=.env.local NODE_ENV=development tsx watch server/_core/index.ts",
     "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && esbuild server/_core/vercelApi.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/vercel-api.js",
@@ -17,8 +21,9 @@
     "db:generate": "drizzle-kit generate",
     "db:test:up": "docker compose -f scripts/db-test/docker-compose.yml up -d --wait",
     "db:test:down": "docker compose -f scripts/db-test/docker-compose.yml down -v",
+    "db:test:wait": "node scripts/db-test/wait.mjs",
     "db:test:setup": "node scripts/db-test/setup.mjs",
-    "db:test:rls": "cross-env TEST_DATABASE_URL=postgresql://agricoop_login:agricoop_test_password@127.0.0.1:55432/agricoop_test vitest run server/dbHarness.rls.test.ts server/authLoginLookup.test.ts",
+    "db:test:rls": "cross-env TEST_DATABASE_URL=postgresql://agricoop_login:agricoop_test_password@127.0.0.1:55432/agricoop_test vitest run server/dbHarness.rls.test.ts server/authLoginLookup.test.ts server/paymentGrantContract.test.ts server/registrationScope.test.ts",
     "docs:manual-sql": "node scripts/build-manual-sql.mjs",
     "seed:demo": "cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-demo.ts",
     "seed:defaults": "cross-env DOTENV_CONFIG_PATH=.env.local tsx scripts/seed-defaults.ts",

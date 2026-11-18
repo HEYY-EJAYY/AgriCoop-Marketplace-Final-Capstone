@@ -50,6 +50,7 @@ Updated: 2026-11-18
 | Signup verify | Throwaway `hotfix_qa_signup_20261118_*@example.test` → Buyer + approved + profiles.role_id=1; confirmation deferred (email rate limit); test rows deleted |
 | Marketplace | `cooperativeName` present on listings; `cooperatives.listActive` includes SUTAFACO; filter catalog complete |
 | Access audit | `trpcProcedureAccess` + payment grant contract unit suites pass; Docker RLS harness via GHA (local Docker unavailable on agent host) |
+| DB RLS harness CI | Was failing at `pnpm/action-setup` with exact error: `Multiple versions of pnpm specified` (workflow `version: 9` vs `packageManager` pnpm@10.4.1). Fixed by removing conflicting version input; workflow now bootstraps throwaway Postgres + migrations and must execute DB-backed grant/login/coop tests. |
 
 ---
 

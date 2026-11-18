@@ -1,3 +1,6 @@
+# Throwaway-Postgres RLS / grant harness.
+# Uses only the job's service container — never production or Supabase secrets.
+# Does not deploy to Vercel and does not affect Vercel project settings.
 name: DB RLS harness
 
 on:
@@ -9,6 +12,7 @@ on:
 jobs:
   rls-harness:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,21 +28,80 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
+      # Localhost-only throwaway DB (scripts/db-test/safety refuses non-local hosts).
       TEST_DATABASE_URL: postgresql://agricoop_login:agricoop_test_password@127.0.0.1:55432/agricoop_test
+      CI: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No `version:` input — pnpm/action-setup reads package.json "packageManager"
+      # (pnpm@10.4.1). Specifying version: 9 previously failed with:
+      # "Multiple versions of pnpm specified".
+      - name: Setup pnpm from packageManager
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          node-version: "22"
           cache: pnpm
-      - name: Install
+
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Bootstrap throwaway Postgres
+
+      - name: Wait for throwaway Postgres
+        run: node scripts/db-test/wait.mjs
+
+      - name: Bootstrap schema + apply ordered migrations
+        # Executable source of truth for MANUAL_SQL.md BLOCKs is supabase/migrations/*.sql
+        # (same roles: anon, authenticated, service_role + agricoop_login login role).
         run: pnpm run db:test:setup
-      - name: Lint
+
+      - name: Typecheck
         run: pnpm run lint
-      - name: Unit + RLS harness
-        run: pnpm test
+
+      - name: Unit + RLS harness (must execute DB-backed tests)
+        run: |
+          set -euo pipefail
+          echo "TEST_DATABASE_URL is the CI throwaway Postgres service (localhost only; no production secrets)."
+          # Full unit suite (no Playwright). Failures must fail the job.
+          pnpm exec vitest run --reporter=verbose | tee vitest-output.txt
+          # Explicit grant / login / signup / coop / payment contract files (also counted above).
+          pnpm exec vitest run --reporter=verbose \
+            server/dbHarness.rls.test.ts \
+            server/authLoginLookup.test.ts \
+            server/paymentGrantContract.test.ts \
+            server/registrationScope.test.ts \
+            | tee harness-output.txt
+          summary="$(grep -E 'Tests[[:space:]]+[0-9]+' harness-output.txt | tail -n 1 || true)"
+          echo "HARNESS_VITEST_SUMMARY=$summary"
+          executed="$(grep -E '✓|PASS' harness-output.txt | grep -cE '✓' || true)"
+          echo "HARNESS_EXECUTED_PASS_LINES=$executed"
+          # Require DB-backed assertions to have executed (not skipped).
+          if ! grep -q "keeps login columns readable and seller payment columns denied" harness-output.txt; then
+            echo "Missing executed login/payment grant test."
+            exit 1
+          fi
+          if ! grep -q "allows anon marketplace cooperative join fields" harness-output.txt; then
+            echo "Missing executed cooperative public-read test."
+            exit 1
+          fi
+          if ! grep -q "registration insert and login select under authenticated role" harness-output.txt; then
+            echo "Missing executed registration/login role test."
+            exit 1
+          fi
+          if echo "$summary" | grep -Eqi 'failed'; then
+            echo "Harness vitest reported failures."
+            exit 1
+          fi
+          # With TEST_DATABASE_URL set, DB-backed cases must run (no non-zero skip count).
+          if echo "$summary" | grep -Eqi '[1-9][0-9]* skipped'; then
+            echo "Harness summary must not skip DB tests when TEST_DATABASE_URL is set: $summary"
+            exit 1
+          fi
+          if grep -q "marks DB-backed RLS tests as NOT VERIFIED" harness-output.txt; then
+            echo "Harness still marked NOT VERIFIED despite TEST_DATABASE_URL."
+            exit 1
+          fi
+          echo "Harness executed successfully: $summary"
