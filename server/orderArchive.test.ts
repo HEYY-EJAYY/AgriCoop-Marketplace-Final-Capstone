@@ -129,4 +129,53 @@ describe("orders.updateArchive", () => {
     await caller("buyer", 10).orders.buyerMine({ archived: true });
     expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: true, deleted: false });
   });
+
+  it("uses a channel allowed by the deployed check constraint for seller deletes", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    let selectPass = 0;
+    mocks.getDb.mockResolvedValue({
+      select: () => {
+        selectPass += 1;
+        return {
+          from: () => ({
+            where: () => selectPass === 1
+              ? Promise.resolve([{ id: 7 }])
+              : { limit: async () => [] },
+          }),
+        };
+      },
+      insert: () => ({ values: async (value: Record<string, unknown>) => { inserted.push(value); } }),
+    });
+
+    await expect(caller("seller", 10).orders.sellerUpdateArchive({
+      orderIds: [7],
+      action: "delete",
+    })).resolves.toMatchObject({ success: true });
+    expect(inserted[0]).toMatchObject({ channel: "order", threadId: 7, userId: 10 });
+  });
+
+  it("stores quotation deletion using a channel allowed by the deployed check constraint", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    let selectPass = 0;
+    mocks.getDb.mockResolvedValue({
+      select: () => {
+        selectPass += 1;
+        return {
+          from: () => ({
+            where: () => selectPass === 1
+              ? Promise.resolve([{ id: 8 }])
+              : { limit: async () => [] },
+          }),
+        };
+      },
+      insert: () => ({ values: async (value: Record<string, unknown>) => { inserted.push(value); } }),
+    });
+
+    await expect(caller("buyer", 10).quotations.updateState({
+      quotationIds: [8],
+      action: "delete",
+      side: "buyer",
+    })).resolves.toMatchObject({ success: true });
+    expect(inserted[0]).toMatchObject({ channel: "support", threadId: 8, userId: 10 });
+  });
 });

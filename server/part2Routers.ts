@@ -610,7 +610,8 @@ export const orderArchiveRouterExtras = {
 
 async function upsertPerUserThreadState(args: {
   userId: number;
-  channel: "order" | "seller_order" | "quotation";
+  // Keep these labels within thread_states_channel_check; order state is user-scoped.
+  channel: "conversation" | "ticket" | "support" | "order";
   threadId: number;
   action: "archive" | "unarchive" | "delete" | "restore";
 }) {
@@ -714,7 +715,7 @@ export const orderArchiveProcedures = {
       for (const order of owned) {
         await upsertPerUserThreadState({
           userId: ctx.user.id,
-          channel: "seller_order",
+          channel: "order",
           threadId: order.id,
           action: input.action,
         });
@@ -767,7 +768,7 @@ export const quotationArchiveProcedures = {
       for (const row of owned) {
         await upsertPerUserThreadState({
           userId: ctx.user.id,
-          channel: "quotation",
+          channel: "support",
           threadId: row.id,
           action: input.action,
         });

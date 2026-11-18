@@ -11,8 +11,6 @@
 - **Not verified:** The 11 real-database tests were skipped because they require the CI/Postgres harness. The production database and live signup flow were not touched.
 - **Manual action:** None for this stage.
 
-## Remaining stages
-
 ## Stage 1 — B1/B2: shared purchase eligibility
 
 **Status:** PARTIAL
@@ -25,4 +23,16 @@
 - **Not verified:** The 11 real-database tests remain skipped; no production database, Supabase settings, or live user journey was accessed. The requested end-to-end invariant test proving every marketplace result through cart, checkout, and quotation mutations is not yet present.
 - **Manual action:** None for this stage. No migration/data update was generated.
 
-Stages 2–8 have not been implemented or verified yet.
+## Stage 2 — B3/B4/B5/B11: deletion and mutation errors
+
+**Status:** PARTIAL
+
+- **Files changed:** `server/part2Routers.ts`, `server/db.ts`, `server/orderArchive.ts`, `server/orderArchive.test.ts`, `server/part2SecurityProofs.test.ts`, `server/routers.ts`, `server/adminUserDelete.test.ts`, `server/_core/trpc.ts`, `shared/userFacingErrors.ts`, `shared/userFacingErrors.test.ts`, `client/src/pages/Activity.tsx`, `docs/PROGRESS.md`
+- **Tests added/updated:** Regression cases prove seller order and quotation deletion use channels allowed by the existing CHECK constraint; admin user deletion does not delete owner-only cart rows and does not report success if Auth ban fails; mutation SQL errors map to action-specific messages with reference codes. The order-view security assertion now verifies buyer/seller `userId` scoping after sharing the allowed `order` channel.
+- **Fix summary:** `seller_order` and `quotation` were invalid values under `thread_states_channel_check`; per-user seller order states now use `order`, and quotation states use the allowed `support` bucket. Admin deletion no longer attempts to delete another user's cart rows under the owner-only RLS policy; it retains those rows while soft-deleting the account/listings. Auth ban/unban API errors are no longer ignored. Buyers can multi-select, delete, and restore orders/quotations in a Deleted view; in-progress orders show the requested warning. tRPC query failures retain the load message; mutation failures now receive action-specific wording and a short logged reference code.
+- **Grant/constraint review:** `cartItems` grants and RLS allow deletion only by the row owner, explaining the Admin delete failure. User tombstone column grants exist in `20261118190000_user_soft_delete_columns.sql`; staff update policy is in `20261117131000_marketplace_rls_grants.sql`. The existing order-channel expansion is in `20261118121000_buyer_order_archive_channel.sql`. No new migration was created.
+- **Verified:** Node 22.23.5; targeted delete/error tests; `pnpm check`; `pnpm test` (418 passed, 11 skipped); `pnpm build` (passed).
+- **Not verified:** No live Supabase migration catalog, RLS policy, Auth ban, or browser flow was accessed. The 11 real-database tests remain skipped. This confirms code behavior against mocks, not that the live project has applied the prerequisite migrations.
+- **Manual action:** Before live testing, verify the live project has applied the existing order-channel and user-soft-delete migrations above; do not infer migration state from local files.
+
+Stages 3–8 have not been implemented or verified yet.

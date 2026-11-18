@@ -197,8 +197,10 @@ describe("Part 2 security proofs", () => {
     const dbSource = readFileSync(fileURLToPath(new URL("./db.ts", import.meta.url)), "utf8");
     const sellerBlock = dbSource.match(/export async function getSellerOrders[\s\S]*?^}/m)?.[0] ?? "";
     expect(sellerBlock).toMatch(/threadStates\.userId,\s*sellerId/);
-    expect(sellerBlock).toMatch(/threadStates\.channel,\s*"seller_order"/);
-    expect(sellerBlock).not.toMatch(/threadStates\.channel,\s*"order"/);
+    expect(sellerBlock).toMatch(/threadStates\.channel,\s*"order"/);
+    const buyerBlock = dbSource.match(/export async function getBuyerOrders[\s\S]*?^}/m)?.[0] ?? "";
+    expect(buyerBlock).toMatch(/threadStates\.userId,\s*buyerId/);
+    expect(buyerBlock).toMatch(/threadStates\.channel,\s*"order"/);
     const adminBlock = dbSource.match(/export async function getAdminOverview[\s\S]*?^}/m)?.[0] ?? "";
     expect(adminBlock).not.toMatch(/archivedAt/i);
 

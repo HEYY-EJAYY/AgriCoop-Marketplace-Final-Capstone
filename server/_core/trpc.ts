@@ -1,19 +1,29 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
-import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { mutationFailureFallback, toUserFacingErrorMessage, USER_FACING_LOAD_ERROR } from "@shared/userFacingErrors";
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
+import { randomUUID } from "node:crypto";
 import { APP_ROLES, requireOperationalRole } from "../authz";
 import { withRequestDatabaseScope } from "../db";
 import type { TrpcContext } from "./context";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
-  errorFormatter({ shape, error }) {
+  errorFormatter({ shape, error, type, path, input }) {
     const causeMessage = error.cause instanceof Error ? error.cause.message : undefined;
-    if (causeMessage || /^Failed query:/i.test(error.message)) {
+    const internalFailure = Boolean(
+      causeMessage
+      || /^Failed query:/i.test(error.message)
+      || (type === "mutation" && error.code === "INTERNAL_SERVER_ERROR"),
+    );
+    const referenceCode = type === "mutation" && internalFailure
+      ? randomUUID().slice(0, 8)
+      : undefined;
+    if (causeMessage || /^Failed query:/i.test(error.message) || referenceCode) {
       console.error("[trpc]", {
         code: shape.data.code,
         path: shape.data.path,
+        referenceCode,
         causeType: error.cause instanceof Error ? error.cause.name : typeof error.cause,
         // Log truncated cause for operators; never return SQL to clients.
         causePreview: causeMessage?.slice(0, 240) ?? error.message.slice(0, 240),
@@ -21,7 +31,9 @@ const t = initTRPC.context<TrpcContext>().create({
     }
     return {
       ...shape,
-      message: toUserFacingErrorMessage(shape.message),
+      message: referenceCode
+        ? mutationFailureFallback(path, input, referenceCode)
+        : toUserFacingErrorMessage(shape.message, USER_FACING_LOAD_ERROR),
     };
   },
 });

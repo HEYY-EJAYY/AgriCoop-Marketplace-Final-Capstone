@@ -780,7 +780,7 @@ export async function countSellerOrderInboxStates(sellerId: number) {
     .from(orders)
     .leftJoin(threadStates, and(
       eq(threadStates.userId, sellerId),
-      eq(threadStates.channel, "seller_order"),
+      eq(threadStates.channel, "order"),
       eq(threadStates.threadId, orders.id),
     ))
     .where(eq(orders.sellerId, sellerId))
@@ -809,7 +809,7 @@ export async function countQuotationInboxStates(userId: number, side: "buyer" | 
     .from(quotations)
     .leftJoin(threadStates, and(
       eq(threadStates.userId, userId),
-      eq(threadStates.channel, "quotation"),
+      eq(threadStates.channel, "support"),
       eq(threadStates.threadId, quotations.id),
     ))
     .where(owner)
@@ -879,7 +879,7 @@ export async function getSellerOrders(sellerId: number, options: BuyerOrderListO
     .leftJoin(transactions, eq(transactions.orderId, orders.id))
     .leftJoin(threadStates, and(
       eq(threadStates.userId, sellerId),
-      eq(threadStates.channel, "seller_order"),
+      eq(threadStates.channel, "order"),
       eq(threadStates.threadId, orders.id),
     ))
     .where(and(
@@ -1003,7 +1003,7 @@ export async function getBuyerQuotations(buyerId: number, options: BuyerOrderLis
     .innerJoin(users, eq(quotations.sellerId, users.id))
     .leftJoin(threadStates, and(
       eq(threadStates.userId, buyerId),
-      eq(threadStates.channel, "quotation"),
+      eq(threadStates.channel, "support"),
       eq(threadStates.threadId, quotations.id),
     ))
     .where(and(eq(quotations.buyerId, buyerId), inboxVisibility(archived, deleted)))
@@ -1022,7 +1022,7 @@ export async function getSellerQuotations(sellerId: number, options: BuyerOrderL
     .innerJoin(users, eq(quotations.buyerId, users.id))
     .leftJoin(threadStates, and(
       eq(threadStates.userId, sellerId),
-      eq(threadStates.channel, "quotation"),
+      eq(threadStates.channel, "support"),
       eq(threadStates.threadId, quotations.id),
     ))
     .where(and(eq(quotations.sellerId, sellerId), inboxVisibility(archived, deleted)))

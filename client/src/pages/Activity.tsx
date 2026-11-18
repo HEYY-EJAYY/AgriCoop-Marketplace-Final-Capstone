@@ -2,7 +2,8 @@ import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
-import { ClipboardList, FileText, Leaf, Loader2, MessageCircle } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ClipboardList, FileText, Leaf, Loader2, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useSearch } from "wouter";
@@ -11,7 +12,7 @@ const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currenc
 const Status = ({ value }: { value: string }) => <span className={`status-pill status-${value}`}>{value.replaceAll("_", " ")}</span>;
 
 type OrderStatusTab = "all" | "to_pay" | "to_ship" | "to_receive" | "completed" | "cancelled";
-type OrderInboxTab = "active" | "archived";
+type OrderInboxTab = "active" | "archived" | "deleted";
 
 const ORDER_STATUS_TABS: { id: OrderStatusTab; label: string }[] = [
   { id: "all", label: "All" },
@@ -25,12 +26,13 @@ const ORDER_STATUS_TABS: { id: OrderStatusTab; label: string }[] = [
 const ORDER_INBOX_TABS: { id: OrderInboxTab; label: string }[] = [
   { id: "active", label: "Active" },
   { id: "archived", label: "Archived" },
+  { id: "deleted", label: "Deleted" },
 ];
 
 function parseOrderInboxTab(search: string): OrderInboxTab {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const raw = params.get("tab");
-  return raw === "archived" ? "archived" : "active";
+  return raw === "archived" || raw === "deleted" ? raw : "active";
 }
 
 function matchesOrderTab(status: string, paymentStatus: string, tab: OrderStatusTab) {
@@ -50,6 +52,8 @@ export default function Activity() {
   const inboxTab = parseOrderInboxTab(search);
   const [statusTab, setStatusTab] = useState<OrderStatusTab>("all");
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+  const [selectedQuotationIds, setSelectedQuotationIds] = useState<number[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: "orders" | "quotations"; ids: number[] } | null>(null);
 
   const ordersEnabled = !!user && (user.role === "buyer" || user.role === "seller");
   const utils = trpc.useUtils();
@@ -58,21 +62,28 @@ export default function Activity() {
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const ordersQuery = trpc.orders.buyerMine.useQuery(
-    { archived: inboxTab === "archived" },
+    { archived: inboxTab === "archived", deleted: inboxTab === "deleted" },
     { enabled: ordersEnabled },
   );
   const countsQuery = trpc.orders.buyerMineCounts.useQuery(undefined, { enabled: ordersEnabled });
   const archiveMutation = trpc.orders.updateArchive.useMutation({
     onSuccess: (_data, variables) => {
-      toast.success(variables.action === "archive" ? "Orders archived." : "Orders restored to active.");
+      toast.success(variables.action === "delete"
+        ? "Orders removed from your list."
+        : variables.action === "restore"
+          ? "Orders restored."
+          : variables.action === "archive"
+            ? "Orders archived."
+            : "Orders restored to active.");
       setSelectedOrderIds([]);
+      setSelectedQuotationIds([]);
       void utils.orders.buyerMine.invalidate();
       void utils.orders.buyerMineCounts.invalidate();
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const quotationsQuery = trpc.quotations.buyerMine.useQuery(
-    { archived: inboxTab === "archived" },
+    { archived: inboxTab === "archived", deleted: inboxTab === "deleted" },
     { enabled: ordersEnabled },
   );
   const quotationCountsQuery = trpc.quotations.counts.useQuery(
@@ -81,7 +92,14 @@ export default function Activity() {
   );
   const quotationStateMutation = trpc.quotations.updateState.useMutation({
     onSuccess: (_data, variables) => {
-      toast.success(variables.action === "archive" ? "Quotations archived." : variables.action === "unarchive" ? "Quotations restored." : "Quotation view updated.");
+      toast.success(variables.action === "delete"
+        ? "Quotation requests removed from your list."
+        : variables.action === "restore"
+          ? "Quotation requests restored."
+          : variables.action === "archive"
+            ? "Quotations archived."
+            : "Quotations restored.");
+      setSelectedQuotationIds([]);
       void utils.quotations.buyerMine.invalidate();
       void utils.quotations.counts.invalidate();
     },
@@ -95,6 +113,7 @@ export default function Activity() {
       const path = location.split("?")[0] || "/activity";
       setLocation(`${path}?${params.toString()}`, { replace: false });
       setSelectedOrderIds([]);
+      setSelectedQuotationIds([]);
       setStatusTab("all");
     },
     [location, search, setLocation],
@@ -102,10 +121,14 @@ export default function Activity() {
 
   useEffect(() => {
     setSelectedOrderIds([]);
+    setSelectedQuotationIds([]);
   }, [inboxTab]);
 
   const { data: orders = [], isLoading: ordersLoading, error: ordersError } = ordersQuery;
   const { data: quotations = [], isLoading: quotationsLoading, error: quotationsError } = quotationsQuery;
+  const hasInProgressOrderToDelete = deleteTarget?.kind === "orders"
+    && orders.some(row => deleteTarget.ids.includes(row.order.id)
+      && !["completed", "cancelled"].includes(row.order.status));
   const filteredOrders = useMemo(
     () => orders.filter(row => matchesOrderTab(row.order.status, row.order.paymentStatus, statusTab)),
     [orders, statusTab],
@@ -132,8 +155,44 @@ export default function Activity() {
     archiveMutation.mutate({ orderIds: [orderId], action });
   };
 
+  const toggleQuotation = (quotationId: number) => {
+    setSelectedQuotationIds(previous => previous.includes(quotationId)
+      ? previous.filter(id => id !== quotationId)
+      : [...previous, quotationId]);
+  };
+
+  const toggleAllQuotations = () => {
+    if (selectedQuotationIds.length === quotations.length) setSelectedQuotationIds([]);
+    else setSelectedQuotationIds(quotations.map(row => row.quotation.id));
+  };
+
+  const requestOrderDelete = (orderIds: number[]) => setDeleteTarget({ kind: "orders", ids: orderIds });
+  const requestQuotationDelete = (quotationIds: number[]) => setDeleteTarget({ kind: "quotations", ids: quotationIds });
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.kind === "orders") {
+      archiveMutation.mutate({ orderIds: deleteTarget.ids, action: "delete" });
+    } else {
+      quotationStateMutation.mutate({
+        quotationIds: deleteTarget.ids,
+        action: "delete",
+        side: "buyer",
+      });
+    }
+    setDeleteTarget(null);
+  };
+
+  const restoreOrders = (orderIds: number[]) => archiveMutation.mutate({ orderIds, action: "restore" });
+  const restoreQuotations = (quotationIds: number[]) => quotationStateMutation.mutate({
+    quotationIds,
+    action: "restore",
+    side: "buyer",
+  });
+
   const activeCount = countsQuery.data?.active ?? 0;
   const archivedCount = countsQuery.data?.archived ?? 0;
+  const deletedCount = countsQuery.data?.deleted ?? 0;
 
   if (loading) {
     return (
@@ -204,7 +263,7 @@ export default function Activity() {
               >
                 {ORDER_INBOX_TABS.map(item => {
                   const selected = inboxTab === item.id;
-                  const count = item.id === "active" ? activeCount : archivedCount;
+                  const count = item.id === "active" ? activeCount : item.id === "archived" ? archivedCount : deletedCount;
                   return (
                     <button
                       key={item.id}
@@ -228,9 +287,18 @@ export default function Activity() {
                     <button type="button" className="agri-ghost min-h-11 text-xs" disabled={archiveMutation.isPending} onClick={() => runBulkArchive("archive")}>
                       Archive
                     </button>
-                  ) : (
+                  ) : inboxTab === "archived" ? (
                     <button type="button" className="agri-ghost min-h-11 text-xs" disabled={archiveMutation.isPending} onClick={() => runBulkArchive("unarchive")}>
                       Unarchive
+                    </button>
+                  ) : (
+                    <button type="button" className="agri-ghost min-h-11 text-xs" disabled={archiveMutation.isPending} onClick={() => restoreOrders(selectedOrderIds)}>
+                      <RotateCcw size={14} /> Restore
+                    </button>
+                  )}
+                  {inboxTab !== "deleted" && (
+                    <button type="button" className="agri-ghost min-h-11 text-xs text-[#a34838]" disabled={archiveMutation.isPending} onClick={() => requestOrderDelete(selectedOrderIds)}>
+                      <Trash2 size={14} /> Delete
                     </button>
                   )}
                 </div>
@@ -309,14 +377,35 @@ export default function Activity() {
                             >
                               {openOrderChat.isPending ? <Loader2 className="animate-spin" size={15} /> : <MessageCircle size={15} />} Message
                             </button>
-                            <button
-                              type="button"
-                              className="agri-ghost min-h-11 text-sm"
-                              disabled={archiveMutation.isPending}
-                              onClick={() => runSingleArchive(row.order.id, inboxTab === "active" ? "archive" : "unarchive")}
-                            >
-                              {inboxTab === "active" ? "Archive" : "Unarchive"}
-                            </button>
+                            {inboxTab === "deleted" ? (
+                              <button
+                                type="button"
+                                className="agri-ghost min-h-11 text-sm"
+                                disabled={archiveMutation.isPending}
+                                onClick={() => restoreOrders([row.order.id])}
+                              >
+                                <RotateCcw size={15} /> Restore
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="agri-ghost min-h-11 text-sm"
+                                  disabled={archiveMutation.isPending}
+                                  onClick={() => runSingleArchive(row.order.id, inboxTab === "active" ? "archive" : "unarchive")}
+                                >
+                                  {inboxTab === "active" ? "Archive" : "Unarchive"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="agri-ghost min-h-11 text-sm text-[#a34838]"
+                                  disabled={archiveMutation.isPending}
+                                  onClick={() => requestOrderDelete([row.order.id])}
+                                >
+                                  <Trash2 size={15} /> Delete
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -338,61 +427,119 @@ export default function Activity() {
                 <div>
                   <h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2>
                   <p className="text-sm text-[#6a796e]">
-                    {inboxTab === "archived" ? "Archived" : "Active"} · {quotationCountsQuery.data?.active ?? 0} active / {quotationCountsQuery.data?.archived ?? 0} archived
+                    {inboxTab === "deleted" ? "Deleted" : inboxTab === "archived" ? "Archived" : "Active"} · {quotationCountsQuery.data?.active ?? 0} active / {quotationCountsQuery.data?.archived ?? 0} archived / {quotationCountsQuery.data?.deleted ?? 0} deleted
                   </p>
                 </div>
               </div>
-              <div className="mt-5 space-y-3">
-                {quotationsLoading ? (
-                  <Loader2 className="mx-auto my-8 animate-spin text-[#5d8a5e]" />
-                ) : quotations.length ? (
-                  quotations.map(row => (
-                    <div key={row.quotation.id} className="rounded-xl bg-[#f2f6ef] p-4">
-                      <div className="flex justify-between gap-2">
-                        <div>
-                          <p className="font-bold text-[#315640]">{row.productName}</p>
-                          <p className="mt-1 text-xs text-[#708074]">
-                            {row.quotation.requestedQty} {row.unit} from {row.sellerName || "farm seller"}
-                          </p>
-                        </div>
-                        <Status value={row.quotation.status} />
-                      </div>
-                      {row.quotation.quotedPriceCents && (
-                        <p className="mt-3 font-display text-lg font-bold text-[#2b603f]">
-                          {peso(row.quotation.quotedPriceCents)} per {row.unit}
-                        </p>
-                      )}
-                      <div className="mt-3 flex flex-wrap gap-2">
+              {quotations.length > 0 && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex items-center gap-2 text-xs font-bold text-[#56705c]">
+                    <input
+                      type="checkbox"
+                      checked={selectedQuotationIds.length === quotations.length}
+                      onChange={toggleAllQuotations}
+                    />
+                    Select all quotation requests
+                  </label>
+                  {selectedQuotationIds.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-[#315640]">{selectedQuotationIds.length} selected</span>
+                      {inboxTab === "deleted" ? (
+                        <button type="button" className="agri-ghost min-h-11 text-xs" disabled={quotationStateMutation.isPending} onClick={() => restoreQuotations(selectedQuotationIds)}>
+                          <RotateCcw size={14} /> Restore
+                        </button>
+                      ) : (
                         <button
                           type="button"
-                          className="agri-ghost px-3 py-1.5 text-xs"
+                          className="agri-ghost min-h-11 text-xs"
                           disabled={quotationStateMutation.isPending}
                           onClick={() => quotationStateMutation.mutate({
-                            quotationIds: [row.quotation.id],
+                            quotationIds: selectedQuotationIds,
                             action: inboxTab === "active" ? "archive" : "unarchive",
                             side: "buyer",
                           })}
                         >
                           {inboxTab === "active" ? "Archive" : "Unarchive"}
                         </button>
-                        <button
-                          type="button"
-                          className="agri-ghost px-3 py-1.5 text-xs text-[#a34838]"
-                          disabled={quotationStateMutation.isPending}
-                          onClick={() => quotationStateMutation.mutate({
-                            quotationIds: [row.quotation.id],
-                            action: "delete",
-                            side: "buyer",
-                          })}
-                        >
-                          Delete
+                      )}
+                      {inboxTab !== "deleted" && (
+                        <button type="button" className="agri-ghost min-h-11 text-xs text-[#a34838]" disabled={quotationStateMutation.isPending} onClick={() => requestQuotationDelete(selectedQuotationIds)}>
+                          <Trash2 size={14} /> Delete
                         </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-5 space-y-3">
+                {quotationsLoading ? (
+                  <Loader2 className="mx-auto my-8 animate-spin text-[#5d8a5e]" />
+                ) : quotations.length ? (
+                  quotations.map(row => (
+                    <div key={row.quotation.id} className="flex gap-3 rounded-xl bg-[#f2f6ef] p-4">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={selectedQuotationIds.includes(row.quotation.id)}
+                        onChange={() => toggleQuotation(row.quotation.id)}
+                        aria-label={`Select quotation request ${row.quotation.id}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex justify-between gap-2">
+                          <div>
+                            <p className="font-bold text-[#315640]">{row.productName}</p>
+                            <p className="mt-1 text-xs text-[#708074]">
+                              {row.quotation.requestedQty} {row.unit} from {row.sellerName || "farm seller"}
+                            </p>
+                          </div>
+                          <Status value={row.quotation.status} />
+                        </div>
+                        {row.quotation.quotedPriceCents && (
+                          <p className="mt-3 font-display text-lg font-bold text-[#2b603f]">
+                            {peso(row.quotation.quotedPriceCents)} per {row.unit}
+                          </p>
+                        )}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {inboxTab === "deleted" ? (
+                            <button
+                              type="button"
+                              className="agri-ghost min-h-11 px-3 py-1.5 text-xs"
+                              disabled={quotationStateMutation.isPending}
+                              onClick={() => restoreQuotations([row.quotation.id])}
+                            >
+                              <RotateCcw size={14} /> Restore
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="agri-ghost min-h-11 px-3 py-1.5 text-xs"
+                                disabled={quotationStateMutation.isPending}
+                                onClick={() => quotationStateMutation.mutate({
+                                  quotationIds: [row.quotation.id],
+                                  action: inboxTab === "active" ? "archive" : "unarchive",
+                                  side: "buyer",
+                                })}
+                              >
+                                {inboxTab === "active" ? "Archive" : "Unarchive"}
+                              </button>
+                              <button
+                                type="button"
+                                className="agri-ghost min-h-11 px-3 py-1.5 text-xs text-[#a34838]"
+                                disabled={quotationStateMutation.isPending}
+                                onClick={() => requestQuotationDelete([row.quotation.id])}
+                              >
+                                <Trash2 size={14} /> Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))
                 ) : (
                   <p className="py-9 text-center text-sm text-[#6d7d70]">
-                    {inboxTab === "archived" ? "No archived quotation requests." : "No quotation requests yet."}
+                    {inboxTab === "deleted" ? "No deleted quotation requests." : inboxTab === "archived" ? "No archived quotation requests." : "No quotation requests yet."}
                   </p>
                 )}
               </div>
@@ -400,6 +547,30 @@ export default function Activity() {
           </section>
         )}
       </main>
+      <AlertDialog open={deleteTarget !== null} onOpenChange={open => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent className="bg-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {deleteTarget?.ids.length === 1 ? "this" : `${deleteTarget?.ids.length ?? 0}`} {deleteTarget?.kind === "orders" ? "order" : "quotation request"}{deleteTarget?.ids.length === 1 ? "" : "s"} from your list?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {hasInProgressOrderToDelete
+                ? "This only removes it from your list. The seller can still see it."
+                : "This only removes the selected item(s) from your list. It does not change the order, quotation, payment, or the other party's view."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={archiveMutation.isPending || quotationStateMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#a34838] text-white hover:bg-[#8f3c30]"
+              disabled={archiveMutation.isPending || quotationStateMutation.isPending}
+              onClick={confirmDelete}
+            >
+              Delete from my list
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

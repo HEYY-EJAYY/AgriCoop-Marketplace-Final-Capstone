@@ -29,7 +29,7 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { cartItems, conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
 import { previewUserCooperativeSelection, resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
 import {
@@ -4149,12 +4149,13 @@ export const appRouter = router({
             visibility: "hidden",
           }).where(and(eq(products.sellerId, target.id), isNull(products.deletedAt)));
 
-          await tx.delete(cartItems).where(eq(cartItems.userId, target.id));
-
           if (target.openId) {
-            await supabaseAdmin.auth.admin.updateUserById(target.openId, {
+            const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(target.openId, {
               ban_duration: "876000h",
             });
+            if (banError) {
+              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The account was not fully disabled in authentication." });
+            }
           }
 
           await recordAuditLog(tx, {
@@ -4206,9 +4207,12 @@ export const appRouter = router({
           }).where(eq(users.id, target.id));
 
           if (target.openId) {
-            await supabaseAdmin.auth.admin.updateUserById(target.openId, {
+            const { error: unbanError } = await supabaseAdmin.auth.admin.updateUserById(target.openId, {
               ban_duration: "none",
             });
+            if (unbanError) {
+              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The account could not be restored in authentication." });
+            }
           }
 
           await recordAuditLog(tx, {
