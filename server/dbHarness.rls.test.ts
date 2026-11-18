@@ -173,6 +173,8 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
         expect(loginRows[0].role).toBe("buyer");
 
         // Selecting a revoked payment column must fail for authenticated.
+        // Use SAVEPOINT so the 42501 does not abort the outer transaction.
+        await tx`savepoint deny_payment_select`;
         let paymentSelectDenied = false;
         try {
           await tx`select "onlinePaymentQrPath" from agricoop_app.users where "openId" = ${authUserId}`;
@@ -180,10 +182,10 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
           paymentSelectDenied = String((error as { code?: string }).code ?? "") === "42501"
             || /permission denied|onlinePaymentQrPath/i.test(String(error));
         }
+        await tx`rollback to savepoint deny_payment_select`;
         expect(paymentSelectDenied).toBe(true);
 
         // Roll back throwaway rows for this transaction.
-        await tx`select 1`;
         throw new Error("harness_rollback");
       }).catch((error: unknown) => {
         if (!(error instanceof Error) || error.message !== "harness_rollback") throw error;
