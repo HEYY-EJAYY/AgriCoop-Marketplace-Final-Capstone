@@ -29,4 +29,18 @@ describe("login application-user lookup contract", () => {
     const sqlOnly = upsert.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(sqlOnly).not.toMatch(/onlinePayment/);
   });
+
+  it("rejects a soft-deleted identity before any role-mapping self-heal", () => {
+    const dbSource = readFileSync(join(process.cwd(), "server/db.ts"), "utf8");
+    const start = dbSource.indexOf("export async function getUserByVerifiedAuthId");
+    const end = dbSource.indexOf("\nexport async function", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const resolution = dbSource.slice(start, end);
+    const deletedGuard = resolution.indexOf("first.applicationUsers.some(applicationUser => applicationUser.deletedAt)");
+    const selfHeal = resolution.indexOf("// Safe self-heal:");
+    expect(deletedGuard).toBeGreaterThanOrEqual(0);
+    expect(deletedGuard).toBeLessThan(selfHeal);
+    expect(resolution).not.toContain("Fall through to normal self-heal");
+  });
 });

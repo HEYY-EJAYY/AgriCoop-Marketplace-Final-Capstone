@@ -369,7 +369,10 @@ export const officerApplicationsRouter = router({
         if (row.userId === actor.id) {
           throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review your own application." });
         }
-        const [target] = await tx.select().from(users).where(eq(users.id, row.userId)).limit(1);
+        const [target] = await tx.select({
+          id: users.id,
+          openId: users.openId,
+        }).from(users).where(eq(users.id, row.userId)).limit(1);
         if (!target?.openId) throw new TRPCError({ code: "NOT_FOUND", message: "Applicant account missing." });
 
         await tx.update(cooperativeAdminApplications).set({

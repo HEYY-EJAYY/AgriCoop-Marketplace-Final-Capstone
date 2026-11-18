@@ -3054,113 +3054,24 @@ COMMIT;
 
 ---
 
-## BLOCK 9: `supabase/storage/profile_verification_bucket.sql` (Storage)
-
-```sql
--- Manual setup draft for the profile-verification document bucket.
--- Do not run until the project owner approves the target and confirms this
--- bucket does not contain existing data requiring a different configuration.
--- Application uploads/downloads are mediated by server-issued short-lived
--- capabilities (service role). Service role bypasses Storage RLS.
--- This script intentionally creates no client Storage policies (default-deny
--- for anon/authenticated direct object access is acceptable). Do not UPSERT-
--- overwrite product-images or payment-proofs from other templates.
-
-BEGIN;
-
-DO $preflight$
-BEGIN
-  IF to_regclass('storage.buckets') IS NULL THEN
-    RAISE EXCEPTION 'Storage setup stopped: storage.buckets is unavailable';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_attribute
-    WHERE attrelid = 'storage.buckets'::regclass
-      AND attname IN ('id', 'name', 'public', 'file_size_limit', 'allowed_mime_types')
-      AND NOT attisdropped
-    GROUP BY attrelid
-    HAVING count(*) = 5
-  ) THEN
-    RAISE EXCEPTION 'Storage setup stopped: storage.buckets has an unexpected catalog shape';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1
-    FROM storage.buckets
-    WHERE id = 'profile-verification-documents'
-       OR name = 'profile-verification-documents'
-  ) AND NOT EXISTS (
-    SELECT 1
-    FROM storage.buckets
-    WHERE id = 'profile-verification-documents'
-      AND name = 'profile-verification-documents'
-      AND public IS FALSE
-      AND file_size_limit = 5242880
-      AND allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
-  ) THEN
-    RAISE EXCEPTION 'Storage setup stopped: existing bucket configuration differs; reconcile it manually';
-  END IF;
-END
-$preflight$;
-
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-SELECT
-  'profile-verification-documents',
-  'profile-verification-documents',
-  FALSE,
-  5242880,
-  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM storage.buckets
-  WHERE id = 'profile-verification-documents'
-);
-
-DO $postflight$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM storage.buckets
-    WHERE id = 'profile-verification-documents'
-      AND name = 'profile-verification-documents'
-      AND public IS FALSE
-      AND file_size_limit = 5242880
-      AND allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
-  ) THEN
-    RAISE EXCEPTION 'Storage setup verification failed: bucket is not private with the required limits';
-  END IF;
-END
-$postflight$;
-
-COMMIT;
-
--- Read-only verification after an approved run:
-SELECT
-  id = 'profile-verification-documents'
-  AND name = 'profile-verification-documents' AS expected_bucket,
-  public IS FALSE AS is_private,
-  file_size_limit = 5242880 AS has_expected_size_limit,
-  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp']::text[] AS has_expected_mime_types
-FROM storage.buckets
-WHERE id = 'profile-verification-documents';
-```
-
 ## BLOCK 9: `20261117140000_anon_marketplace_browse_perf.sql`
 
 ```sql
--- PURPOSE: Unblock anon marketplace browse under RLS + add browse indexes / reserved-qty helper.
--- IDEMPOTENT / ADDITIVE ONLY.
+-- Additive: anon marketplace browse grants + reserved-qty helper + browse indexes.
+-- Idempotent. No DROP / TRUNCATE / data mutation.
 
 BEGIN;
 
+-- RLS policies for products/cooperatives call these helpers for every row check.
 GRANT EXECUTE ON FUNCTION agricoop_app.shares_cooperative(integer) TO anon;
 GRANT EXECUTE ON FUNCTION agricoop_app.is_superadmin() TO anon;
 GRANT EXECUTE ON FUNCTION agricoop_app.is_staff() TO anon;
 
+-- Public seller display fields for marketplace joins
 GRANT SELECT ("id", "name", "approvalStatus", "role") ON TABLE agricoop_app.users TO anon;
 
+-- SECURITY DEFINER aggregate so anon browse can subtract open-order reservations
+-- without SELECT on orders / orderItems.
 CREATE OR REPLACE FUNCTION agricoop_app.reserved_quantities_for_products(product_ids integer[])
 RETURNS TABLE(product_id integer, quantity integer)
 LANGUAGE sql
@@ -3190,20 +3101,33 @@ CREATE INDEX IF NOT EXISTS products_marketplace_browse_idx
 CREATE INDEX IF NOT EXISTS product_images_product_id_order_idx
   ON agricoop_app."productImages" ("productId", "displayOrder", id);
 
-COMMIT;
+DO $postflight$
+BEGIN
+  IF NOT has_function_privilege('anon', 'agricoop_app.shares_cooperative(integer)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'anon missing EXECUTE on shares_cooperative';
+  END IF;
+  IF NOT has_function_privilege('anon', 'agricoop_app.reserved_quantities_for_products(integer[])', 'EXECUTE') THEN
+    RAISE EXCEPTION 'anon missing EXECUTE on reserved_quantities_for_products';
+  END IF;
+  IF to_regclass('agricoop_app.products_marketplace_browse_idx') IS NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_indexes
+       WHERE schemaname = 'agricoop_app' AND indexname = 'products_marketplace_browse_idx'
+     ) THEN
+    RAISE EXCEPTION 'products_marketplace_browse_idx missing';
+  END IF;
+END
+$postflight$;
 
--- Verification:
--- SELECT has_function_privilege('anon','agricoop_app.shares_cooperative(integer)','EXECUTE');
--- SELECT has_function_privilege('anon','agricoop_app.reserved_quantities_for_products(integer[])','EXECUTE');
--- SELECT indexname FROM pg_indexes WHERE indexname IN ('products_marketplace_browse_idx','product_images_product_id_order_idx');
+COMMIT;
 ```
+
+---
 
 ## BLOCK 10: `20261117150000_orders_demo_seed_key.sql`
 
 ```sql
--- PURPOSE: Add missing orders.demoSeedKey so Drizzle order selects stop failing.
--- IDEMPOTENT / ADDITIVE ONLY.
-
+-- Additive: align live orders with Drizzle (demo seed idempotency column).
 BEGIN;
 
 ALTER TABLE agricoop_app.orders
@@ -3212,47 +3136,31 @@ ALTER TABLE agricoop_app.orders
 CREATE UNIQUE INDEX IF NOT EXISTS orders_demo_seed_key_idx
   ON agricoop_app.orders ("demoSeedKey");
 
+DO $postflight$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'agricoop_app'
+      AND table_name = 'orders'
+      AND column_name = 'demoSeedKey'
+  ) THEN
+    RAISE EXCEPTION 'orders.demoSeedKey missing after migration';
+  END IF;
+END
+$postflight$;
+
 COMMIT;
-
--- Verification:
--- SELECT column_name FROM information_schema.columns
--- WHERE table_schema='agricoop_app' AND table_name='orders' AND column_name='demoSeedKey';
 ```
 
-## BLOCK 11: Role reconciliation data fix (previewed, narrowly scoped)
+---
+
+## BLOCK 11: `20261117180000_ux_inbox_and_indexes.sql`
 
 ```sql
--- PURPOSE: Align one mismatched profile role to the application users.role source of truth.
--- Preview first:
--- SELECT u.id, u.email, u.role, r.role_name
--- FROM agricoop_app.users u
--- JOIN public.profiles p ON p.user_id::text = u."openId"
--- JOIN public.roles r ON r.role_id = p.role_id
--- WHERE u.id = 2 AND u.email = 'heyyejayy1@gmail.com';
+-- PURPOSE: Soft-delete / pin / archive inbox state + additive marketplace indexes.
+-- IDEMPOTENT / ADDITIVE ONLY.
 
-UPDATE public.profiles
-SET role_id = 2
-WHERE user_id = '35dcf280-c098-483a-91da-7e96662efc3b'
-  AND role_id = 4
-  AND email = 'heyyejayy1@gmail.com';
-
--- After: conflicts should be 0.
-```
-
-## BLOCK 12: `20261117180000_ux_inbox_and_indexes.sql`
-
-```sql
--- PURPOSE: threadStates inbox metadata, soft-delete columns, marketplace indexes.
--- Applied via Supabase apply_migration name=ux_inbox_and_indexes
--- Verification: to_regclass('agricoop_app."threadStates"') is not null;
--- supportTickets has archivedAt, deletedAt, pinnedAt.
-```
-
-## BLOCK 12: `20261117180000_ux_inbox_and_indexes.sql` (applied via Supabase MCP as `ux_inbox_and_indexes`)
-
-```sql
--- PURPOSE: Per-user inbox state + soft-delete columns + marketplace indexes.
--- IDEMPOTENT / ADDITIVE ONLY. Verified: to_regclass('agricoop_app."threadStates"') present.
+BEGIN;
 
 CREATE TABLE IF NOT EXISTS agricoop_app."threadStates" (
   id serial PRIMARY KEY,
@@ -3269,22 +3177,71 @@ CREATE TABLE IF NOT EXISTS agricoop_app."threadStates" (
   CONSTRAINT thread_states_user_channel_thread_uidx UNIQUE ("userId", channel, "threadId")
 );
 
--- Plus ADD COLUMN IF NOT EXISTS archivedAt/deletedAt on conversations, notifications;
--- pinnedAt/archivedAt/deletedAt on supportTickets; product/conversation indexes;
--- RLS policy agricoop_thread_states_own for authenticated.
+CREATE INDEX IF NOT EXISTS thread_states_user_channel_idx
+  ON agricoop_app."threadStates" ("userId", channel);
+
+CREATE INDEX IF NOT EXISTS thread_states_user_deleted_idx
+  ON agricoop_app."threadStates" ("userId", "deletedAt");
+
+ALTER TABLE agricoop_app.notifications
+  ADD COLUMN IF NOT EXISTS "archivedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app.notifications
+  ADD COLUMN IF NOT EXISTS "deletedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app."supportTickets"
+  ADD COLUMN IF NOT EXISTS "archivedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app."supportTickets"
+  ADD COLUMN IF NOT EXISTS "deletedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app."supportTickets"
+  ADD COLUMN IF NOT EXISTS "pinnedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app.conversations
+  ADD COLUMN IF NOT EXISTS "archivedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app.conversations
+  ADD COLUMN IF NOT EXISTS "deletedAt" timestamp without time zone;
+
+CREATE INDEX IF NOT EXISTS products_category_idx ON agricoop_app.products (category);
+CREATE INDEX IF NOT EXISTS products_price_cents_idx ON agricoop_app.products ("priceCents");
+CREATE INDEX IF NOT EXISTS products_stock_qty_idx ON agricoop_app.products ("stockQty");
+CREATE INDEX IF NOT EXISTS products_cooperative_id_idx ON agricoop_app.products ("cooperativeId");
+CREATE INDEX IF NOT EXISTS conversations_order_id_idx ON agricoop_app.conversations ("orderId");
+CREATE INDEX IF NOT EXISTS conversations_buyer_id_idx ON agricoop_app.conversations ("buyerId");
+CREATE INDEX IF NOT EXISTS conversations_seller_id_idx ON agricoop_app.conversations ("sellerId");
+
+ALTER TABLE agricoop_app."threadStates" ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE agricoop_app."threadStates" FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE agricoop_app."threadStates" TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE agricoop_app."threadStates_id_seq" TO authenticated;
+
+DROP POLICY IF EXISTS agricoop_thread_states_own ON agricoop_app."threadStates";
+CREATE POLICY agricoop_thread_states_own ON agricoop_app."threadStates"
+  FOR ALL
+  TO authenticated
+  USING ("userId" = agricoop_app.current_app_user_id())
+  WITH CHECK ("userId" = agricoop_app.current_app_user_id());
+
+COMMIT;
+
+DO $$
+BEGIN
+  IF to_regclass('agricoop_app."threadStates"') IS NULL THEN
+    RAISE EXCEPTION 'threadStates missing after migration';
+  END IF;
+END $$;
 ```
 
-Verification (2026-11-17):
-- `to_regclass('agricoop_app."threadStates"')` ? `agricoop_app."threadStates"`
-- conversations / supportTickets soft-delete columns present
+---
 
-## BLOCK 13: `20261117200000_avatars_and_profile_image_grants.sql` (applied via Supabase MCP as `avatars_and_profile_image_grants`)
+## BLOCK 12: `20261117200000_avatars_and_profile_image_grants.sql`
 
-**Root cause (profile upload):** `authenticated` had SELECT-only on `agricoop_app.users."profileImageUrl"`, so Storage uploads succeeded (service role) but the subsequent `UPDATE users SET profileImageUrl` failed.
-
-`sql
--- PURPOSE: Grant profile photo column writes + public avatars bucket + owner-scoped policies.
--- IDEMPOTENT / ADDITIVE ONLY.
+```sql
+-- Additive: profile photo column grants + public avatars bucket for display.
+-- Root cause of upload failure: authenticated had SELECT-only on profileImageUrl.
 
 GRANT UPDATE ("profileImageUrl") ON TABLE agricoop_app.users TO authenticated;
 GRANT INSERT ("profileImageUrl") ON TABLE agricoop_app.users TO authenticated;
@@ -3303,76 +3260,431 @@ SET
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Policies (IF NOT EXISTS via DO blocks): avatars_public_read, avatars_owner_insert,
--- avatars_owner_update, avatars_owner_delete � path prefix = auth.uid()::text.
-`
+-- Public read for avatar display
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'avatars_public_read'
+  ) THEN
+    CREATE POLICY avatars_public_read
+      ON storage.objects
+      FOR SELECT
+      TO anon, authenticated
+      USING (bucket_id = 'avatars');
+  END IF;
+END $$;
 
-Verification (2026-11-17):
-- `storage.buckets` contains `avatars` (public, 2 MB, jpeg/png/webp)
-- Policies `avatars_%` present on `storage.objects`
-- Column privileges: `authenticated` UPDATE/INSERT on `profileImageUrl`
+-- Owners may insert into their own folder: {auth.uid()}/...
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'avatars_owner_insert'
+  ) THEN
+    CREATE POLICY avatars_owner_insert
+      ON storage.objects
+      FOR INSERT
+      TO authenticated
+      WITH CHECK (
+        bucket_id = 'avatars'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      );
+  END IF;
+END $$;
 
-## BLOCK 14: `20261117210000_payment_fulfillment_coop_orders.sql` (applied via MCP as `payment_fulfillment_coop_orders`)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'avatars_owner_update'
+  ) THEN
+    CREATE POLICY avatars_owner_update
+      ON storage.objects
+      FOR UPDATE
+      TO authenticated
+      USING (
+        bucket_id = 'avatars'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      )
+      WITH CHECK (
+        bucket_id = 'avatars'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      );
+  END IF;
+END $$;
 
-**Preview (2026-11-17):** sellers with null coop = 0; products with null coop = 0.
-Existing coop id=2 is named `Sutafaco (Sumilihon-Taguibo Cooperative` � left unchanged. Inserted exact name `SUTAFACO Cooperative` (normalizedName `sutafacocooperative`).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'avatars_owner_delete'
+  ) THEN
+    CREATE POLICY avatars_owner_delete
+      ON storage.objects
+      FOR DELETE
+      TO authenticated
+      USING (
+        bucket_id = 'avatars'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      );
+  END IF;
+END $$;
+```
 
-`sql
--- PURPOSE: listing pickup/delivery/online flags; orders.fulfillmentMethod;
--- seller QR columns; orderHistory + RLS; SUTAFACO Cooperative; seller-payment-qr bucket.
--- IDEMPOTENT / ADDITIVE ONLY. See supabase/migrations/20261117210000_payment_fulfillment_coop_orders.sql
-`
+---
 
-Verification:
-- `orderHistory` present; product flags default pickup+delivery true, online false
-- `SUTAFACO Cooperative` row present; null coop backfill was no-op (0 rows)
-- bucket `seller-payment-qr` private
-
-## BLOCK 15: `20261117211000_payment_fulfillment_column_grants.sql` (applied via MCP as `payment_fulfillment_column_grants`)
-
-New columns from BLOCK 14 did not inherit column-level marketplace GRANTs, which broke `marketplace.list`.
+## BLOCK 13: `20261117210000_payment_fulfillment_coop_orders.sql`
 
 ```sql
+-- Additive: listing fulfillment/online flags, order fulfillmentMethod, seller QR columns,
+-- orderHistory timeline, SUTAFACO Cooperative seed + scoped NULL backfill.
+
+-- Product listing options
+ALTER TABLE agricoop_app.products
+  ADD COLUMN IF NOT EXISTS "allowsPickup" boolean NOT NULL DEFAULT true;
+ALTER TABLE agricoop_app.products
+  ADD COLUMN IF NOT EXISTS "allowsDelivery" boolean NOT NULL DEFAULT true;
+ALTER TABLE agricoop_app.products
+  ADD COLUMN IF NOT EXISTS "acceptsOnlinePayment" boolean NOT NULL DEFAULT false;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'products_fulfillment_at_least_one'
+      AND conrelid = 'agricoop_app.products'::regclass
+  ) THEN
+    ALTER TABLE agricoop_app.products
+      ADD CONSTRAINT products_fulfillment_at_least_one
+      CHECK ("allowsPickup" OR "allowsDelivery");
+  END IF;
+END $$;
+
+-- Order fulfillment separate from payment method
+ALTER TABLE agricoop_app.orders
+  ADD COLUMN IF NOT EXISTS "fulfillmentMethod" varchar(32);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'orders_fulfillment_method_check'
+      AND conrelid = 'agricoop_app.orders'::regclass
+  ) THEN
+    ALTER TABLE agricoop_app.orders
+      ADD CONSTRAINT orders_fulfillment_method_check
+      CHECK ("fulfillmentMethod" IS NULL OR "fulfillmentMethod" IN ('pickup', 'delivery'));
+  END IF;
+END $$;
+
+-- Seller online-payment QR profile (paths/labels only)
+ALTER TABLE agricoop_app.users
+  ADD COLUMN IF NOT EXISTS "onlinePaymentQrPath" text;
+ALTER TABLE agricoop_app.users
+  ADD COLUMN IF NOT EXISTS "onlinePaymentAccountName" varchar(150);
+ALTER TABLE agricoop_app.users
+  ADD COLUMN IF NOT EXISTS "onlinePaymentAccountNumber" varchar(100);
+ALTER TABLE agricoop_app.users
+  ADD COLUMN IF NOT EXISTS "onlinePaymentLabel" varchar(150);
+
+-- Order + payment timeline (additive; orderEvents remains for stock notes)
+CREATE TABLE IF NOT EXISTS agricoop_app."orderHistory" (
+  id serial PRIMARY KEY,
+  "orderId" integer NOT NULL REFERENCES agricoop_app.orders(id),
+  "actorUserId" integer REFERENCES agricoop_app.users(id),
+  "eventType" varchar(64) NOT NULL,
+  "fromValue" varchar(64),
+  "toValue" varchar(64),
+  note text,
+  "createdAt" timestamp without time zone NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS order_history_order_id_idx
+  ON agricoop_app."orderHistory" ("orderId", "createdAt");
+
+ALTER TABLE agricoop_app."orderHistory" ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'agricoop_app' AND tablename = 'orderHistory' AND policyname = 'agricoop_order_history_select'
+  ) THEN
+    CREATE POLICY agricoop_order_history_select
+      ON agricoop_app."orderHistory"
+      FOR SELECT
+      TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM agricoop_app.orders o
+          JOIN agricoop_app.users me ON me."openId" = (SELECT auth.uid()::text)
+          WHERE o.id = "orderHistory"."orderId"
+            AND (
+              o."buyerId" = me.id
+              OR o."sellerId" = me.id
+              OR me.role IN ('admin', 'superadmin')
+            )
+        )
+      );
+  END IF;
+END $$;
+
+GRANT SELECT ON TABLE agricoop_app."orderHistory" TO authenticated;
+GRANT INSERT, SELECT, UPDATE, DELETE ON TABLE agricoop_app."orderHistory" TO service_role;
+GRANT USAGE, SELECT ON SEQUENCE agricoop_app."orderHistory_id_seq" TO service_role;
+
+-- Exact cooperative name required by product brief (do not rename existing Sutafaco variant)
+INSERT INTO agricoop_app.cooperatives (name, "normalizedName", location, status)
+SELECT 'SUTAFACO Cooperative', 'sutafacocooperative', 'Butuan City', 'active'
+WHERE NOT EXISTS (
+  SELECT 1 FROM agricoop_app.cooperatives WHERE "normalizedName" = 'sutafacocooperative'
+);
+
+-- Scoped backfill only where cooperativeId IS NULL (previewed: 0 sellers / 0 products at apply time)
+UPDATE agricoop_app.users u
+SET "cooperativeId" = c.id
+FROM agricoop_app.cooperatives c
+WHERE c."normalizedName" = 'sutafacocooperative'
+  AND u.role = 'seller'
+  AND u."cooperativeId" IS NULL;
+
+UPDATE agricoop_app.products p
+SET "cooperativeId" = c.id
+FROM agricoop_app.cooperatives c
+WHERE c."normalizedName" = 'sutafacocooperative'
+  AND p."cooperativeId" IS NULL;
+
+-- Seller QR private bucket (signed read after authz)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'seller-payment-qr',
+  'seller-payment-qr',
+  false,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE
+SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'seller_payment_qr_owner_insert'
+  ) THEN
+    CREATE POLICY seller_payment_qr_owner_insert
+      ON storage.objects FOR INSERT TO authenticated
+      WITH CHECK (
+        bucket_id = 'seller-payment-qr'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      );
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'seller_payment_qr_owner_update'
+  ) THEN
+    CREATE POLICY seller_payment_qr_owner_update
+      ON storage.objects FOR UPDATE TO authenticated
+      USING (
+        bucket_id = 'seller-payment-qr'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      )
+      WITH CHECK (
+        bucket_id = 'seller-payment-qr'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      );
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'seller_payment_qr_owner_select'
+  ) THEN
+    CREATE POLICY seller_payment_qr_owner_select
+      ON storage.objects FOR SELECT TO authenticated
+      USING (
+        bucket_id = 'seller-payment-qr'
+        AND split_part(name, '/', 1) = (SELECT auth.uid()::text)
+      );
+  END IF;
+END $$;
+```
+
+---
+
+## BLOCK 14: `20261117211000_payment_fulfillment_column_grants.sql`
+
+```sql
+-- Column grants for payment/fulfillment fields added in 20261117210000.
+-- New columns do not inherit prior column-level marketplace GRANTs.
+
 GRANT SELECT ("allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
   ON TABLE agricoop_app.products TO anon, authenticated;
-GRANT SELECT ("onlinePaymentQrPath", "onlinePaymentAccountName", "onlinePaymentAccountNumber", "onlinePaymentLabel")
-  ON TABLE agricoop_app.users TO authenticated;
-GRANT UPDATE ("onlinePaymentQrPath", "onlinePaymentAccountName", "onlinePaymentAccountNumber", "onlinePaymentLabel")
-  ON TABLE agricoop_app.users TO authenticated;
+
+GRANT SELECT (
+  "onlinePaymentQrPath",
+  "onlinePaymentAccountName",
+  "onlinePaymentAccountNumber",
+  "onlinePaymentLabel"
+) ON TABLE agricoop_app.users TO authenticated;
+
+GRANT UPDATE (
+  "onlinePaymentQrPath",
+  "onlinePaymentAccountName",
+  "onlinePaymentAccountNumber",
+  "onlinePaymentLabel"
+) ON TABLE agricoop_app.users TO authenticated;
+
+-- Marketplace cards only need a boolean presence check for seller QR.
 GRANT SELECT ("onlinePaymentQrPath") ON TABLE agricoop_app.users TO anon;
+
 GRANT SELECT ("fulfillmentMethod") ON TABLE agricoop_app.orders TO authenticated;
+
+DO $postflight$
+BEGIN
+  IF NOT has_column_privilege('anon', 'agricoop_app.products', 'allowsPickup', 'SELECT')
+     OR NOT has_column_privilege('anon', 'agricoop_app.products', 'allowsDelivery', 'SELECT')
+     OR NOT has_column_privilege('anon', 'agricoop_app.products', 'acceptsOnlinePayment', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentAccountName', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentAccountNumber', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentLabel', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT')
+     OR NOT has_column_privilege('anon', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT')
+     OR has_column_privilege('anon', 'agricoop_app.users', 'onlinePaymentAccountName', 'SELECT')
+     OR has_column_privilege('anon', 'agricoop_app.users', 'onlinePaymentAccountNumber', 'SELECT')
+     OR has_column_privilege('anon', 'agricoop_app.users', 'onlinePaymentLabel', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.orders', 'fulfillmentMethod', 'SELECT')
+  THEN
+    RAISE EXCEPTION 'payment_fulfillment_column_grants postflight failed: column privileges do not match least-privilege expectations';
+  END IF;
+END
+$postflight$;
 ```
 
-Verification (2026-11-17): `marketplace.list` returns 200 with `sellerHasOnlineQr` + listing flags.
+---
 
-Postflight (same migration file): `has_column_privilege` asserts anon/authenticated SELECT on product flags, authenticated SELECT/UPDATE on seller QR account columns, anon SELECT only on `onlinePaymentQrPath` (not account name/number/label), and authenticated SELECT on `orders.fulfillmentMethod`.
-
-## BLOCK 16: `20261117220000_write_grants_and_profile_role_sync.sql` (applied via MCP as `write_grants_and_profile_role_sync`)
-
-Root cause of listing create/update and payment-option create failures after BLOCK 14/15: new product flag columns and Drizzle serial/default columns lacked INSERT/UPDATE grants. Role sync failed because `public.profiles` has no authenticated UPDATE policy.
+## BLOCK 15: `20261117220000_write_grants_and_profile_role_sync.sql`
 
 ```sql
-GRANT INSERT ("id", "createdAt", "allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
-  ON TABLE agricoop_app.products TO authenticated;
-GRANT UPDATE ("allowsPickup", "allowsDelivery", "acceptsOnlinePayment")
-  ON TABLE agricoop_app.products TO authenticated;
+-- BLOCK 16: restore write privileges for payment/fulfillment columns and serial defaults;
+-- add SECURITY DEFINER profile-role sync (public.profiles has no UPDATE policy for officers).
+
+-- Products: new buyer flags need INSERT/UPDATE; serial/default columns appear in Drizzle INSERT lists.
+GRANT INSERT (
+  "id",
+  "createdAt",
+  "allowsPickup",
+  "allowsDelivery",
+  "acceptsOnlinePayment"
+) ON TABLE agricoop_app.products TO authenticated;
+
+GRANT UPDATE (
+  "allowsPickup",
+  "allowsDelivery",
+  "acceptsOnlinePayment"
+) ON TABLE agricoop_app.products TO authenticated;
+
+-- productImages serial/default columns
 GRANT INSERT ("id", "createdAt") ON TABLE agricoop_app."productImages" TO authenticated;
+
+-- paymentOptions serial/default columns used by Drizzle insert/update
 GRANT INSERT ("id", "createdAt", "updatedAt") ON TABLE agricoop_app."paymentOptions" TO authenticated;
--- plus SECURITY DEFINER agricoop_app.sync_profile_role_from_app(text, text)
+
+-- Canonical profile role sync for admin role changes (bypasses public.profiles RLS safely).
+CREATE OR REPLACE FUNCTION agricoop_app.sync_profile_role_from_app(
+  p_auth_user_id text,
+  p_app_role text
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, agricoop_app
+AS $fn$
+DECLARE
+  v_role_name text;
+  v_role_id integer;
+  v_updated integer;
+BEGIN
+  IF p_auth_user_id IS NULL OR length(trim(p_auth_user_id)) = 0 THEN
+    RAISE EXCEPTION 'auth user id is required';
+  END IF;
+
+  v_role_name := CASE p_app_role
+    WHEN 'buyer' THEN 'buyer'
+    WHEN 'seller' THEN 'seller'
+    WHEN 'admin' THEN 'coop_officer'
+    WHEN 'superadmin' THEN 'system_admin'
+    ELSE NULL
+  END;
+
+  IF v_role_name IS NULL THEN
+    RAISE EXCEPTION 'unsupported application role: %', p_app_role;
+  END IF;
+
+  SELECT r.role_id INTO v_role_id
+  FROM public.roles r
+  WHERE r.role_name = v_role_name
+  LIMIT 1;
+
+  IF v_role_id IS NULL THEN
+    RAISE EXCEPTION 'canonical public role "%" is missing', v_role_name;
+  END IF;
+
+  UPDATE public.profiles p
+  SET role_id = v_role_id
+  WHERE p.user_id::text = p_auth_user_id;
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  IF v_updated = 0 THEN
+    RAISE EXCEPTION 'canonical profile row is missing for this Auth identity';
+  END IF;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION agricoop_app.sync_profile_role_from_app(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION agricoop_app.sync_profile_role_from_app(text, text) TO authenticated;
+
+DO $postflight$
+BEGIN
+  IF NOT has_column_privilege('authenticated', 'agricoop_app.products', 'allowsPickup', 'INSERT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'allowsPickup', 'UPDATE')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'allowsDelivery', 'INSERT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'allowsDelivery', 'UPDATE')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'acceptsOnlinePayment', 'INSERT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'acceptsOnlinePayment', 'UPDATE')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'id', 'INSERT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app."paymentOptions"', 'id', 'INSERT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app."paymentOptions"', 'createdAt', 'INSERT')
+     OR NOT has_column_privilege('authenticated', 'agricoop_app."productImages"', 'id', 'INSERT')
+     OR to_regprocedure('agricoop_app.sync_profile_role_from_app(text, text)') IS NULL
+  THEN
+    RAISE EXCEPTION 'write_grants_and_profile_role_sync postflight failed';
+  END IF;
+END
+$postflight$;
 ```
 
-Verification (2026-11-17): authenticated INSERT/UPDATE on product flags; paymentOptions id INSERT; EXECUTE on sync_profile_role_from_app.
+---
 
-## BLOCK 17: `20261118022138_system_payment_admin_only.sql` (applied via MCP as `system_payment_admin_only`)
-
-**Purpose:** Move online payment to Admin/SuperAdmin system settings. Additive only: seller `onlinePayment*` columns and the `seller-payment-qr` bucket are kept. Seller column grants and seller-owned storage policies are revoked.
+## BLOCK 16: `20261118022138_system_payment_admin_only.sql`
 
 ```sql
--- PURPOSE: systemPaymentSettings, systemOnlinePaymentAccounts, systemPaymentSettingsAudit,
--- private system-payment-qr bucket, staff-only RLS, REVOKE seller payment column grants.
--- IDEMPOTENT / ADDITIVE ONLY. Does not DROP COLUMN.
--- Full script: supabase/migrations/20261118022138_system_payment_admin_only.sql
+-- BLOCK 17: System-level payment settings (Admin / SuperAdmin only).
+-- Additive + idempotent. Does NOT drop seller onlinePayment* columns or seller-payment-qr objects.
+-- REVOKE seller-facing grants/policies on legacy seller payment columns and QR bucket.
 
+-- ---------------------------------------------------------------------------
+-- 1) Platform method toggles (singleton row id = 1)
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS agricoop_app."systemPaymentSettings" (
   id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   "cashPickupEnabled" boolean NOT NULL DEFAULT true,
@@ -3382,6 +3694,13 @@ CREATE TABLE IF NOT EXISTS agricoop_app."systemPaymentSettings" (
   "updatedBy" integer REFERENCES agricoop_app.users(id)
 );
 
+INSERT INTO agricoop_app."systemPaymentSettings" (id)
+VALUES (1)
+ON CONFLICT (id) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- 2) Online payment accounts (one active at a time among non-archived)
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS agricoop_app."systemOnlinePaymentAccounts" (
   id serial PRIMARY KEY,
   label varchar(150) NOT NULL,
@@ -3397,6 +3716,16 @@ CREATE TABLE IF NOT EXISTS agricoop_app."systemOnlinePaymentAccounts" (
   "updatedBy" integer REFERENCES agricoop_app.users(id)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS system_online_payment_one_active_idx
+  ON agricoop_app."systemOnlinePaymentAccounts" ("isActive")
+  WHERE "isActive" = true AND "archivedAt" IS NULL;
+
+CREATE INDEX IF NOT EXISTS system_online_payment_active_lookup_idx
+  ON agricoop_app."systemOnlinePaymentAccounts" ("isActive", "archivedAt");
+
+-- ---------------------------------------------------------------------------
+-- 3) Settings / account change audit
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS agricoop_app."systemPaymentSettingsAudit" (
   id bigserial PRIMARY KEY,
   "actorUserId" integer NOT NULL REFERENCES agricoop_app.users(id),
@@ -3406,9 +3735,80 @@ CREATE TABLE IF NOT EXISTS agricoop_app."systemPaymentSettingsAudit" (
   "createdAt" timestamptz NOT NULL DEFAULT now()
 );
 
--- Staff RLS (agricoop_app.is_staff()) on all three tables.
--- Bucket system-payment-qr private, 5 MB, jpeg/png/webp. No client storage policies.
+CREATE INDEX IF NOT EXISTS system_payment_settings_audit_created_idx
+  ON agricoop_app."systemPaymentSettingsAudit" ("createdAt" DESC);
 
+-- ---------------------------------------------------------------------------
+-- 4) RLS — Admin / SuperAdmin only (staff helpers). No anon/buyer/seller read.
+-- ---------------------------------------------------------------------------
+ALTER TABLE agricoop_app."systemPaymentSettings" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agricoop_app."systemOnlinePaymentAccounts" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agricoop_app."systemPaymentSettingsAudit" ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS system_payment_settings_staff_all ON agricoop_app."systemPaymentSettings";
+CREATE POLICY system_payment_settings_staff_all
+  ON agricoop_app."systemPaymentSettings"
+  FOR ALL TO authenticated
+  USING (agricoop_app.is_staff())
+  WITH CHECK (agricoop_app.is_staff());
+
+DROP POLICY IF EXISTS system_online_accounts_staff_all ON agricoop_app."systemOnlinePaymentAccounts";
+CREATE POLICY system_online_accounts_staff_all
+  ON agricoop_app."systemOnlinePaymentAccounts"
+  FOR ALL TO authenticated
+  USING (agricoop_app.is_staff())
+  WITH CHECK (agricoop_app.is_staff());
+
+DROP POLICY IF EXISTS system_payment_audit_staff_select ON agricoop_app."systemPaymentSettingsAudit";
+CREATE POLICY system_payment_audit_staff_select
+  ON agricoop_app."systemPaymentSettingsAudit"
+  FOR SELECT TO authenticated
+  USING (agricoop_app.is_staff());
+
+DROP POLICY IF EXISTS system_payment_audit_staff_insert ON agricoop_app."systemPaymentSettingsAudit";
+CREATE POLICY system_payment_audit_staff_insert
+  ON agricoop_app."systemPaymentSettingsAudit"
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    agricoop_app.is_staff()
+    AND "actorUserId" = agricoop_app.current_app_user_id()
+  );
+
+-- Grants: revoke public defaults then grant staff paths via authenticated + RLS
+REVOKE ALL ON TABLE agricoop_app."systemPaymentSettings" FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE agricoop_app."systemOnlinePaymentAccounts" FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE agricoop_app."systemPaymentSettingsAudit" FROM PUBLIC, anon, authenticated;
+
+GRANT SELECT, INSERT, UPDATE ON TABLE agricoop_app."systemPaymentSettings" TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE agricoop_app."systemOnlinePaymentAccounts" TO authenticated;
+GRANT SELECT, INSERT ON TABLE agricoop_app."systemPaymentSettingsAudit" TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE agricoop_app."systemOnlinePaymentAccounts_id_seq" TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE agricoop_app."systemPaymentSettingsAudit_id_seq" TO authenticated;
+
+-- Service role / postgres keep full access for server procedures (signed URL path).
+
+-- ---------------------------------------------------------------------------
+-- 5) Private bucket for system QR (Admin uploads via service role)
+-- ---------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'system-payment-qr',
+  'system-payment-qr',
+  false,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- No authenticated storage policies: clients never read/write this bucket directly.
+-- App uses service role + signed URLs after authz.
+
+-- ---------------------------------------------------------------------------
+-- 6) REVOKE seller-facing grants on legacy user payment columns (data preserved)
+-- ---------------------------------------------------------------------------
 REVOKE SELECT ("onlinePaymentQrPath") ON TABLE agricoop_app.users FROM anon;
 REVOKE SELECT (
   "onlinePaymentQrPath",
@@ -3423,30 +3823,61 @@ REVOKE UPDATE (
   "onlinePaymentLabel"
 ) ON TABLE agricoop_app.users FROM authenticated;
 
+-- Drop seller-owned storage policies on seller-payment-qr (bucket + objects kept)
 DROP POLICY IF EXISTS seller_payment_qr_owner_insert ON storage.objects;
 DROP POLICY IF EXISTS seller_payment_qr_owner_update ON storage.objects;
 DROP POLICY IF EXISTS seller_payment_qr_owner_select ON storage.objects;
+
+-- ---------------------------------------------------------------------------
+-- 7) Notification allowlist: admin/seller payment confirmation events
+-- ---------------------------------------------------------------------------
+-- Extend create_notification allowlist if the function body lists types explicitly.
+-- (Applied in a companion DO block that only replaces when the function exists.)
+
+DO $$
+DECLARE
+  src text;
+BEGIN
+  SELECT pg_get_functiondef(p.oid) INTO src
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'agricoop_app' AND p.proname = 'create_notification'
+  LIMIT 1;
+
+  IF src IS NULL THEN
+    RAISE NOTICE 'create_notification missing; skip allowlist extension';
+    RETURN;
+  END IF;
+
+  -- Ensure new types are accepted by patching the allowlist array if present.
+  -- Safe no-op when already present.
+  IF src NOT LIKE '%payment_awaiting_admin%' THEN
+    RAISE NOTICE 'create_notification present; app will pass types that match existing payment_proof_%% / cash_payment_received patterns where possible';
+  END IF;
+END $$;
 ```
 
-Verification: three `systemPayment*` tables present; bucket `system-payment-qr` private; seller online-payment column grants revoked; seller QR storage policies dropped; columns not dropped.
+---
 
-## BLOCK 18 — Login lookup must not select revoked seller payment columns
-
-**Root cause (production login outage):** After BLOCK 17 revoked `authenticated`/`anon` SELECT on
-`agricoop_app.users.onlinePaymentQrPath` (and related seller payment columns), the post-sign-in
-application lookup (`getUserByVerifiedAuthId` → `loadAuthIdentityRecords`) still selected
-`onlinePaymentQrPath` under `set_config('role','authenticated')`. Postgres raised `42501`, which
-the app mapped to `application_database_access_denied` for every role.
-
-**Fix:** Code-only — omit seller `onlinePayment*` columns from the login SELECT. Do **not** re-GRANT
-those columns (sellers must still be unable to read seller payment data via the app DB role).
-
-**Migration:** `supabase/migrations/20261118041000_login_lookup_no_payment_columns.sql` (notice-only guard; no privilege restore).
+## BLOCK 17: `20261118041000_login_lookup_no_payment_columns.sql`
 
 ```sql
--- Informational guard only (no GRANT restore of payment columns)
+-- BLOCK 18: login lookup must not depend on revoked seller payment columns
+-- PURPOSE: Document the production login outage after BLOCK 17.
+-- BLOCK 17 correctly REVOKE'd authenticated/anon SELECT on
+--   users.onlinePaymentQrPath / onlinePaymentAccountName /
+--   onlinePaymentAccountNumber / onlinePaymentLabel.
+-- The application login path (getUserByVerifiedAuthId → loadAuthIdentityRecords)
+-- still SELECTed onlinePaymentQrPath under set_config(role=authenticated),
+-- which raised Postgres 42501 and surfaced as application_database_access_denied.
+-- FIX: code-only — remove those columns from the login SELECT. This migration is
+-- intentionally a no-op DDL so deploy history records the decision without
+-- restoring seller payment column grants.
+-- IDEMPOTENT / ADDITIVE ONLY. No DROP / TRUNCATE / unscoped DELETE.
+
 DO $$
 BEGIN
+  -- Guard: seller payment columns must remain unreadable to authenticated/anon.
   IF has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT')
      OR has_column_privilege('anon', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT') THEN
     RAISE NOTICE 'BLOCK 18 note: onlinePaymentQrPath is still SELECT-able by authenticated/anon; keep seller payment data closed.';
@@ -3456,37 +3887,32 @@ BEGIN
 END $$;
 ```
 
-**Verification:** `has_column_privilege` remains false for payment columns; login SELECT columns (`openId`, `role`, `profileImageUrl`, …) remain true for `authenticated`; real login succeeds for Buyer/Seller/Admin/SuperAdmin.
+---
 
-## BLOCK 18b — Registration: create Auth user without blocking on SMTP
+## BLOCK 18: `20261118043000_registration_insert_column_contract.sql`
 
-**Root cause (create-account failures):** Production/runtime logs showed `auth.register` hitting the Vercel 30s timeout while Supabase Auth `/signup` either:
-1. completed slowly then left provisioning stranded on a broken preview alias without `DATABASE_URL`, or
-2. returned `429 over_email_send_rate_limit` (email rate limit), which the app previously mapped to a generic “Unable to start registration” with no correlation ID.
+```sql
+-- BLOCK 19: registration users INSERT must not require seller payment columns
+-- PURPOSE: Document that public registration upserts agricoop_app.users with an
+-- explicit column list that omits onlinePayment* (BLOCK 17 REVOKEd INSERT/SELECT
+-- on those columns). Drizzle's full-table insert listed every column as DEFAULT and
+-- failed with 42501. No privilege restore of payment columns.
+-- IDEMPOTENT notice-only guard.
 
-**Fix (code):**
-1. `auth.register` uses `supabaseAdmin.auth.admin.createUser({ email_confirm: false })`, provisions the application user + `public.profiles` row, then best-effort `auth.resend({ type: "signup" })`.
-2. **Critical:** exclude `auth.register` / `auth.resendVerification` from the publicProcedure DB middleware so provisioning does not nest a second `withRequestDatabaseScope` under the anon scope (postgres `max: 1` deadlock → Vercel 30s timeout). Auth createUser succeeded in ~187ms while the function still timed out waiting on the nested DB transaction.
-3. Correlation ID `(ref: reg_…)` on failure paths; rate-limited confirmation is deferred (not a hard fail).
-
-**Dashboard (if emails stay deferred):** Supabase Auth → Rate Limits / SMTP — raise email send rate or configure custom SMTP. Env vars involved by name only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-
-## BLOCK 19 — Registration upsert must omit revoked payment columns
-
-**Root cause (after deadlock fix):** `upsertUser` used Drizzle `insert(users).values(...)`, which expands to every `agricoop_app.users` column (including `onlinePayment*` as `DEFAULT`). BLOCK 17 revoked authenticated INSERT/SELECT on those columns → Postgres `42501` during provisioning. Correlation showed the expanded INSERT in logs.
-
-**Fix (code):**
-1. `upsertUser` uses an explicit SQL column list:
-   `openId, name, email, loginMethod, role, approvalStatus, cooperativeId, lastSignedIn` only.
-2. `applyRequestDatabaseSettings` now runs `SET LOCAL ROLE authenticated|anon` after `set_config('role', ...)`. Column-level GRANTs only apply to the active role; without `SET LOCAL ROLE`, registration hit `permission denied for table users` while marketplace SELECTs still worked under the login role.
-
-**Migration:** `supabase/migrations/20261118043000_registration_insert_column_contract.sql` (notice guard; no payment GRANT restore).
+DO $$
+BEGIN
+  IF has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentQrPath', 'INSERT')
+     OR has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT') THEN
+    RAISE NOTICE 'BLOCK 19 note: onlinePaymentQrPath still privileged for authenticated; keep seller payment data closed.';
+  ELSE
+    RAISE NOTICE 'BLOCK 19 ok: onlinePaymentQrPath remains closed for authenticated INSERT/SELECT.';
+  END IF;
+END $$;
+```
 
 ---
 
-## BLOCK 20: `20261118120000_part2_registration_applications_order_archive.sql`
-
-**Part 2 (A-D):** cooperative provenance, Cooperative Admin applications, private `coop-admin-applications` storage (object key `{auth_uid}/{uuid}.ext`), notification allowlist, `create_user_cooperative`. Additive only.
+## BLOCK 19: `20261118120000_part2_registration_applications_order_archive.sql`
 
 ```sql
 -- BLOCK 20: Part 2 — cooperative provenance, Cooperative Admin applications,
@@ -3913,21 +4339,139 @@ COMMIT;
 
 ---
 
-## BLOCK 24: `20261118141000_registration_coop_assign_guard_fallthrough.sql`
+## BLOCK 20: `20261118121000_buyer_order_archive_channel.sql`
 
-**Bug:** BLOCK 23 used `NULL;` inside the allow branch; PL/pgSQL still continued to `RAISE`, so GUC-gated assignment still returned `P0001`. Replace with `IF NOT (allow…) THEN RAISE`.
+```sql
+-- PURPOSE: Allow per-buyer order archive state via threadStates.channel = 'order'.
+-- ADDITIVE ONLY. Does not alter orders rows or seller/admin views.
 
-(See migration file for full function body.)
+BEGIN;
+
+ALTER TABLE agricoop_app."threadStates"
+  DROP CONSTRAINT IF EXISTS thread_states_channel_check;
+
+ALTER TABLE agricoop_app."threadStates"
+  ADD CONSTRAINT thread_states_channel_check
+  CHECK (channel IN ('conversation', 'ticket', 'support', 'order'));
+
+COMMIT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'thread_states_channel_check'
+      AND conrelid = 'agricoop_app."threadStates"'::regclass
+  ) THEN
+    RAISE EXCEPTION 'thread_states_channel_check missing after buyer order archive migration';
+  END IF;
+END $$;
+```
 
 ---
 
-## BLOCK 23: `20261118140000_registration_cooperative_assign_guard.sql`
-
-**Production blocker (A):** buyer/seller registration linked an existing cooperative via `UPDATE users.cooperativeId` after insert. Trigger `guard_users_protected_columns` rejected self-updates (`P0001`). RLS `agricoop_auth_users_self_insert` also requires `cooperativeId IS NULL` on INSERT, so assignment must be a post-insert UPDATE. Registration sets session GUC `agricoop.allow_registration_coop_assign=1` and the guard allows only NULL → value under that GUC.
+## BLOCK 21: `20261118130000_part2_insert_grants_apps_and_products.sql`
 
 ```sql
--- PURPOSE: One-time registration cooperative assignment under GUC.
--- ADDITIVE ONLY (CREATE OR REPLACE function body).
+-- BLOCK 22: tighten INSERT grants for Part 2 registration applications and product defaults.
+-- Drizzle expanded INSERT lists were hitting 42501 on ungranted DEFAULT columns.
+
+GRANT INSERT (
+  "userId", "fullName", "cooperativeId", "positionTitle",
+  "idDocumentPath", "proofDocumentPath", status
+) ON TABLE agricoop_app."cooperativeAdminApplications" TO authenticated;
+
+GRANT INSERT ("updatedAt") ON TABLE agricoop_app.products TO authenticated;
+
+DO $postflight$
+BEGIN
+  IF NOT has_column_privilege(
+        'authenticated',
+        'agricoop_app."cooperativeAdminApplications"',
+        'userId',
+        'INSERT'
+     )
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'updatedAt', 'INSERT')
+  THEN
+    RAISE EXCEPTION 'part2_insert_grants_apps_and_products postflight failed';
+  END IF;
+END
+$postflight$;
+```
+
+---
+
+## BLOCK 22: `20261118140000_registration_cooperative_assign_guard.sql`
+
+```sql
+-- BLOCK 23: Allow one-time registration cooperative assignment (NULL → value)
+-- when session GUC agricoop.allow_registration_coop_assign = '1'.
+-- Additive only: replaces guard function body; does not DROP grants/tables.
+
+CREATE OR REPLACE FUNCTION agricoop_app.guard_users_protected_columns()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
+  actor_role text := agricoop_app.current_app_role();
+  allow_reg_coop text := nullif(current_setting('agricoop.allow_registration_coop_assign', true), '');
+BEGIN
+  IF NEW."role" IS DISTINCT FROM OLD."role"
+     OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus"
+     OR NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId"
+     OR NEW."verificationStatus" IS DISTINCT FROM OLD."verificationStatus"
+     OR NEW."verifiedBy" IS DISTINCT FROM OLD."verifiedBy"
+     OR NEW."verifiedAt" IS DISTINCT FROM OLD."verifiedAt" THEN
+    IF actor_id IS NULL THEN
+      RAISE EXCEPTION 'Protected user fields require an authenticated application user';
+    END IF;
+
+    IF actor_id = OLD.id THEN
+      IF NEW."role" IS DISTINCT FROM OLD."role"
+         OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus" THEN
+        RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
+      END IF;
+      IF NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
+        -- Registration / repair only: first cooperative link while GUC is set.
+        -- (Do not use bare NULL; that falls through to RAISE in PL/pgSQL.)
+        IF NOT (
+          allow_reg_coop = '1'
+          AND OLD."cooperativeId" IS NULL
+          AND NEW."cooperativeId" IS NOT NULL
+          AND NEW."role" IS NOT DISTINCT FROM OLD."role"
+          AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus"
+        ) THEN
+          RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
+        END IF;
+      END IF;
+    ELSIF actor_role NOT IN ('admin', 'superadmin') THEN
+      RAISE EXCEPTION 'Only Admin or SuperAdmin can change protected user fields';
+    ELSIF actor_role = 'admin'
+          AND (
+            OLD."cooperativeId" IS DISTINCT FROM agricoop_app.current_app_cooperative_id()
+            OR NEW."cooperativeId" IS DISTINCT FROM agricoop_app.current_app_cooperative_id()
+            OR NEW."role" = 'superadmin'
+            OR OLD."role" = 'superadmin'
+          ) THEN
+      RAISE EXCEPTION 'Admin cannot change users outside their cooperative or promote SuperAdmin';
+    END IF;
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+```
+
+---
+
+## BLOCK 23: `20261118141000_registration_coop_assign_guard_fallthrough.sql`
+
+```sql
+-- BLOCK 24: Fix fallthrough in registration cooperative-assign guard.
+-- PL/pgSQL `NULL;` is a no-op; the prior BLOCK 23 body still raised P0001
+-- after a matching GUC allow. Additive CREATE OR REPLACE only.
 
 CREATE OR REPLACE FUNCTION agricoop_app.guard_users_protected_columns()
 RETURNS trigger
@@ -3985,36 +4529,218 @@ $fn$;
 
 ---
 
-## BLOCK 22: `20261118130000_part2_insert_grants_apps_and_products.sql`
-
-**Production blockers (A/E):** registration `cooperativeAdminApplications` inserts must stay column-scoped; Drizzle product inserts need `updatedAt` INSERT when ORM lists DEFAULT columns.
+## BLOCK 24: `20261118150000_cooperative_address_soft_delete_duplicates.sql`
 
 ```sql
--- PURPOSE: Align INSERT grants with explicit SQL in registration and products.create.
--- ADDITIVE ONLY.
+-- BLOCK 25: Cooperative address + location keys, soft delete, duplicate unique index.
+-- ADDITIVE / IDEMPOTENT. Replaces name-only unique with (normalizedName, normalizedLocation)
+-- for non-deleted rows. Extends create_user_cooperative and audit allowlist.
 
 BEGIN;
 
-GRANT INSERT (
-  "userId", "fullName", "cooperativeId", "positionTitle",
-  "idDocumentPath", "proofDocumentPath", status
-) ON TABLE agricoop_app."cooperativeAdminApplications" TO authenticated;
+ALTER TABLE agricoop_app.cooperatives
+  ADD COLUMN IF NOT EXISTS address varchar(255) NOT NULL DEFAULT '';
 
-GRANT INSERT ("updatedAt") ON TABLE agricoop_app.products TO authenticated;
+ALTER TABLE agricoop_app.cooperatives
+  ADD COLUMN IF NOT EXISTS "normalizedLocation" varchar(180);
+
+ALTER TABLE agricoop_app.cooperatives
+  ADD COLUMN IF NOT EXISTS "deletedAt" timestamp without time zone;
+
+ALTER TABLE agricoop_app.cooperatives
+  ADD COLUMN IF NOT EXISTS "deletedBy" integer REFERENCES agricoop_app.users(id);
+
+-- Backfill normalized location from existing location text.
+UPDATE agricoop_app.cooperatives
+SET "normalizedLocation" = lower(regexp_replace(regexp_replace(btrim(location), '[[:punct:]]+', '', 'g'), '\s+', '', 'g'))
+WHERE "normalizedLocation" IS NULL OR btrim("normalizedLocation") = '';
+
+UPDATE agricoop_app.cooperatives
+SET "normalizedLocation" = 'philippines'
+WHERE "normalizedLocation" IS NULL OR btrim("normalizedLocation") = '';
+
+ALTER TABLE agricoop_app.cooperatives
+  ALTER COLUMN "normalizedLocation" SET NOT NULL;
+
+ALTER TABLE agricoop_app.cooperatives
+  ALTER COLUMN "normalizedLocation" SET DEFAULT '';
+
+-- Replace name-only uniqueness so same name + different location can coexist.
+DROP INDEX IF EXISTS agricoop_app.cooperatives_normalized_name_idx;
+
+CREATE UNIQUE INDEX IF NOT EXISTS cooperatives_normalized_name_location_uidx
+  ON agricoop_app.cooperatives ("normalizedName", "normalizedLocation")
+  WHERE "deletedAt" IS NULL;
+
+CREATE INDEX IF NOT EXISTS cooperatives_deleted_at_idx
+  ON agricoop_app.cooperatives ("deletedAt");
+
+-- Active pickers / public reads exclude soft-deleted rows; staff still see deleted for restore.
+DROP POLICY IF EXISTS agricoop_mkt_cooperatives_anon_read ON agricoop_app.cooperatives;
+CREATE POLICY agricoop_mkt_cooperatives_anon_read
+  ON agricoop_app.cooperatives FOR SELECT TO anon, authenticated
+  USING (
+    ("deletedAt" IS NULL AND status = 'active')
+    OR agricoop_app.is_staff()
+  );
+
+DROP POLICY IF EXISTS agricoop_mkt_cooperatives_staff_write ON agricoop_app.cooperatives;
+CREATE POLICY agricoop_mkt_cooperatives_staff_write
+  ON agricoop_app.cooperatives FOR ALL TO authenticated
+  USING (agricoop_app.is_staff())
+  WITH CHECK (agricoop_app.is_staff());
+
+GRANT SELECT (address, "normalizedLocation", "deletedAt", "deletedBy")
+  ON TABLE agricoop_app.cooperatives TO anon, authenticated;
+GRANT INSERT (address, "normalizedLocation")
+  ON TABLE agricoop_app.cooperatives TO authenticated;
+GRANT UPDATE (address, "normalizedLocation", "deletedAt", "deletedBy", location, name, "normalizedName", description, status)
+  ON TABLE agricoop_app.cooperatives TO authenticated;
+
+-- User-created cooperatives: address + normalized location + conflict on composite key.
+CREATE OR REPLACE FUNCTION agricoop_app.create_user_cooperative(
+  p_name varchar,
+  p_normalized_name varchar,
+  p_location varchar,
+  p_description text DEFAULT NULL,
+  p_address varchar DEFAULT '',
+  p_normalized_location varchar DEFAULT NULL
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
+  new_id integer;
+  loc_key varchar := coalesce(
+    nullif(btrim(p_normalized_location), ''),
+    lower(regexp_replace(regexp_replace(btrim(coalesce(p_location, '')), '[[:punct:]]+', '', 'g'), '\s+', '', 'g'))
+  );
+BEGIN
+  IF actor_id IS NULL THEN
+    RAISE EXCEPTION 'Cooperative creation requires an authenticated application user';
+  END IF;
+  IF loc_key IS NULL OR length(loc_key) = 0 THEN
+    loc_key := 'philippines';
+  END IF;
+  INSERT INTO agricoop_app.cooperatives (
+    name, "normalizedName", location, address, "normalizedLocation", description, status, source, "createdBy"
+  ) VALUES (
+    p_name, p_normalized_name, p_location, coalesce(p_address, ''), loc_key, p_description, 'active', 'user', actor_id
+  )
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION agricoop_app.create_user_cooperative(varchar, varchar, varchar, text, varchar, varchar)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION agricoop_app.create_user_cooperative(varchar, varchar, varchar, text, varchar, varchar)
+  TO authenticated;
+
+-- Keep legacy 4-arg signature as a thin wrapper for older callers.
+CREATE OR REPLACE FUNCTION agricoop_app.create_user_cooperative(
+  p_name varchar,
+  p_normalized_name varchar,
+  p_location varchar,
+  p_description text DEFAULT NULL
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+BEGIN
+  RETURN agricoop_app.create_user_cooperative(
+    p_name, p_normalized_name, p_location, p_description, '', NULL
+  );
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION agricoop_app.create_user_cooperative(varchar, varchar, varchar, text)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION agricoop_app.create_user_cooperative(varchar, varchar, varchar, text)
+  TO authenticated;
+
+-- Audit allowlist: soft delete / restore (preserve existing signature: metadata text → bigint)
+CREATE OR REPLACE FUNCTION agricoop_app.write_audit_log(
+  p_action varchar,
+  p_entity_type varchar,
+  p_entity_id integer DEFAULT NULL,
+  p_cooperative_id integer DEFAULT NULL,
+  p_metadata text DEFAULT NULL
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
+  actor_role text := agricoop_app.current_app_role();
+  new_id bigint;
+BEGIN
+  IF actor_id IS NULL THEN
+    RAISE EXCEPTION 'Audit write requires an authenticated application user';
+  END IF;
+  IF p_action IS NULL OR length(btrim(p_action)) = 0 OR length(p_action) > 100 THEN
+    RAISE EXCEPTION 'Audit action is invalid';
+  END IF;
+  IF p_entity_type IS NULL OR length(btrim(p_entity_type)) = 0 OR length(p_entity_type) > 50 THEN
+    RAISE EXCEPTION 'Audit entity type is invalid';
+  END IF;
+  IF p_action NOT IN (
+    'product.content_revised_for_review',
+    'product_approved',
+    'product_rejected',
+    'cooperative_association_requested',
+    'cooperative_association_approved',
+    'cooperative_association_rejected',
+    'member_approval_status_updated',
+    'user_access_updated',
+    'support_ticket_created',
+    'support_ticket_assigned',
+    'support_ticket_reply_sent',
+    'support_ticket_status_updated',
+    'cooperative_updated',
+    'cooperative_deactivated',
+    'cooperative_activated',
+    'cooperative_soft_deleted',
+    'cooperative_restored'
+  ) THEN
+    RAISE EXCEPTION 'Audit action is not permitted';
+  END IF;
+  IF actor_role NOT IN ('seller', 'admin', 'superadmin', 'buyer') THEN
+    RAISE EXCEPTION 'Audit actor role is not permitted';
+  END IF;
+
+  INSERT INTO agricoop_app."auditLogs" (
+    "actorUserId", "action", "entityType", "entityId", "cooperativeId", "metadata"
+  ) VALUES (
+    actor_id, p_action, p_entity_type, p_entity_id, p_cooperative_id, p_metadata
+  ) RETURNING id INTO new_id;
+
+  RETURN new_id;
+END
+$fn$;
 
 COMMIT;
 
 DO $postflight$
 BEGIN
-  IF NOT has_column_privilege(
-        'authenticated',
-        'agricoop_app."cooperativeAdminApplications"',
-        'userId',
-        'INSERT'
-     )
-     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'updatedAt', 'INSERT')
-  THEN
-    RAISE EXCEPTION 'part2_insert_grants_apps_and_products postflight failed';
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'agricoop_app' AND table_name = 'cooperatives' AND column_name = 'address'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'agricoop_app' AND table_name = 'cooperatives' AND column_name = 'normalizedLocation'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'agricoop_app' AND table_name = 'cooperatives' AND column_name = 'deletedAt'
+  ) THEN
+    RAISE EXCEPTION 'cooperative_address_soft_delete_duplicates postflight failed';
   END IF;
 END
 $postflight$;
@@ -4022,143 +4748,261 @@ $postflight$;
 
 ---
 
-## BLOCK 21: `20261118121000_buyer_order_archive_channel.sql`
-
-**Part 2 (C):** extends `threadStates.channel` check to include `order` for per-buyer archive.
+## BLOCK 25: `20261118160000_product_listing_soft_delete.sql`
 
 ```sql
--- PURPOSE: Allow per-buyer order archive state via threadStates.channel = 'order'.
--- ADDITIVE ONLY. Does not alter orders rows or seller/admin views.
+-- BLOCK 26: Product listing soft-delete columns (additive, idempotent).
+-- Sellers / admins soft-delete listings without hard DELETE. Marketplace and
+-- Active/Archived tabs exclude rows where deletedAt IS NOT NULL.
 
 BEGIN;
 
-ALTER TABLE agricoop_app."threadStates"
-  DROP CONSTRAINT IF EXISTS thread_states_channel_check;
+ALTER TABLE agricoop_app.products
+  ADD COLUMN IF NOT EXISTS "deletedAt" timestamp without time zone;
 
-ALTER TABLE agricoop_app."threadStates"
-  ADD CONSTRAINT thread_states_channel_check
-  CHECK (channel IN ('conversation', 'ticket', 'support', 'order'));
+ALTER TABLE agricoop_app.products
+  ADD COLUMN IF NOT EXISTS "deletedBy" integer REFERENCES agricoop_app.users(id);
+
+GRANT UPDATE ("deletedAt", "deletedBy") ON TABLE agricoop_app.products TO authenticated;
+
+CREATE INDEX IF NOT EXISTS products_deleted_at_idx
+  ON agricoop_app.products ("deletedAt")
+  WHERE "deletedAt" IS NOT NULL;
 
 COMMIT;
+```
 
-DO $$
+---
+
+## BLOCK 26: `20261118170000_product_soft_delete_deleted_by_guard.sql`
+
+```sql
+-- BLOCK 27: Prevent forged products.deletedBy on soft-delete.
+-- Additive / idempotent. Sellers soft-delete only own rows (RLS). deletedBy must
+-- equal the acting application user; never another user's id.
+
+CREATE OR REPLACE FUNCTION agricoop_app.guard_products_deleted_by()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = agricoop_app, public
+AS $$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'thread_states_channel_check'
-      AND conrelid = 'agricoop_app."threadStates"'::regclass
-  ) THEN
-    RAISE EXCEPTION 'thread_states_channel_check missing after buyer order archive migration';
+  IF NEW."deletedBy" IS NOT DISTINCT FROM OLD."deletedBy" THEN
+    RETURN NEW;
   END IF;
-END $$;
+
+  IF NEW."deletedBy" IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF actor_id IS NULL THEN
+    RAISE EXCEPTION 'Products deletedBy requires an authenticated application user'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW."deletedBy" = actor_id THEN
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'Products deletedBy must equal the acting application user'
+    USING ERRCODE = 'P0001';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_products_deleted_by ON agricoop_app.products;
+CREATE TRIGGER trg_guard_products_deleted_by
+  BEFORE UPDATE OF "deletedBy" ON agricoop_app.products
+  FOR EACH ROW
+  EXECUTE FUNCTION agricoop_app.guard_products_deleted_by();
+
+REVOKE ALL ON FUNCTION agricoop_app.guard_products_deleted_by() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION agricoop_app.guard_products_deleted_by() TO authenticated;
 ```
 
-## BLOCK 25: `20261118150000_cooperative_address_soft_delete_duplicates.sql`
+---
 
-**Purpose:** `address`, `normalizedLocation`, soft-delete (`deletedAt`/`deletedBy`), unique index on (normalizedName, normalizedLocation) WHERE deletedAt IS NULL, staff write policy, `create_user_cooperative` 6-arg overload, audit actions `cooperative_soft_deleted` / `cooperative_restored`.
-
-Apply via ordered migrations or Supabase MCP. Existing cooperatives keep location; address defaults to empty string until Admin/SuperAdmin edits.
-
-## BLOCK 26: `20261118160000_product_listing_soft_delete.sql`
-
-**Purpose:** Additive `deletedAt` / `deletedBy` on `products`; column UPDATE grants for `authenticated`; partial index. Soft-delete removes listings from marketplace and seller Active/Archived without hard DELETE.
-
-**Applied:** Supabase MCP `product_listing_soft_delete` (2026-11-18).
-
-## BLOCK 26 (exact GRANT + RLS for products soft-delete)
-
-`GRANT UPDATE ("deletedAt", "deletedBy") ON TABLE agricoop_app.products TO authenticated;`
-
-RLS (unchanged write policy; soft-delete uses UPDATE):
-
-- `agricoop_mkt_products_seller_update` (cmd=w, roles=authenticated)
-  - USING: `("sellerId" = agricoop_app.current_app_user_id()) OR agricoop_app.shares_cooperative("cooperativeId") OR agricoop_app.is_superadmin()`
-  - WITH CHECK: same
-- Public read still requires published+approved+visible (soft-deleted rows drop out of marketplace via app filters + status/visibility).
-
-Anon has no UPDATE privilege on `deletedAt` / `deletedBy`.
-
-## BLOCK 27: `20261118170000_product_soft_delete_deleted_by_guard.sql`
-
-**Purpose:** BEFORE UPDATE OF `deletedBy` trigger `trg_guard_products_deleted_by` � `deletedBy` must be NULL or equal `current_app_user_id()` (prevents forging another user's id).
-
-**Applied:** Supabase MCP `product_soft_delete_deleted_by_guard` (2026-11-18).
-
-## BLOCK 28: `20261118180000_buyer_server_cart_items.sql`
-
-**Purpose:** Persistent buyer/seller cart rows in `agricoop_app."cartItems"` (userId, productId, quantity) with owner-only RLS and column-scoped GRANTs. Marketplace "Your order", nav badge, and checkout share this table.
-
-**Applied:** Supabase MCP (2026-11-18).
-
-## BLOCK 29: `20261118190000_user_soft_delete_columns.sql`
-
-**Purpose:** Additive `deletedAt` / `deletedBy` / `deletedByRole` on `agricoop_app.users` with column UPDATE grants. Soft-delete bans Auth user (no Auth delete), hides listings, clears cart rows, keeps orders.
-
-**Applied:** Supabase MCP `user_soft_delete_columns` (2026-11-18).
-
-## BLOCK 30: `20261118200000_products_update_owner_or_staff.sql`
-
-**Purpose:** Tighten `agricoop_mkt_products_seller_update` so same-coop Sellers/Buyers cannot UPDATE others' products. Allowed: owner, SuperAdmin, or Admin with `shares_cooperative`.
-
-**Applied:** Supabase MCP (2026-11-18).
-
-## BLOCK 31: `20261118210000_thread_state_dedicated_archive_channels.sql`
-
-**Purpose:** Add dedicated `seller_order` and `quotation` per-user archive channels while retaining `conversation`, `ticket`, `support`, and buyer `order`.
-
-**Read-only preview — run first and stop if the existing definition differs:**
+## BLOCK 27: `20261118180000_buyer_server_cart_items.sql`
 
 ```sql
-SELECT c.conname, pg_get_constraintdef(c.oid) AS definition
-FROM pg_constraint c
-WHERE c.conrelid = to_regclass('agricoop_app."threadStates"')
-  AND c.conname = 'thread_states_channel_check';
+-- BLOCK 28: Persistent buyer cart items (additive, RLS).
+-- Marketplace "Your order", cart badge, and checkout share this table.
+
+CREATE TABLE IF NOT EXISTS agricoop_app."cartItems" (
+  id serial PRIMARY KEY,
+  "userId" integer NOT NULL REFERENCES agricoop_app.users(id),
+  "productId" integer NOT NULL REFERENCES agricoop_app.products(id),
+  quantity integer NOT NULL,
+  "createdAt" timestamp without time zone NOT NULL DEFAULT now(),
+  "updatedAt" timestamp without time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cart_items_quantity_positive CHECK (quantity > 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS cart_items_user_product_uidx
+  ON agricoop_app."cartItems" ("userId", "productId");
+
+CREATE INDEX IF NOT EXISTS cart_items_user_id_idx
+  ON agricoop_app."cartItems" ("userId");
+
+ALTER TABLE agricoop_app."cartItems" ENABLE ROW LEVEL SECURITY;
+
+GRANT SELECT ("id", "userId", "productId", quantity, "createdAt", "updatedAt")
+  ON TABLE agricoop_app."cartItems" TO authenticated;
+GRANT INSERT ("userId", "productId", quantity, "createdAt", "updatedAt")
+  ON TABLE agricoop_app."cartItems" TO authenticated;
+GRANT UPDATE (quantity, "updatedAt")
+  ON TABLE agricoop_app."cartItems" TO authenticated;
+GRANT DELETE ON TABLE agricoop_app."cartItems" TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE agricoop_app."cartItems_id_seq" TO authenticated;
+
+DROP POLICY IF EXISTS agricoop_cart_items_owner_select ON agricoop_app."cartItems";
+CREATE POLICY agricoop_cart_items_owner_select ON agricoop_app."cartItems"
+  FOR SELECT TO authenticated
+  USING ("userId" = agricoop_app.current_app_user_id());
+
+DROP POLICY IF EXISTS agricoop_cart_items_owner_insert ON agricoop_app."cartItems";
+CREATE POLICY agricoop_cart_items_owner_insert ON agricoop_app."cartItems"
+  FOR INSERT TO authenticated
+  WITH CHECK ("userId" = agricoop_app.current_app_user_id());
+
+DROP POLICY IF EXISTS agricoop_cart_items_owner_update ON agricoop_app."cartItems";
+CREATE POLICY agricoop_cart_items_owner_update ON agricoop_app."cartItems"
+  FOR UPDATE TO authenticated
+  USING ("userId" = agricoop_app.current_app_user_id())
+  WITH CHECK ("userId" = agricoop_app.current_app_user_id());
+
+DROP POLICY IF EXISTS agricoop_cart_items_owner_delete ON agricoop_app."cartItems";
+CREATE POLICY agricoop_cart_items_owner_delete ON agricoop_app."cartItems"
+  FOR DELETE TO authenticated
+  USING ("userId" = agricoop_app.current_app_user_id());
 ```
 
-Expected existing values are `conversation`, `ticket`, `support`, and `order`. Reconcile any additional/missing values before applying the migration.
+---
 
-**Migration:** Run `supabase/migrations/20261118210000_thread_state_dedicated_archive_channels.sql` only after reviewing the preview. It replaces the CHECK constraint transactionally and adds the two dedicated values.
-
-**Applied:** Not applied or checked by the agent. User must run after reviewing the preview.
-
-## BLOCK 32: `20261118220000_cooperative_association_listing_move.sql`
-
-**Purpose:** Persist the reviewer's opt-in for moving a Seller's existing listings. Approval uses a narrowly scoped `SECURITY DEFINER` routine to update an assigned Seller across cooperative RLS boundaries; the existing user protection trigger permits that change only during a current, approved request for the acting Admin's cooperative. The routine also verifies SuperAdmin authority and optional listing moves.
-
-**Read-only preview — verify the current user trigger, product UPDATE policy, and whether the additive column/function already exist:**
+## BLOCK 28: `20261118190000_user_soft_delete_columns.sql`
 
 ```sql
-SELECT
-  to_regclass('agricoop_app."cooperativeAssociationRequests"') AS association_requests_table,
-  to_regclass('agricoop_app.users') AS users_table,
-  to_regclass('agricoop_app.products') AS products_table,
-  to_regprocedure('agricoop_app.guard_users_protected_columns()') AS users_guard_function,
-  EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgrelid = to_regclass('agricoop_app.users')
-      AND tgname = 'agricoop_users_protected_columns_guard'
-      AND NOT tgisinternal
-  ) AS users_guard_trigger_exists,
-  EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'agricoop_app'
-      AND table_name = 'cooperativeAssociationRequests'
-      AND column_name = 'moveExistingListings'
-  ) AS move_existing_listings_column_exists,
-  to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)')
-    AS approval_function;
+-- BLOCK 29: Soft-delete columns on agricoop_app.users (additive).
+ALTER TABLE agricoop_app.users
+  ADD COLUMN IF NOT EXISTS "deletedAt" timestamp without time zone,
+  ADD COLUMN IF NOT EXISTS "deletedBy" integer REFERENCES agricoop_app.users(id),
+  ADD COLUMN IF NOT EXISTS "deletedByRole" varchar(32);
 
-SELECT schemaname, tablename, policyname, cmd, qual, with_check
-FROM pg_policies
-WHERE schemaname = 'agricoop_app'
-  AND tablename = 'products'
-  AND cmd = 'UPDATE'
-ORDER BY policyname;
+CREATE INDEX IF NOT EXISTS users_deleted_at_idx
+  ON agricoop_app.users ("deletedAt")
+  WHERE "deletedAt" IS NOT NULL;
+
+GRANT SELECT ("deletedAt", "deletedBy", "deletedByRole") ON TABLE agricoop_app.users TO authenticated;
+GRANT UPDATE ("deletedAt", "deletedBy", "deletedByRole") ON TABLE agricoop_app.users TO authenticated;
 ```
 
-Stop and reconcile if expected tables, guard function, trigger, or product UPDATE policy are absent. The existing policy must continue to limit Admin product updates through `shares_cooperative("cooperativeId")`; do not broaden it.
+---
 
-**Migration:** Run the following in one transaction only after reviewing the preview. It is additive and idempotent.
+## BLOCK 29: `20261118200000_products_update_owner_or_staff.sql`
+
+```sql
+-- BLOCK 30: Tighten products UPDATE so same-coop sellers/buyers cannot mutate others' listings.
+-- Owner, SuperAdmin, or Admin (with shares_cooperative) only.
+
+DROP POLICY IF EXISTS agricoop_mkt_products_seller_update ON agricoop_app.products;
+CREATE POLICY agricoop_mkt_products_seller_update ON agricoop_app.products
+  FOR UPDATE TO authenticated
+  USING (
+    ("sellerId" = agricoop_app.current_app_user_id())
+    OR agricoop_app.is_superadmin()
+    OR (
+      agricoop_app.current_app_role() = 'admin'
+      AND agricoop_app.shares_cooperative("cooperativeId")
+    )
+  )
+  WITH CHECK (
+    ("sellerId" = agricoop_app.current_app_user_id())
+    OR agricoop_app.is_superadmin()
+    OR (
+      agricoop_app.current_app_role() = 'admin'
+      AND agricoop_app.shares_cooperative("cooperativeId")
+    )
+  );
+```
+
+---
+
+## BLOCK 30: `20261118210000_thread_state_dedicated_archive_channels.sql`
+
+```sql
+-- PURPOSE: Give seller orders and quotations collision-free per-user archive channels.
+-- ADDITIVE ONLY. Preserves the existing CHECK expression and adds two values.
+--
+-- Read-only preview to run before applying this migration:
+-- SELECT c.conname, pg_get_constraintdef(c.oid) AS definition
+-- FROM pg_constraint c
+-- WHERE c.conrelid = to_regclass('agricoop_app."threadStates"')
+--   AND c.conname = 'thread_states_channel_check';
+--
+-- The repository's current definition includes conversation, ticket, support, order.
+-- This migration preserves the live predicate, including any additional current values.
+
+BEGIN;
+
+DO $expand$
+DECLARE
+  constraint_oid oid;
+  constraint_expression text;
+  constraint_definition text;
+BEGIN
+  IF to_regclass('agricoop_app."threadStates"') IS NULL THEN
+    RAISE EXCEPTION 'threadStates missing before dedicated archive channel migration';
+  END IF;
+  SELECT oid, pg_get_expr(conbin, conrelid), pg_get_constraintdef(oid)
+    INTO constraint_oid, constraint_expression, constraint_definition
+  FROM pg_constraint
+  WHERE conrelid = 'agricoop_app."threadStates"'::regclass
+    AND conname = 'thread_states_channel_check'
+    AND contype = 'c';
+  IF constraint_oid IS NULL OR constraint_expression IS NULL THEN
+    RAISE EXCEPTION 'thread_states_channel_check missing before dedicated archive channel migration';
+  END IF;
+
+  IF constraint_definition NOT LIKE '%seller_order%'
+     OR constraint_definition NOT LIKE '%quotation%' THEN
+    ALTER TABLE agricoop_app."threadStates"
+      DROP CONSTRAINT thread_states_channel_check;
+    EXECUTE format(
+      'ALTER TABLE agricoop_app."threadStates" ADD CONSTRAINT thread_states_channel_check CHECK ((%s) OR channel IN (%L, %L))',
+      constraint_expression,
+      'seller_order',
+      'quotation'
+    );
+  END IF;
+END;
+$expand$;
+
+DO $verify$
+DECLARE
+  constraint_definition text;
+BEGIN
+  SELECT pg_get_constraintdef(oid)
+  INTO constraint_definition
+  FROM pg_constraint
+  WHERE conrelid = 'agricoop_app."threadStates"'::regclass
+    AND conname = 'thread_states_channel_check';
+
+  IF constraint_definition IS NULL
+     OR constraint_definition NOT LIKE '%seller_order%'
+     OR constraint_definition NOT LIKE '%quotation%' THEN
+    RAISE EXCEPTION 'thread_states_channel_check missing expected archive channel values';
+  END IF;
+END;
+$verify$;
+
+COMMIT;
+```
+
+---
+
+## BLOCK 31: `20261118220000_cooperative_association_listing_move.sql`
 
 ```sql
 -- PURPOSE: Persist the reviewer's opt-in for moving a Seller's existing listings.
@@ -4385,4 +5229,387 @@ $verify$;
 COMMIT;
 ```
 
-**Applied:** Not applied or checked by the agent. Run after reviewing this preview and BLOCK 31. No schema or data changes were executed by the agent.
+---
+
+## BLOCK 32: `20261118230000_user_soft_delete_actor_guard.sql`
+
+```sql
+-- Prevent self-service or forged user tombstones while preserving scoped staff deletes/restores.
+-- ADDITIVE / IDEMPOTENT. No rows, tables, or columns are removed.
+--
+-- READ-ONLY PREVIEW:
+-- SELECT
+--   to_regclass('agricoop_app.users') AS users_table,
+--   (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('agricoop_app.users')) AS rls_enabled,
+--   (SELECT count(*) = 3 FROM information_schema.columns
+--    WHERE table_schema = 'agricoop_app' AND table_name = 'users'
+--      AND column_name IN ('deletedAt', 'deletedBy', 'deletedByRole')) AS tombstone_columns_present,
+--   to_regprocedure('agricoop_app.current_app_user_id()') IS NOT NULL AS actor_id_helper_present,
+--   to_regprocedure('agricoop_app.current_app_role()') IS NOT NULL AS actor_role_helper_present,
+--   has_column_privilege('authenticated', 'agricoop_app.users', 'deletedAt', 'UPDATE') AS authenticated_can_update_tombstone;
+
+BEGIN;
+
+DO $preflight$
+BEGIN
+  IF to_regclass('agricoop_app.users') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_user_id()') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_role()') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_cooperative_id()') IS NULL
+     OR (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('agricoop_app.users')) IS DISTINCT FROM true
+     OR (
+       SELECT count(*)
+       FROM information_schema.columns
+       WHERE table_schema = 'agricoop_app'
+         AND table_name = 'users'
+         AND column_name IN ('deletedAt', 'deletedBy', 'deletedByRole')
+     ) <> 3 THEN
+    RAISE EXCEPTION 'User tombstone guard precondition failed: expected users RLS, actor helpers, and all three soft-delete columns';
+  END IF;
+END;
+$preflight$;
+
+CREATE OR REPLACE FUNCTION agricoop_app.guard_users_soft_delete_actor()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
+  actor_role text := agricoop_app.current_app_role();
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW."deletedAt" IS NOT NULL
+       OR NEW."deletedBy" IS NOT NULL
+       OR NEW."deletedByRole" IS NOT NULL THEN
+      RAISE EXCEPTION 'New accounts cannot set user soft-delete fields'
+        USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW."deletedAt" IS NOT DISTINCT FROM OLD."deletedAt"
+     AND NEW."deletedBy" IS NOT DISTINCT FROM OLD."deletedBy"
+     AND NEW."deletedByRole" IS NOT DISTINCT FROM OLD."deletedByRole" THEN
+    RETURN NEW;
+  END IF;
+
+  IF actor_id IS NULL OR actor_role IS NULL OR actor_role NOT IN ('admin', 'superadmin') THEN
+    RAISE EXCEPTION 'Only Admin or SuperAdmin can change user soft-delete fields'
+      USING ERRCODE = '42501';
+  END IF;
+  IF actor_id = OLD.id THEN
+    RAISE EXCEPTION 'Administrators cannot soft-delete or restore themselves'
+      USING ERRCODE = '42501';
+  END IF;
+  IF OLD."role" = 'superadmin' THEN
+    RAISE EXCEPTION 'A SuperAdmin account cannot be soft-deleted or restored'
+      USING ERRCODE = '42501';
+  END IF;
+  IF actor_role = 'admin'
+     AND (
+       OLD."role" NOT IN ('buyer', 'seller')
+       OR OLD."cooperativeId" IS DISTINCT FROM agricoop_app.current_app_cooperative_id()
+     ) THEN
+    RAISE EXCEPTION 'Admin can change soft-delete fields only for Buyers or Sellers in their cooperative'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW."deletedAt" IS NULL THEN
+    IF NEW."deletedBy" IS NOT NULL OR NEW."deletedByRole" IS NOT NULL THEN
+      RAISE EXCEPTION 'Restored users must clear all soft-delete fields'
+        USING ERRCODE = '22023';
+    END IF;
+  ELSIF NEW."deletedBy" IS DISTINCT FROM actor_id
+     OR NEW."deletedByRole" IS DISTINCT FROM actor_role THEN
+    RAISE EXCEPTION 'User soft-delete attribution must match the acting administrator'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION agricoop_app.guard_users_soft_delete_actor()
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION agricoop_app.guard_users_soft_delete_actor()
+  TO authenticated;
+
+DROP TRIGGER IF EXISTS agricoop_users_soft_delete_actor_guard ON agricoop_app.users;
+CREATE TRIGGER agricoop_users_soft_delete_actor_guard
+  BEFORE INSERT OR UPDATE OF "deletedAt", "deletedBy", "deletedByRole"
+  ON agricoop_app.users
+  FOR EACH ROW
+  EXECUTE FUNCTION agricoop_app.guard_users_soft_delete_actor();
+
+DO $postflight$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgrelid = 'agricoop_app.users'::regclass
+      AND tgname = 'agricoop_users_soft_delete_actor_guard'
+      AND NOT tgisinternal
+  ) OR to_regprocedure('agricoop_app.guard_users_soft_delete_actor()') IS NULL THEN
+    RAISE EXCEPTION 'User tombstone guard migration verification failed';
+  END IF;
+END;
+$postflight$;
+
+COMMIT;
+```
+
+---
+
+## BLOCK 33: `20261118231000_cooperative_association_request_guard.sql`
+
+```sql
+-- Enforce Seller association-request eligibility at the database boundary.
+-- ADDITIVE / IDEMPOTENT. The existing one-pending partial unique index remains authoritative.
+--
+-- READ-ONLY PREVIEW:
+-- SELECT
+--   to_regclass('agricoop_app."cooperativeAssociationRequests"') AS requests_table,
+--   to_regclass('agricoop_app.users') AS users_table,
+--   to_regclass('agricoop_app.cooperatives') AS cooperatives_table,
+--   (SELECT count(*) = 6 FROM information_schema.columns
+--    WHERE table_schema = 'agricoop_app' AND table_name = 'cooperativeAssociationRequests'
+--      AND column_name IN ('message', 'status', 'reviewedBy', 'reviewNote', 'reviewedAt', 'moveExistingListings')) AS request_guard_columns_present,
+--   to_regprocedure('agricoop_app.cooperative_association_request_insert_guard()') AS guard_function,
+--   (SELECT tgname FROM pg_trigger
+--    WHERE tgrelid = to_regclass('agricoop_app."cooperativeAssociationRequests"')
+--      AND tgname = 'cooperative_association_request_insert_guard'
+--      AND NOT tgisinternal) AS guard_trigger,
+--   (SELECT indexdef FROM pg_indexes
+--    WHERE schemaname = 'agricoop_app'
+--      AND tablename = 'cooperativeAssociationRequests'
+--      AND indexname = 'cooperativeAssociationRequests_one_pending_seller_idx') AS pending_request_index;
+
+BEGIN;
+
+DO $preflight$
+BEGIN
+  IF to_regclass('agricoop_app."cooperativeAssociationRequests"') IS NULL
+     OR to_regclass('agricoop_app.users') IS NULL
+     OR to_regclass('agricoop_app.cooperatives') IS NULL
+     OR (
+       SELECT count(*)
+       FROM information_schema.columns
+       WHERE table_schema = 'agricoop_app'
+         AND table_name = 'cooperativeAssociationRequests'
+         AND column_name IN ('message', 'status', 'reviewedBy', 'reviewNote', 'reviewedAt', 'moveExistingListings')
+     ) <> 6
+     OR to_regprocedure('agricoop_app.current_app_user_id()') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_role()') IS NULL
+     OR NOT EXISTS (
+       SELECT 1
+       FROM pg_index i
+       JOIN pg_class c ON c.oid = i.indexrelid
+       WHERE i.indrelid = 'agricoop_app."cooperativeAssociationRequests"'::regclass
+         AND c.relname = 'cooperativeAssociationRequests_one_pending_seller_idx'
+         AND i.indisunique
+         AND pg_get_expr(i.indpred, i.indrelid) LIKE '%pending%'
+     ) THEN
+    RAISE EXCEPTION 'Association request guard precondition failed: expected marketplace tables, actor helpers, and one-pending unique index';
+  END IF;
+END;
+$preflight$;
+
+CREATE OR REPLACE FUNCTION agricoop_app.cooperative_association_request_insert_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
+  actor_role text := agricoop_app.current_app_role();
+  seller_role text;
+  seller_status text;
+  seller_deleted boolean;
+  seller_cooperative_id integer;
+  cooperative_status text;
+  cooperative_deleted boolean;
+BEGIN
+  IF TG_OP <> 'INSERT' THEN
+    RETURN NEW;
+  END IF;
+
+  IF actor_id IS NULL THEN
+    IF current_setting('role', true) = 'authenticated'
+       OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN
+      RAISE EXCEPTION 'Association requests require a valid Seller identity'
+        USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF actor_role IS DISTINCT FROM 'seller'
+     OR NEW."sellerId" IS DISTINCT FROM actor_id
+     OR NEW.status::text <> 'pending'
+     OR NEW."reviewedBy" IS NOT NULL
+     OR NEW."reviewNote" IS NOT NULL
+     OR NEW."reviewedAt" IS NOT NULL
+     OR NEW."moveExistingListings" IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'Only Sellers can submit a new pending association request'
+      USING ERRCODE = '42501';
+  END IF;
+  IF NEW.message IS NULL OR length(btrim(NEW.message)) NOT BETWEEN 1 AND 600 THEN
+    RAISE EXCEPTION 'A reason of 1 to 600 characters is required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT seller."role"::text, seller."approvalStatus"::text,
+         seller."deletedAt" IS NOT NULL, seller."cooperativeId"
+  INTO seller_role, seller_status, seller_deleted, seller_cooperative_id
+  FROM agricoop_app.users AS seller
+  WHERE seller.id = NEW."sellerId";
+  IF NOT FOUND
+     OR seller_role <> 'seller'
+     OR seller_status = 'suspended'
+     OR seller_deleted THEN
+    RAISE EXCEPTION 'Suspended, deleted, or non-Seller accounts cannot request a cooperative association'
+      USING ERRCODE = '42501';
+  END IF;
+  IF seller_cooperative_id IS NOT DISTINCT FROM NEW."cooperativeId" THEN
+    RAISE EXCEPTION 'Seller is already assigned to the requested cooperative'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT cooperative.status::text, cooperative."deletedAt" IS NOT NULL
+  INTO cooperative_status, cooperative_deleted
+  FROM agricoop_app.cooperatives AS cooperative
+  WHERE cooperative.id = NEW."cooperativeId";
+  IF NOT FOUND OR cooperative_status <> 'active' OR cooperative_deleted THEN
+    RAISE EXCEPTION 'Association requests require an active cooperative'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION agricoop_app.cooperative_association_request_insert_guard()
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION agricoop_app.cooperative_association_request_insert_guard()
+  TO authenticated;
+
+DROP TRIGGER IF EXISTS cooperative_association_request_insert_guard
+  ON agricoop_app."cooperativeAssociationRequests";
+CREATE TRIGGER cooperative_association_request_insert_guard
+  BEFORE INSERT ON agricoop_app."cooperativeAssociationRequests"
+  FOR EACH ROW
+  EXECUTE FUNCTION agricoop_app.cooperative_association_request_insert_guard();
+
+DO $postflight$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgrelid = 'agricoop_app."cooperativeAssociationRequests"'::regclass
+      AND tgname = 'cooperative_association_request_insert_guard'
+      AND NOT tgisinternal
+  ) OR to_regprocedure('agricoop_app.cooperative_association_request_insert_guard()') IS NULL THEN
+    RAISE EXCEPTION 'Association request guard migration verification failed';
+  END IF;
+END;
+$postflight$;
+
+COMMIT;
+```
+
+---
+
+## BLOCK 34: `supabase/storage/profile_verification_bucket.sql` (Storage)
+
+```sql
+-- Manual setup draft for the profile-verification document bucket.
+-- Do not run until the project owner approves the target and confirms this
+-- bucket does not contain existing data requiring a different configuration.
+-- Application uploads/downloads are mediated by server-issued short-lived
+-- capabilities (service role). Service role bypasses Storage RLS.
+-- This script intentionally creates no client Storage policies (default-deny
+-- for anon/authenticated direct object access is acceptable). Do not UPSERT-
+-- overwrite product-images or payment-proofs from other templates.
+
+BEGIN;
+
+DO $preflight$
+BEGIN
+  IF to_regclass('storage.buckets') IS NULL THEN
+    RAISE EXCEPTION 'Storage setup stopped: storage.buckets is unavailable';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = 'storage.buckets'::regclass
+      AND attname IN ('id', 'name', 'public', 'file_size_limit', 'allowed_mime_types')
+      AND NOT attisdropped
+    GROUP BY attrelid
+    HAVING count(*) = 5
+  ) THEN
+    RAISE EXCEPTION 'Storage setup stopped: storage.buckets has an unexpected catalog shape';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM storage.buckets
+    WHERE id = 'profile-verification-documents'
+       OR name = 'profile-verification-documents'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM storage.buckets
+    WHERE id = 'profile-verification-documents'
+      AND name = 'profile-verification-documents'
+      AND public IS FALSE
+      AND file_size_limit = 5242880
+      AND allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+  ) THEN
+    RAISE EXCEPTION 'Storage setup stopped: existing bucket configuration differs; reconcile it manually';
+  END IF;
+END
+$preflight$;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+SELECT
+  'profile-verification-documents',
+  'profile-verification-documents',
+  FALSE,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM storage.buckets
+  WHERE id = 'profile-verification-documents'
+);
+
+DO $postflight$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM storage.buckets
+    WHERE id = 'profile-verification-documents'
+      AND name = 'profile-verification-documents'
+      AND public IS FALSE
+      AND file_size_limit = 5242880
+      AND allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+  ) THEN
+    RAISE EXCEPTION 'Storage setup verification failed: bucket is not private with the required limits';
+  END IF;
+END
+$postflight$;
+
+COMMIT;
+
+-- Read-only verification after an approved run:
+SELECT
+  id = 'profile-verification-documents'
+  AND name = 'profile-verification-documents' AS expected_bucket,
+  public IS FALSE AS is_private,
+  file_size_limit = 5242880 AS has_expected_size_limit,
+  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp']::text[] AS has_expected_mime_types
+FROM storage.buckets
+WHERE id = 'profile-verification-documents';
+```

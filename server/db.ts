@@ -373,6 +373,10 @@ export async function getUserByVerifiedAuthId(
 ) {
   const first = await loadAuthIdentityRecords(authUserId);
   let resolution = resolveAuthIdentityMapping(authUserId, first.applicationUsers, first.profileRoles);
+  if (first.applicationUsers.some(applicationUser => applicationUser.deletedAt)) {
+    return { status: "application_user_deleted" as const, user: null };
+  }
+
   // Safe self-heal: when exactly one app user and one profile disagree, mirror app role into profiles.
   if (resolution.status === "application_role_mapping_conflict" && first.applicationUsers.length === 1) {
     try {
@@ -390,31 +394,18 @@ export async function getUserByVerifiedAuthId(
       });
     }
   }
-  // Soft-deleted accounts must not self-heal or resolve to a usable session.
-  if (
-    resolution.status === "application_user_resolved"
-    && first.applicationUsers[0]
-    && (first.applicationUsers[0] as { deletedAt?: Date | null }).deletedAt
-  ) {
-    return { status: "application_user_deleted" as const, user: null };
-  }
-
   if (resolution.status === "application_user_missing") {
     const email = identityContext?.email?.trim().toLowerCase() ?? "";
     // Never revive a soft-deleted account via self-heal.
     if (email) {
-      try {
-        const db = await getDb();
-        const [deleted] = await db
-          .select({ id: users.id })
-          .from(users)
-          .where(and(eq(users.email, email), sql`${users.deletedAt} is not null`))
-          .limit(1);
-        if (deleted) {
-          return { status: "application_user_deleted" as const, user: null };
-        }
-      } catch {
-        // Fall through to normal self-heal if the deleted check fails.
+      const db = await getDb();
+      const [deleted] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.email, email), sql`${users.deletedAt} is not null`))
+        .limit(1);
+      if (deleted) {
+        return { status: "application_user_deleted" as const, user: null };
       }
     }
     const rateSubject = email || authUserId;

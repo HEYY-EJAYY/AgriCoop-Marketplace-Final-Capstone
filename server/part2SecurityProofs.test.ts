@@ -165,6 +165,13 @@ describe("Part 2 security proofs", () => {
     expect(publicRegistrationInputSchema.safeParse({ ...base, role: "superadmin" }).success).toBe(false);
   });
 
+  it("staff application review selects only the user identity columns it needs", () => {
+    const source = readFileSync(fileURLToPath(new URL("./part2Routers.ts", import.meta.url)), "utf8");
+    const reviewBlock = source.match(/officerApplications[\s\S]*?review:[\s\S]*?\.mutation\([\s\S]*?^\s{4}\}\),/m)?.[0] ?? "";
+    expect(reviewBlock).toMatch(/select\(\{\s*id:\s*users\.id,\s*openId:\s*users\.openId,\s*\}\)\.from\(users\)/);
+    expect(reviewBlock).not.toMatch(/select\(\)\.from\(users\)/);
+  });
+
   it("pending Cooperative Admin applicant has no admin access", async () => {
     await expect(caller("buyer", 10, { requestedRole: "admin" }).officerApplications.pendingList())
       .rejects.toMatchObject({ code: "FORBIDDEN" });
