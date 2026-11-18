@@ -197,10 +197,17 @@ describe("Part 2 security proofs", () => {
     const dbSource = readFileSync(fileURLToPath(new URL("./db.ts", import.meta.url)), "utf8");
     const sellerBlock = dbSource.match(/export async function getSellerOrders[\s\S]*?^}/m)?.[0] ?? "";
     expect(sellerBlock).toMatch(/threadStates\.userId,\s*sellerId/);
-    expect(sellerBlock).toMatch(/threadStates\.channel,\s*"order"/);
+    expect(sellerBlock).toMatch(/threadStates\.channel,\s*"seller_order"/);
+    expect(sellerBlock).not.toMatch(/threadStates\.channel,\s*"order"/);
     const buyerBlock = dbSource.match(/export async function getBuyerOrders[\s\S]*?^}/m)?.[0] ?? "";
     expect(buyerBlock).toMatch(/threadStates\.userId,\s*buyerId/);
     expect(buyerBlock).toMatch(/threadStates\.channel,\s*"order"/);
+    const sellerQuotationsBlock = dbSource.match(/export async function getSellerQuotations[\s\S]*?^}/m)?.[0] ?? "";
+    expect(sellerQuotationsBlock).toMatch(/threadStates\.userId,\s*sellerId/);
+    expect(sellerQuotationsBlock).toMatch(/threadStates\.channel,\s*"quotation"/);
+    const buyerQuotationsBlock = dbSource.match(/export async function getBuyerQuotations[\s\S]*?^}/m)?.[0] ?? "";
+    expect(buyerQuotationsBlock).toMatch(/threadStates\.userId,\s*buyerId/);
+    expect(buyerQuotationsBlock).toMatch(/threadStates\.channel,\s*"quotation"/);
     const adminBlock = dbSource.match(/export async function getAdminOverview[\s\S]*?^}/m)?.[0] ?? "";
     expect(adminBlock).not.toMatch(/archivedAt/i);
 

@@ -130,7 +130,7 @@ describe("orders.updateArchive", () => {
     expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: true, deleted: false });
   });
 
-  it("uses a channel allowed by the deployed check constraint for seller deletes", async () => {
+  it("uses the dedicated seller_order channel for seller deletes", async () => {
     const inserted: Array<Record<string, unknown>> = [];
     let selectPass = 0;
     mocks.getDb.mockResolvedValue({
@@ -151,10 +151,10 @@ describe("orders.updateArchive", () => {
       orderIds: [7],
       action: "delete",
     })).resolves.toMatchObject({ success: true });
-    expect(inserted[0]).toMatchObject({ channel: "order", threadId: 7, userId: 10 });
+    expect(inserted[0]).toMatchObject({ channel: "seller_order", threadId: 7, userId: 10 });
   });
 
-  it("stores quotation deletion using a channel allowed by the deployed check constraint", async () => {
+  it("uses the dedicated quotation channel for quotation deletion", async () => {
     const inserted: Array<Record<string, unknown>> = [];
     let selectPass = 0;
     mocks.getDb.mockResolvedValue({
@@ -176,6 +176,6 @@ describe("orders.updateArchive", () => {
       action: "delete",
       side: "buyer",
     })).resolves.toMatchObject({ success: true });
-    expect(inserted[0]).toMatchObject({ channel: "support", threadId: 8, userId: 10 });
+    expect(inserted[0]).toMatchObject({ channel: "quotation", threadId: 8, userId: 10 });
   });
 });

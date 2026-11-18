@@ -105,6 +105,10 @@ describe("payment method helpers", () => {
 
     expect(paymentMethodAvailability("cash_delivery", [{ allowsPickup: true, allowsDelivery: false }], availability))
       .toEqual({ available: false, reason: "This seller doesn't offer delivery." });
+    expect(paymentMethodAvailability("cash_pickup", [{ allowsPickup: true, allowsDelivery: true }], {
+      ...availability,
+      cashPickupEnabled: false,
+    })).toEqual({ available: false, reason: "Cash on pickup is temporarily unavailable." });
     expect(paymentMethodAvailability("online", [{ allowsPickup: true, allowsDelivery: true }], availability))
       .toEqual({ available: false, reason: "Online payment isn't set up yet." });
     expect(paymentMethodAvailability("cash_pickup", [{ allowsPickup: true, allowsDelivery: true }], availability))

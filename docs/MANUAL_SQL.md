@@ -4101,3 +4101,22 @@ Anon has no UPDATE privilege on `deletedAt` / `deletedBy`.
 **Purpose:** Tighten `agricoop_mkt_products_seller_update` so same-coop Sellers/Buyers cannot UPDATE others' products. Allowed: owner, SuperAdmin, or Admin with `shares_cooperative`.
 
 **Applied:** Supabase MCP (2026-11-18).
+
+## BLOCK 31: `20261118210000_thread_state_dedicated_archive_channels.sql`
+
+**Purpose:** Add dedicated `seller_order` and `quotation` per-user archive channels while retaining `conversation`, `ticket`, `support`, and buyer `order`.
+
+**Read-only preview — run first and stop if the existing definition differs:**
+
+```sql
+SELECT c.conname, pg_get_constraintdef(c.oid) AS definition
+FROM pg_constraint c
+WHERE c.conrelid = to_regclass('agricoop_app."threadStates"')
+  AND c.conname = 'thread_states_channel_check';
+```
+
+Expected existing values are `conversation`, `ticket`, `support`, and `order`. Reconcile any additional/missing values before applying the migration.
+
+**Migration:** Run `supabase/migrations/20261118210000_thread_state_dedicated_archive_channels.sql` only after reviewing the preview. It replaces the CHECK constraint transactionally and adds the two dedicated values.
+
+**Applied:** Not applied or checked by the agent. User must run after reviewing the preview.
