@@ -23,8 +23,8 @@ Updated: 2026-11-18
 | | |
 |--|--|
 | **Symptom** | “Unable to start registration. Please try again later.” |
-| **Root cause** | (1) `auth.signUp` blocked on SMTP / hit Vercel 30s timeout; (2) Auth `429 over_email_send_rate_limit`; (3) earlier production hostname briefly served a preview deploy missing `DATABASE_URL` so provisioning hung after Auth succeeded |
-| **Fix** | `admin.createUser({ email_confirm: false })` → provision app user + `profiles` → best-effort `auth.resend` for confirmation. Correlation ID `(ref: reg_…)` on all failure paths; rate-limited confirmation is deferred (not a hard fail) |
+| **Root cause** | Nested `withRequestDatabaseScope` inside `auth.register` while the publicProcedure middleware already held the anon transaction. Serverless postgres client uses `max: 1`, so the nested authenticated transaction waited until the Vercel 30s timeout. Auth `admin.createUser` completed in ~187ms; no app row was written. Secondary: Auth `429 over_email_send_rate_limit` on confirmation email. |
+| **Fix** | Exclude `auth.register` / `auth.resendVerification` from the public DB middleware; `admin.createUser({ email_confirm: false })` → single authenticated provision scope → best-effort `auth.resend`. Correlation ID `(ref: reg_…)`; deferred confirmation on rate limit |
 | **Dashboard** | If confirmation emails stay deferred: Supabase Auth → Rate Limits / custom SMTP. Env names only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
 
 ### Issue 3 — Cooperative missing on marketplace

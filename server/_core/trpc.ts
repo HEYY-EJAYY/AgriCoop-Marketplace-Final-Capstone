@@ -29,7 +29,12 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 
 const requestDatabaseScope = t.middleware(async ({ ctx, next, path }) => {
-  if (["auth.me", "auth.status", "auth.logout"].includes(path)) return next();
+  // auth.register opens its own authenticated scope after Auth user creation.
+  // Nesting withRequestDatabaseScope under the public anon scope deadlocks the
+  // serverless pool (postgres max:1) and times out at the Vercel 30s limit.
+  if (["auth.me", "auth.status", "auth.logout", "auth.register", "auth.resendVerification"].includes(path)) {
+    return next();
+  }
   return withRequestDatabaseScope(ctx.authUserId, async () => {
     const result = await next();
     if (!result.ok) throw result.error;

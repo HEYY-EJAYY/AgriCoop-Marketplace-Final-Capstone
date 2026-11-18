@@ -3464,6 +3464,9 @@ END $$;
 1. completed slowly then left provisioning stranded on a broken preview alias without `DATABASE_URL`, or
 2. returned `429 over_email_send_rate_limit` (email rate limit), which the app previously mapped to a generic “Unable to start registration” with no correlation ID.
 
-**Fix (code):** `auth.register` now uses `supabaseAdmin.auth.admin.createUser({ email_confirm: false })`, provisions the application user + `public.profiles` row, then best-effort `auth.resend({ type: "signup" })` for the confirmation email. Rate-limited confirmation emails are logged with a correlation ID and do not roll back a completed provision; users can use Resend verification. Friendly errors include `(ref: <correlationId>)`.
+**Fix (code):**
+1. `auth.register` uses `supabaseAdmin.auth.admin.createUser({ email_confirm: false })`, provisions the application user + `public.profiles` row, then best-effort `auth.resend({ type: "signup" })`.
+2. **Critical:** exclude `auth.register` / `auth.resendVerification` from the publicProcedure DB middleware so provisioning does not nest a second `withRequestDatabaseScope` under the anon scope (postgres `max: 1` deadlock → Vercel 30s timeout). Auth createUser succeeded in ~187ms while the function still timed out waiting on the nested DB transaction.
+3. Correlation ID `(ref: reg_…)` on failure paths; rate-limited confirmation is deferred (not a hard fail).
 
 **Dashboard (if emails stay deferred):** Supabase Auth → Rate Limits / SMTP — raise email send rate or configure custom SMTP. Env vars involved by name only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
