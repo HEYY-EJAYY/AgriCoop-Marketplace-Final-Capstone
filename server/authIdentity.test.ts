@@ -12,8 +12,9 @@ const appUser = (role: "buyer" | "seller" | "admin" | "superadmin", openId = aut
 
 describe("verified Auth identity mapping", () => {
   it.each([
-    ["buyer", { publicRoleName: "buyer", applicationRole: "buyer", approvalStatus: "approved" }],
-    ["seller", { publicRoleName: "seller", applicationRole: "seller", approvalStatus: "pending" }],
+    ["buyer", { publicRoleName: "buyer", applicationRole: "buyer", approvalStatus: "approved", registrationChoice: "buyer" }],
+    ["seller", { publicRoleName: "seller", applicationRole: "seller", approvalStatus: "pending", registrationChoice: "seller" }],
+    ["coop_admin", { publicRoleName: "buyer", applicationRole: "buyer", approvalStatus: "approved", registrationChoice: "coop_admin" }],
   ] as const)("resolves only the permitted public %s registration identity", (roleName, identity) => {
     expect(resolvePublicRegistrationIdentity(roleName)).toEqual(identity);
   });

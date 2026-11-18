@@ -3,15 +3,33 @@ import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { PageFrame, shellContainerClass } from "@/components/AgriShell";
+import { CooperativeSelect, type CooperativeSelectValue } from "@/components/CooperativeSelect";
 import { authSession, logAuthDiagnostic } from "@/lib/authSession";
 import { getEmailVerificationReturn } from "@/lib/emailVerification";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 
 type VerificationState = "none" | "required" | "verified" | "expired";
+type RegistrationRole = "buyer" | "seller" | "coop_admin";
+
+type CoopSuggestion = {
+  id: number;
+  name: string;
+  normalizedName: string;
+  location: string;
+};
 
 function isEmailConfirmationError(error: { code?: string; message?: string }) {
   return error.code === "email_not_confirmed" || /email not confirmed/i.test(error.message ?? "");
+}
+
+function emptyCoopValue(): CooperativeSelectValue {
+  return {
+    cooperativeId: null,
+    newCooperativeName: "",
+    newCooperativeLocation: "Philippines",
+    addNew: false,
+  };
 }
 
 export default function Auth() {
@@ -25,7 +43,9 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [role, setRole] = useState<"buyer" | "seller">("buyer");
+  const [role, setRole] = useState<RegistrationRole>("buyer");
+  const [coop, setCoop] = useState<CooperativeSelectValue>(emptyCoopValue);
+  const [coopSuggestion, setCoopSuggestion] = useState<CoopSuggestion | null>(null);
   const [busy, setBusy] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>("none");
   const [verificationEmail, setVerificationEmail] = useState("");
@@ -183,6 +203,38 @@ export default function Auth() {
     }
   };
 
+  const buildRegisterPayload = (confirmSimilarNormalizedName?: string) => {
+    const payload: {
+      email: string;
+      password: string;
+      name: string;
+      role: RegistrationRole;
+      cooperativeId?: number;
+      newCooperativeName?: string;
+      newCooperativeLocation?: string;
+      confirmSimilarNormalizedName?: string;
+    } = { email, password, name, role };
+
+    if (coop.addNew && coop.newCooperativeName.trim()) {
+      payload.newCooperativeName = coop.newCooperativeName.trim();
+      payload.newCooperativeLocation = coop.newCooperativeLocation.trim() || "Philippines";
+    } else if (coop.cooperativeId) {
+      payload.cooperativeId = coop.cooperativeId;
+    }
+    if (confirmSimilarNormalizedName) {
+      payload.confirmSimilarNormalizedName = confirmSimilarNormalizedName;
+    }
+    return payload;
+  };
+
+  const runRegister = async (confirmSimilarNormalizedName?: string) => {
+    await registerAccount.mutateAsync(buildRegisterPayload(confirmSimilarNormalizedName));
+    setCoopSuggestion(null);
+    setVerificationEmail(email.trim());
+    setVerificationState("required");
+    setResendNotice("");
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!isSupabaseConfigured) {
@@ -192,10 +244,36 @@ export default function Auth() {
     setBusy(true);
     try {
       if (register) {
-        await registerAccount.mutateAsync({ email, password, name, role });
-        setVerificationEmail(email.trim());
-        setVerificationState("required");
-        setResendNotice("");
+        const needsCoop = role === "seller" || role === "coop_admin";
+        if (needsCoop && !coop.addNew && !coop.cooperativeId) {
+          toast.error("Select a cooperative or add a new one.");
+          return;
+        }
+        if (needsCoop && coop.addNew && coop.newCooperativeName.trim().length < 3) {
+          toast.error("Enter the new cooperative name.");
+          return;
+        }
+        try {
+          await runRegister();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Authentication failed.";
+          const suggestionMatch = /Did you mean "([^"]+)"/i.exec(message);
+          if (suggestionMatch && coop.addNew) {
+            // Server embeds suggestion in message; fetch list to resolve id/normalizedName.
+            const list = await utils.cooperatives.listActive.fetch();
+            const found = list.find(row => row.name === suggestionMatch[1]);
+            if (found) {
+              setCoopSuggestion({
+                id: found.id,
+                name: found.name,
+                normalizedName: found.normalizedName,
+                location: found.location,
+              });
+              return;
+            }
+          }
+          throw error;
+        }
         return;
       }
       if (!await signInAndResolveApplicationUser()) return;
@@ -214,7 +292,14 @@ export default function Auth() {
     setPassword("");
     setVerificationState("none");
     setResendNotice("");
+    setCoopSuggestion(null);
   };
+
+  const roleHint = role === "seller"
+    ? "Create a Seller / Farmer account. A cooperative is required; Seller access still needs approval."
+    : role === "coop_admin"
+      ? "Create a Cooperative Admin application account. You start with Buyer access until SuperAdmin approves your documents."
+      : "Create a Buyer account. Choosing a cooperative is optional.";
 
   return <PageFrame>
     <main className={`${shellContainerClass} py-16`}>
@@ -223,9 +308,7 @@ export default function Auth() {
         <h1 className="mt-2 font-display text-3xl font-bold text-[#214b35]">{register ? "Join the cooperative market" : "Welcome back"}</h1>
         <p className="mt-2 text-sm leading-6 text-[#66766b]">
           {register
-            ? role === "seller"
-              ? "Create a Seller / Farmer account. Seller access requires an authorized cooperative assignment and approval."
-              : "Create a Buyer account. Cooperative Admin accounts require authorized provisioning."
+            ? roleHint
             : "Use your own Supabase account. Role access is still checked server-side before any operation."}
         </p>
 
@@ -256,11 +339,66 @@ export default function Auth() {
           {register && <>
             <label className="field-label">Full name<input required className="field-control" value={name} onChange={event => setName(event.target.value)} /></label>
             <label className="field-label">Role
-              <select className="field-control" value={role} onChange={event => setRole(event.target.value as "buyer" | "seller")}>
+              <select
+                className="field-control"
+                value={role}
+                onChange={event => {
+                  const next = event.target.value as RegistrationRole;
+                  setRole(next);
+                  setCoopSuggestion(null);
+                }}
+              >
                 <option value="buyer">Buyer / Consumer</option>
                 <option value="seller">Seller / Farmer</option>
+                <option value="coop_admin">Cooperative Admin (Officer Admin)</option>
               </select>
             </label>
+            <CooperativeSelect
+              value={coop}
+              onChange={next => {
+                setCoop(next);
+                setCoopSuggestion(null);
+              }}
+              required={role === "seller" || role === "coop_admin"}
+              disabled={busy}
+            />
+            {coopSuggestion && (
+              <section role="alertdialog" aria-labelledby="coop-did-you-mean-title" className="rounded-xl border border-[#e2c48a] bg-[#fff8ea] p-4">
+                <h2 id="coop-did-you-mean-title" className="font-bold text-[#6a4e16]">Did you mean…?</h2>
+                <p className="mt-2 text-sm text-[#6a4e16]">
+                  A similar cooperative already exists: <strong>{coopSuggestion.name}</strong> ({coopSuggestion.location}).
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="agri-button text-sm"
+                    disabled={busy}
+                    onClick={() => {
+                      setBusy(true);
+                      void runRegister(coopSuggestion.normalizedName)
+                        .catch(error => toast.error(error instanceof Error ? error.message : "Registration failed."))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    Use {coopSuggestion.name}
+                  </button>
+                  <button
+                    type="button"
+                    className="agri-ghost text-sm"
+                    disabled={busy}
+                    onClick={() => {
+                      const normalized = coop.newCooperativeName.trim().toLowerCase().replace(/[^a-z0-9]+/gi, "");
+                      setBusy(true);
+                      void runRegister(normalized || coopSuggestion.normalizedName)
+                        .catch(error => toast.error(error instanceof Error ? error.message : "Registration failed."))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    Create mine anyway
+                  </button>
+                </div>
+              </section>
+            )}
           </>}
           <label className="field-label">Email<input required type="email" className="field-control" value={email} onChange={event => setEmail(event.target.value)} /></label>
           <label className="field-label">Password<input required minLength={6} type="password" className="field-control" value={password} onChange={event => setPassword(event.target.value)} /></label>

@@ -61,8 +61,20 @@ export const cooperatives = appSchema.table("cooperatives", {
   description: text("description"),
   location: varchar("location", { length: 180 }).notNull(),
   status: cooperativeStatus("status").default("active").notNull(),
+  createdBy: integer("createdBy").references((): AnyPgColumn => users.id),
+  source: varchar("source", { length: 32 }).notNull().default("seed"),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
-}, table => [uniqueIndex("cooperatives_normalized_name_idx").on(table.normalizedName)]);
+}, table => [
+  uniqueIndex("cooperatives_normalized_name_idx").on(table.normalizedName),
+  index("cooperatives_created_by_idx").on(table.createdBy),
+]);
+
+export const coopAdminApplicationStatus = appSchema.enum("coop_admin_application_status", [
+  "awaiting_documents",
+  "pending",
+  "approved",
+  "rejected",
+]);
 
 export const users = appSchema.table("users", {
   id: serial("id").primaryKey(),
@@ -71,6 +83,7 @@ export const users = appSchema.table("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: userRole("role").default("buyer").notNull(),
+  requestedRole: userRole("requestedRole"),
   approvalStatus: userApprovalStatus("approvalStatus").default("approved").notNull(),
   verificationStatus: userVerificationStatus("verificationStatus").default("unverified").notNull(),
   verificationNote: text("verificationNote"),
@@ -90,6 +103,28 @@ export const users = appSchema.table("users", {
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
   lastSignedIn: timestamp("lastSignedIn", { mode: "date" }).defaultNow().notNull(),
 }, table => [index("users_cooperative_id_idx").on(table.cooperativeId)]);
+
+export const cooperativeAdminApplications = appSchema.table("cooperativeAdminApplications", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  fullName: varchar("fullName", { length: 180 }).notNull(),
+  cooperativeId: integer("cooperativeId").notNull().references(() => cooperatives.id),
+  positionTitle: varchar("positionTitle", { length: 180 }).notNull().default(""),
+  idDocumentPath: text("idDocumentPath"),
+  proofDocumentPath: text("proofDocumentPath"),
+  status: coopAdminApplicationStatus("status").default("awaiting_documents").notNull(),
+  rejectionReason: text("rejectionReason"),
+  reviewedBy: integer("reviewedBy").references((): AnyPgColumn => users.id),
+  reviewedAt: timestamp("reviewedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+}, table => [
+  index("coop_admin_apps_user_idx").on(table.userId),
+  index("coop_admin_apps_status_idx").on(table.status),
+  uniqueIndex("coop_admin_apps_one_open_per_user_uidx")
+    .on(table.userId)
+    .where(sql`${table.status} in ('awaiting_documents', 'pending')`),
+]);
 
 export const cooperativeAssociationRequests = appSchema.table("cooperativeAssociationRequests", {
   id: serial("id").primaryKey(),
@@ -478,6 +513,7 @@ export const systemPaymentSettingsAudit = appSchema.table("systemPaymentSettings
 });
 
 export type User = typeof users.$inferSelect;
+export type CooperativeAdminApplication = typeof cooperativeAdminApplications.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Cooperative = typeof cooperatives.$inferSelect;
 export type Product = typeof products.$inferSelect;

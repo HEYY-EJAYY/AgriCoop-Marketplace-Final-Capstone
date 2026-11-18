@@ -29,7 +29,8 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { conversationMessages, conversations, cooperativeAssociationRequests, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { previewUserCooperativeSelection, resolveUserCooperativeSelection } from "./userCooperatives";
 import {
   defaultFulfillmentForPayment,
   fulfillmentOptionsForListings,
@@ -84,13 +85,36 @@ import {
   systemPaymentQrPrefix,
 } from "./systemPayment";
 
-export const registrationRoleSchema = z.enum(["buyer", "seller"]);
+export const registrationRoleSchema = z.enum(["buyer", "seller", "coop_admin"]);
 export const publicRegistrationInputSchema = z.object({
   email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
   password: z.string().min(6).max(128),
   name: z.string().min(2).max(120),
   role: registrationRoleSchema,
-}).strict();
+  cooperativeId: z.number().int().positive().optional(),
+  newCooperativeName: z.string().trim().min(3).max(180).optional(),
+  newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
+  /** When set to a suggested normalizedName, accept that existing coop; when set to the new name's normalized form, create anyway. */
+  confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
+}).strict().superRefine((value, ctx) => {
+  const needsCoop = value.role === "seller" || value.role === "coop_admin";
+  const hasExisting = typeof value.cooperativeId === "number";
+  const hasNew = Boolean(value.newCooperativeName?.trim());
+  if (needsCoop && !hasExisting && !hasNew) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Seller and Cooperative Admin sign-ups require a cooperative.",
+      path: ["cooperativeId"],
+    });
+  }
+  if (hasExisting && hasNew) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Choose an existing cooperative or add a new one, not both.",
+      path: ["cooperativeId"],
+    });
+  }
+});
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
 const supportTicketStatusSchema = z.enum(SUPPORT_TICKET_STATUSES);
 export const accountProfileInputSchema = z.object({
@@ -288,6 +312,34 @@ export const appRouter = router({
         }
 
         const correlationId = `reg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+        // Duplicate / "Did you mean?" check before Auth createUser (no orphan accounts).
+        if (input.cooperativeId || input.newCooperativeName) {
+          try {
+            await withRequestDatabaseScope(null, async () => {
+              const previewDb = await getDb();
+              const preview = await previewUserCooperativeSelection(previewDb, {
+                cooperativeId: input.cooperativeId,
+                newCooperativeName: input.newCooperativeName,
+                confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
+              });
+              if (preview.kind === "needs_confirmation") {
+                throw new TRPCError({
+                  code: "CONFLICT",
+                  message: `Did you mean "${preview.suggestion.name}"? Confirm the existing cooperative or confirm creating a new one.`,
+                  cause: { code: "COOP_NEEDS_CONFIRMATION", suggestion: preview.suggestion },
+                });
+              }
+            });
+          } catch (error) {
+            if (error instanceof TRPCError) throw error;
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: error instanceof Error ? error.message : "Invalid cooperative selection.",
+            });
+          }
+        }
+
         let emailRedirectTo: string;
         try {
           emailRedirectTo = getEmailVerificationRedirectUrl(process.env.APP_URL);
@@ -358,17 +410,24 @@ export const appRouter = router({
             createdAuthUser.id,
             () => withRequestDatabaseScope(createdAuthUser.id, async () => {
               const db = await getDb();
+              const identity = resolvePublicRegistrationIdentity(input.role);
+              if (!identity || identity.registrationChoice !== input.role) {
+                throw new Error("The requested role is not permitted for public registration.");
+              }
               const publicRoles = await db.select({ roleId: roles.roleId, roleName: roles.roleName })
                 .from(roles)
-                .where(eq(roles.roleName, input.role))
+                .where(eq(roles.roleName, identity.publicRoleName))
                 .limit(2);
               if (publicRoles.length !== 1) {
                 throw new Error("Canonical registration role is missing or ambiguous.");
               }
-              const identity = resolvePublicRegistrationIdentity(publicRoles[0].roleName);
-              if (!identity || identity.publicRoleName !== input.role) {
-                throw new Error("The requested role is not permitted for public registration.");
-              }
+
+              const registrationIntent = identity.registrationChoice === "coop_admin"
+                ? "cooperative_admin" as const
+                : identity.applicationRole;
+
+              let cooperativeId: number | null = null;
+              // User row first so current_app_user_id / createdBy FK work for new coops.
               await upsertUser({
                 openId: createdAuthUser.id,
                 email: input.email,
@@ -376,8 +435,58 @@ export const appRouter = router({
                 role: identity.applicationRole,
                 approvalStatus: identity.approvalStatus,
                 cooperativeId: null,
+                requestedRole: identity.registrationChoice === "coop_admin" ? "admin" : null,
                 loginMethod: "supabase",
-              });
+              }, undefined, { intent: registrationIntent });
+
+              if (input.cooperativeId || input.newCooperativeName) {
+                const resolved = await resolveUserCooperativeSelection(db, {
+                  cooperativeId: input.cooperativeId,
+                  newCooperativeName: input.newCooperativeName,
+                  newCooperativeLocation: input.newCooperativeLocation,
+                  confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
+                  rateLimitEmail: input.email,
+                  consumeRateLimit: () => {
+                    try {
+                      registrationRateLimiter.consume("create_cooperative", ctx.req.ip, input.email);
+                    } catch (error) {
+                      if (error instanceof RegistrationRateLimitError) {
+                        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
+                      }
+                      throw error;
+                    }
+                  },
+                });
+                if (resolved.kind === "needs_confirmation") {
+                  const err = new Error("COOP_NEEDS_CONFIRMATION");
+                  (err as Error & { suggestion: typeof resolved.suggestion }).suggestion = resolved.suggestion;
+                  throw err;
+                }
+                cooperativeId = resolved.cooperativeId;
+                if (resolved.kind === "created") {
+                  const [appUserForAudit] = await db.select({ id: users.id }).from(users)
+                    .where(eq(users.openId, createdAuthUser.id)).limit(1);
+                  if (appUserForAudit) {
+                    await recordAuditLog(db, {
+                      actorUserId: appUserForAudit.id,
+                      action: "cooperative_created_by_user",
+                      entityType: "cooperative",
+                      entityId: cooperativeId,
+                      cooperativeId,
+                      metadata: { source: "user", registrationRole: input.role },
+                    });
+                  }
+                }
+              }
+
+              if (identity.applicationRole === "seller" && cooperativeId) {
+                await db.execute(sql`
+                  update agricoop_app.users
+                  set "cooperativeId" = ${cooperativeId}
+                  where "openId" = ${createdAuthUser.id}
+                `);
+              }
+
               // Explicit columns only — Drizzle expands defaults for cooperative_id /
               // account_status / created_at, which authenticated cannot INSERT (42501).
               await db.execute(sql`
@@ -389,6 +498,22 @@ export const appRouter = router({
                   ${publicRoles[0].roleId}
                 )
               `);
+
+              if (identity.registrationChoice === "coop_admin") {
+                if (!cooperativeId) {
+                  throw new Error("Cooperative Admin registration requires a cooperative.");
+                }
+                const [appUser] = await db.select({ id: users.id }).from(users)
+                  .where(eq(users.openId, createdAuthUser.id)).limit(1);
+                if (!appUser) throw new Error("Application user missing after registration upsert.");
+                await db.insert(cooperativeAdminApplications).values({
+                  userId: appUser.id,
+                  fullName: input.name,
+                  cooperativeId,
+                  positionTitle: "",
+                  status: "awaiting_documents",
+                });
+              }
             }),
             async authUserId => {
               const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
@@ -396,6 +521,17 @@ export const appRouter = router({
             },
           );
         } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          if (error instanceof Error && error.message === "COOP_NEEDS_CONFIRMATION") {
+            const suggestion = (error as Error & { suggestion?: { id: number; name: string; normalizedName: string; location: string } }).suggestion;
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: suggestion
+                ? `Did you mean "${suggestion.name}"? Confirm the existing cooperative or confirm creating a new one.`
+                : "A similar cooperative may already exist. Confirm your selection.",
+              cause: suggestion ? { code: "COOP_NEEDS_CONFIRMATION", suggestion } : undefined,
+            });
+          }
           const cleanupFailed = error instanceof RegistrationCleanupError;
           const cause = error instanceof Error ? error.cause : undefined;
           const nestedCause = cause instanceof Error ? cause.cause : undefined;

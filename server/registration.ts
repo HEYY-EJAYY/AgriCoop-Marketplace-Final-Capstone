@@ -21,7 +21,7 @@ export class RegistrationRateLimitError extends Error {
   }
 }
 
-type RegistrationAction = "register" | "resend";
+type RegistrationAction = "register" | "resend" | "create_cooperative" | "coop_propose";
 type RegistrationRateLimit = {
   count: number;
   resetAt: number;
@@ -45,6 +45,18 @@ const rateLimits: Record<RegistrationAction, {
     emailLimit: 3,
     emailWindowMs: 60 * 60 * 1000,
   },
+  create_cooperative: {
+    ipLimit: 8,
+    ipWindowMs: 60 * 60 * 1000,
+    emailLimit: 5,
+    emailWindowMs: 60 * 60 * 1000,
+  },
+  coop_propose: {
+    ipLimit: 10,
+    ipWindowMs: 60 * 60 * 1000,
+    emailLimit: 0,
+    emailWindowMs: 60 * 60 * 1000,
+  },
 };
 
 function hashRateLimitIdentifier(value: string) {
@@ -56,25 +68,38 @@ export class RegistrationRateLimiter {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  consume(action: RegistrationAction, ipAddress: string | undefined, email: string) {
+  consume(
+    action: RegistrationAction,
+    ipAddress: string | undefined,
+    subject: string | { userId: number },
+  ) {
     const now = this.now();
     this.attempts.forEach((attempt, key) => {
       if (attempt.resetAt <= now) this.attempts.delete(key);
     });
 
     const limits = rateLimits[action];
-    const identifiers = [
+    const identifiers: Array<{ key: string; limit: number; windowMs: number }> = [
       {
         key: `${action}:ip:${hashRateLimitIdentifier(ipAddress?.trim() || "unknown")}`,
         limit: limits.ipLimit,
         windowMs: limits.ipWindowMs,
       },
-      {
-        key: `${action}:email:${hashRateLimitIdentifier(email.trim().toLowerCase())}`,
+    ];
+    if (typeof subject === "string" && limits.emailLimit > 0) {
+      identifiers.push({
+        key: `${action}:email:${hashRateLimitIdentifier(subject.trim().toLowerCase())}`,
         limit: limits.emailLimit,
         windowMs: limits.emailWindowMs,
-      },
-    ];
+      });
+    }
+    if (typeof subject === "object" && Number.isInteger(subject.userId)) {
+      identifiers.push({
+        key: `${action}:user:${hashRateLimitIdentifier(String(subject.userId))}`,
+        limit: limits.ipLimit,
+        windowMs: limits.ipWindowMs,
+      });
+    }
     const blocked = identifiers.flatMap(identifier => {
       const attempt = this.attempts.get(identifier.key);
       return attempt && attempt.count >= identifier.limit ? [attempt] : [];

@@ -43,20 +43,76 @@ export type AuthenticatedApplicationUser = Pick<
   | "profileImageUrl"
 >;
 
+export type RegistrationIntent = "buyer" | "seller" | "cooperative_admin";
+
+export type ResolvedRegistrationIntent = {
+  applicationRole: User["role"];
+  approvalStatus: User["approvalStatus"];
+  requestedRole?: User["role"];
+  /** Canonical public.roles.role_name used for profiles.role_id — never admin at signup. */
+  publicRoleNameForProfile: "buyer" | "seller";
+};
+
+export function resolveRegistrationIntent(intent: RegistrationIntent): ResolvedRegistrationIntent {
+  switch (intent) {
+    case "buyer":
+      return {
+        applicationRole: "buyer",
+        approvalStatus: "approved",
+        publicRoleNameForProfile: "buyer",
+      };
+    case "seller":
+      return {
+        applicationRole: "seller",
+        approvalStatus: "pending",
+        publicRoleNameForProfile: "seller",
+      };
+    case "cooperative_admin":
+      return {
+        applicationRole: "buyer",
+        approvalStatus: "approved",
+        requestedRole: "admin",
+        publicRoleNameForProfile: "buyer",
+      };
+  }
+}
+
 export type PublicRegistrationIdentity = {
+  /** Canonical public.roles.role_name used for profiles.role_id */
   publicRoleName: "buyer" | "seller";
   applicationRole: "buyer" | "seller";
   approvalStatus: "approved" | "pending";
+  /** UI registration choice; coop_admin never grants Admin until SuperAdmin approval. */
+  registrationChoice: "buyer" | "seller" | "coop_admin";
 };
 
 export function resolvePublicRegistrationIdentity(
   roleName: string | null | undefined,
 ): PublicRegistrationIdentity | null {
   if (roleName === "buyer") {
-    return { publicRoleName: roleName, applicationRole: "buyer", approvalStatus: "approved" };
+    return {
+      publicRoleName: "buyer",
+      applicationRole: "buyer",
+      approvalStatus: "approved",
+      registrationChoice: "buyer",
+    };
   }
   if (roleName === "seller") {
-    return { publicRoleName: roleName, applicationRole: "seller", approvalStatus: "pending" };
+    return {
+      publicRoleName: "seller",
+      applicationRole: "seller",
+      approvalStatus: "pending",
+      registrationChoice: "seller",
+    };
+  }
+  // Cooperative Admin signup: create Buyer access only; Officer Admin applied separately.
+  if (roleName === "coop_admin") {
+    return {
+      publicRoleName: "buyer",
+      applicationRole: "buyer",
+      approvalStatus: "approved",
+      registrationChoice: "coop_admin",
+    };
   }
   return null;
 }

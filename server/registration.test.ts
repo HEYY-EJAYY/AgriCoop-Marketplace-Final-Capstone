@@ -25,6 +25,7 @@ vi.mock("./db", async importOriginal => {
 });
 
 import type { TrpcContext } from "./_core/context";
+import { cooperatives, roles as rolesTable, users as usersTable } from "../drizzle/pg-schema";
 import {
   appRouter,
   publicRegistrationInputSchema,
@@ -70,11 +71,20 @@ function newAuthSignup() {
 }
 
 function registrationDb(roleRows: Array<{ roleId: number; roleName: string }>, profileExecute = vi.fn().mockResolvedValue(undefined)) {
-  const limit = vi.fn().mockResolvedValue(roleRows);
-  const where = vi.fn(() => ({ limit }));
-  const from = vi.fn(() => ({ where }));
   return {
-    select: vi.fn(() => ({ from })),
+    select: vi.fn(() => ({
+      from: vi.fn((table: unknown) => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => {
+            if (table === cooperatives) return [{ id: 12, status: "active" }];
+            if (table === usersTable) return [{ id: 99 }];
+            if (table === rolesTable) return roleRows;
+            return roleRows;
+          }),
+        })),
+      })),
+    })),
+    insert: vi.fn(() => ({ values: vi.fn().mockResolvedValue(undefined) })),
     execute: profileExecute,
   };
 }
@@ -91,9 +101,10 @@ describe("public registration role policy and verification", () => {
     mocks.getDb.mockReset().mockResolvedValue(registrationDb([{ roleId: 47, roleName: "seller" }], values));
   });
 
-  it("allows only Buyer and Seller self-registration", () => {
+  it("allows Buyer, Seller, and Cooperative Admin self-registration choices only", () => {
     expect(registrationRoleSchema.safeParse("buyer").success).toBe(true);
     expect(registrationRoleSchema.safeParse("seller").success).toBe(true);
+    expect(registrationRoleSchema.safeParse("coop_admin").success).toBe(true);
     expect(registrationRoleSchema.safeParse("admin").success).toBe(false);
     expect(registrationRoleSchema.safeParse("superadmin").success).toBe(false);
   });
@@ -107,17 +118,28 @@ describe("public registration role policy and verification", () => {
     }).success).toBe(false);
   });
 
-  it("does not accept public cooperative assignments or administrative fields", () => {
+  it("requires a cooperative for seller and coop_admin, and rejects admin/superadmin roles", () => {
     const sellerRegistration = {
       email: "seller@example.test",
       password: "example-password",
       name: "Example Seller",
-      role: "seller",
+      role: "seller" as const,
     };
 
-    expect(publicRegistrationInputSchema.safeParse(sellerRegistration).success).toBe(true);
-    expect(publicRegistrationInputSchema.safeParse({ ...sellerRegistration, cooperativeId: 2 }).success).toBe(false);
+    expect(publicRegistrationInputSchema.safeParse(sellerRegistration).success).toBe(false);
+    expect(publicRegistrationInputSchema.safeParse({ ...sellerRegistration, cooperativeId: 2 }).success).toBe(true);
+    expect(publicRegistrationInputSchema.safeParse({
+      ...sellerRegistration,
+      role: "coop_admin",
+      newCooperativeName: "New Farm Coop",
+      newCooperativeLocation: "Butuan City",
+    }).success).toBe(true);
     expect(publicRegistrationInputSchema.safeParse({ ...sellerRegistration, role: "admin" }).success).toBe(false);
+    expect(publicRegistrationInputSchema.safeParse({
+      ...sellerRegistration,
+      cooperativeId: 2,
+      approvalStatus: "approved",
+    }).success).toBe(false);
   });
 
   it("starts Supabase email confirmation without auto-confirming or returning auth tokens", async () => {
@@ -131,6 +153,7 @@ describe("public registration role policy and verification", () => {
       password: "example-password",
       name: "Example Seller",
       role: "seller",
+      cooperativeId: 12,
     });
 
     expect(mocks.createUser).toHaveBeenCalledWith({
@@ -149,7 +172,8 @@ describe("public registration role policy and verification", () => {
       role: "seller",
       approvalStatus: "pending",
       cooperativeId: null,
-    }));
+      requestedRole: null,
+    }), undefined, expect.objectContaining({ intent: "seller" }));
     expect(profileExecute).toHaveBeenCalled();
     expect(result).toEqual({ success: true, verificationRequired: true });
     expect(JSON.stringify(result)).not.toContain("access_token");
@@ -175,7 +199,8 @@ describe("public registration role policy and verification", () => {
       role: "buyer",
       approvalStatus: "approved",
       cooperativeId: null,
-    }));
+      requestedRole: null,
+    }), undefined, expect.objectContaining({ intent: "buyer" }));
     expect(profileExecute).toHaveBeenCalled();
   });
 
@@ -191,24 +216,34 @@ describe("public registration role policy and verification", () => {
       password: "example-password",
       name: "Example Seller",
       role: "seller",
+      cooperativeId: 12,
     })).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
 
     expect(mocks.deleteUser).toHaveBeenCalledWith("new-auth-user");
   });
 
-  it("rejects a requested role that conflicts with the canonical public role", async () => {
+  it("maps Cooperative Admin registration to Buyer access without granting Admin", async () => {
     mocks.createUser.mockResolvedValue(newAuthSignup());
-    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 47, roleName: "buyer" }]));
+    const profileExecute = vi.fn().mockResolvedValue(undefined);
+    const db = registrationDb([{ roleId: 47, roleName: "buyer" }], profileExecute);
+    mocks.getDb.mockResolvedValue(db);
 
-    await expect(appRouter.createCaller(publicContext("192.0.2.12")).auth.register({
-      email: "seller@example.test",
+    const result = await appRouter.createCaller(publicContext("192.0.2.12")).auth.register({
+      email: "officer-applicant@example.test",
       password: "example-password",
-      name: "Example Seller",
-      role: "seller",
-    })).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+      name: "Officer Applicant",
+      role: "coop_admin",
+      cooperativeId: 12,
+    });
 
-    expect(mocks.upsertUser).not.toHaveBeenCalled();
-    expect(mocks.deleteUser).toHaveBeenCalledWith("new-auth-user");
+    expect(result).toEqual({ success: true, verificationRequired: true });
+    expect(mocks.upsertUser).toHaveBeenCalledWith(expect.objectContaining({
+      role: "buyer",
+      approvalStatus: "approved",
+      cooperativeId: null,
+      requestedRole: "admin",
+    }), undefined, expect.objectContaining({ intent: "cooperative_admin" }));
+    expect(db.insert).toHaveBeenCalled();
   });
 
   it("does not provision an application profile for an existing Auth identity", async () => {
@@ -260,6 +295,7 @@ describe("public registration role policy and verification", () => {
       password: "example-password",
       name: "Example Seller",
       role: "seller",
+      cooperativeId: 12,
     });
 
     expect(result).toEqual({ success: true, verificationRequired: true });
