@@ -89,4 +89,15 @@
 - **Not verified:** `TEST_DATABASE_URL` is unavailable in this run, so the 14 real-Postgres assertions—including the new product, payment, user, archive, and association cases—were skipped. The new SQL migrations were not executed. No live database, Supabase, or external service was accessed.
 - **Manual action:** In CI, run the RLS harness against the disposable localhost Postgres container after applying migration blocks in order: 30, 31, 32, 33 (the generated manual file also contains the separate Storage setup draft). Do not apply to production until a local catalog preview matches. Review the security-review result before treating Stage 5 as complete.
 
-Stages 6–8 remain.
+## Stage 6 — Browser tests
+
+**Status:** PARTIAL (browser tests added and discovered; not run against a local app)
+
+- **Files changed:** `e2e/stage-fixes.spec.ts`, `playwright.config.ts`, `docs/PROGRESS.md`
+- **Coverage:** Disabled payment methods expose their reason while enabled radios remain clickable; quotation request/delete/restore; order archive/unarchive and in-progress delete warning/restore; Admin cooperative columns, deleted toggle, and list refresh after soft-delete/restore; password eyes (auth and profile) including keyboard use and no layout shift; Title Case order and combined listing labels; guest Login/Join switching; mobile order drawer and cart persistence after refresh.
+- **Safety:** Playwright now defaults to `http://127.0.0.1:3000` and refuses non-local `PLAYWRIGHT_BASE_URL` hosts. New authenticated cases use only `QA_BUYER_EMAIL`, `QA_BUYER_PASSWORD`, `QA_ADMIN_EMAIL`, and `QA_ADMIN_PASSWORD`; missing values produce explicit skips by variable name. The new suite disables traces to avoid retaining credential-bearing page actions. E2E cases create a quotation and a stable soft-deleted QA cooperative, so they must run only on a disposable local/test backend.
+- **Verified:** Node 22.23.5; `pnpm check`; full `pnpm test` (431 passed, 14 Postgres-harness cases skipped); `pnpm build` (passed with existing >500 KB chunk warning); Playwright discovered 24 cases for `desktop-1280` and `mobile-360`; default URL host is localhost; `git diff --check`.
+- **Not verified:** No browser launched and no live QA credentials/backend were used. `playwright --list` verifies discovery only, not UI behavior. Some data-dependent cases skip clearly if the QA account has no suitable listing/order/cooperative.
+- **Exact local commands:** Terminal 1: set `PORT=3000` and ensure `.env.local` points only to a disposable local/test backend, then run `fnm exec --using=22.23.5 pnpm.cmd dev`. Terminal 2: set `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000` and the four `QA_*` variables above, then run `fnm exec --using=22.23.5 pnpm.cmd exec playwright test e2e/stage-fixes.spec.ts --project=desktop-1280 --project=mobile-360`. Do not point `.env.local` or Playwright at production.
+
+Stages 7–8 remain.

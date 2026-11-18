@@ -1,6 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://agricoop-marketplace-final-capstone.vercel.app";
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
+const baseURLHost = new URL(baseURL).hostname;
+
+if (!["localhost", "127.0.0.1", "::1"].includes(baseURLHost)) {
+  throw new Error("Playwright is restricted to localhost; set PLAYWRIGHT_BASE_URL to a local test server.");
+}
 
 export default defineConfig({
   testDir: "e2e",
