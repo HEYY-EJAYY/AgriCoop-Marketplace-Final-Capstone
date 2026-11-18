@@ -624,3 +624,7 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 - Commits: `21d1f8d`, `6182ba2`
 - Production: `dpl_9beD2VFKKJRzzTdyCqchRP1nDf9W` READY
 - Playwright (throwaway buyer): auth mode, cart persist/refresh, typed qty, cart icon hide/show, mobile FAB — all PASS; leftovers deleted
+
+### Group 2–3 deploy READY
+- G2 `dpl_GZWL8twFfosHUf7dSZ6iLHQNiD1F` (confirm dialog white card) @ `6e55152`
+- G3 `dpl_3aQhfyBhAtYxc3WUbtyzhjf57Hkp` (user soft-delete BLOCK 29) @ `47cbe65`
