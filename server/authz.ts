@@ -12,6 +12,10 @@ type OperationalUser = {
   verificationStatus?: VerificationStatus;
   cooperativeId: number | null;
   onlinePaymentQrPath?: string | null;
+  /** Present on authenticated application users; used by Part 2 applicant flows. */
+  openId?: string;
+  email?: string | null;
+  requestedRole?: AppRole | null;
 };
 
 export function hasRole(role: string, allowed: readonly AppRole[]) {

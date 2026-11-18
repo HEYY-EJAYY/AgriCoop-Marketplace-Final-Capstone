@@ -1,0 +1,616 @@
+import { TRPCError } from "@trpc/server";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
+import {
+  cooperativeAdminApplications,
+  cooperatives,
+  orders,
+  threadStates,
+  users,
+} from "../drizzle/pg-schema";
+import {
+  COOP_ADMIN_APPLICATION_BUCKET,
+  COOP_ADMIN_APPLICATION_CONTENT_TYPES,
+  COOP_ADMIN_APPLICATION_MAX_BYTES,
+} from "../shared/coopAdminApplication";
+import { requireOperationalRole } from "./authz";
+import { createPublicAuthClient, supabaseAdmin } from "./clients";
+import {
+  coopAdminApplicationExtension,
+  createCoopAdminApplicationUploadIntent,
+  isCoopAdminApplicationStorageKey,
+  verifyCoopAdminApplicationUploadIntent,
+} from "./coopAdminApplication";
+import { countBuyerOrderInboxStates, getBuyerOrders, getDb, syncProfileRoleToApplicationRole, upsertUser, withRequestDatabaseScope } from "./db";
+import { assertBuyerOwnsOrders } from "./orderArchive";
+import { normalizeCooperativeName } from "./cooperativeNames";
+import { isDuplicateSignupError, RegistrationRateLimitError, registrationRateLimiter } from "./registration";
+import { resolveUserCooperativeSelection } from "./userCooperatives";
+import { protectedProcedure, router } from "./_core/trpc";
+import { storageCreateSignedUploadUrl, storageGetSignedUrl } from "./storage";
+import { randomUUID } from "node:crypto";
+
+async function dbOrThrow() {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
+  return db;
+}
+
+async function recordAuditLog(
+  db: Awaited<ReturnType<typeof dbOrThrow>>,
+  input: {
+    actorUserId: number;
+    action: string;
+    entityType: string;
+    entityId?: number | null;
+    cooperativeId?: number | null;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  await db.execute(sql`
+    select agricoop_app.write_audit_log(
+      ${input.action},
+      ${input.entityType},
+      ${input.entityId ?? null},
+      ${input.cooperativeId ?? null},
+      ${input.metadata ? JSON.stringify(input.metadata) : null}
+    )
+  `);
+}
+
+async function createNotification(
+  db: Awaited<ReturnType<typeof dbOrThrow>>,
+  input: {
+    userId: number;
+    type: string;
+    title: string;
+    content: string;
+    link?: string;
+    relatedEntityId?: number;
+    relatedEntityType?: string;
+  },
+) {
+  await db.execute(sql`
+    select agricoop_app.create_notification(
+      ${input.userId},
+      ${input.type},
+      ${input.title},
+      ${input.content},
+      ${input.link ?? null},
+      ${input.relatedEntityId ?? null},
+      ${input.relatedEntityType ?? null}
+    )
+  `);
+}
+
+export const officerApplicationsRouter = router({
+  mine: protectedProcedure.query(async ({ ctx }) => {
+    const actor = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
+    const db = await dbOrThrow();
+    const rows = await db
+      .select({
+        application: cooperativeAdminApplications,
+        cooperativeName: cooperatives.name,
+      })
+      .from(cooperativeAdminApplications)
+      .innerJoin(cooperatives, eq(cooperativeAdminApplications.cooperativeId, cooperatives.id))
+      .where(eq(cooperativeAdminApplications.userId, actor.id))
+      .orderBy(desc(cooperativeAdminApplications.updatedAt), desc(cooperativeAdminApplications.id))
+      .limit(5);
+    return rows[0] ?? null;
+  }),
+
+  createUploadIntent: protectedProcedure
+    .input(z.object({
+      kind: z.enum(["id", "proof"]),
+      contentType: z.enum(COOP_ADMIN_APPLICATION_CONTENT_TYPES),
+      fileSizeBytes: z.number().int().min(1).max(COOP_ADMIN_APPLICATION_MAX_BYTES),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["buyer"]);
+      if (actor.requestedRole !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only Cooperative Admin applicants can upload these documents." });
+      }
+      if (!actor.openId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Your account identity is incomplete." });
+      }
+      const openId = actor.openId;
+      const extension = coopAdminApplicationExtension(input.contentType);
+      if (!extension) throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image." });
+      const storagePath = `${COOP_ADMIN_APPLICATION_BUCKET}/${openId}/${randomUUID()}.${extension}`;
+      const signedUpload = await storageCreateSignedUploadUrl(storagePath, COOP_ADMIN_APPLICATION_BUCKET);
+      if (signedUpload.path !== storagePath || !isCoopAdminApplicationStorageKey(signedUpload.path, openId)) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Upload path could not be prepared." });
+      }
+      return {
+        storagePath: signedUpload.path,
+        uploadToken: signedUpload.token,
+        uploadIntent: createCoopAdminApplicationUploadIntent({
+          userId: actor.id,
+          openId,
+          storagePath: signedUpload.path,
+          mimeType: input.contentType,
+          fileSizeBytes: input.fileSizeBytes,
+        }),
+      };
+    }),
+
+  submit: protectedProcedure
+    .input(z.object({
+      fullName: z.string().trim().min(2).max(180),
+      positionTitle: z.string().trim().min(2).max(180),
+      cooperativeId: z.number().int().positive().optional(),
+      newCooperativeName: z.string().trim().min(3).max(180).optional(),
+      newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
+      confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
+      idDocumentPath: z.string().min(1).max(1000),
+      proofDocumentPath: z.string().min(1).max(1000),
+      idUploadIntent: z.string().min(1),
+      proofUploadIntent: z.string().min(1),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["buyer"]);
+      if (actor.requestedRole !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This account is not a Cooperative Admin applicant." });
+      }
+      if (!actor.openId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Your account identity is incomplete." });
+      }
+      const openId = actor.openId;
+      const rateLimitKey = actor.email ?? openId;
+      const idIntent = verifyCoopAdminApplicationUploadIntent(input.idUploadIntent, actor.id, openId);
+      const proofIntent = verifyCoopAdminApplicationUploadIntent(input.proofUploadIntent, actor.id, openId);
+      if (!idIntent || idIntent.storagePath !== input.idDocumentPath
+        || !proofIntent || proofIntent.storagePath !== input.proofDocumentPath) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Upload intents expired or do not match the files." });
+      }
+
+      const db = await dbOrThrow();
+      return db.transaction(async tx => {
+        let cooperativeId = input.cooperativeId ?? null;
+        if (!cooperativeId && input.newCooperativeName) {
+          const resolved = await resolveUserCooperativeSelection(tx as any, {
+            newCooperativeName: input.newCooperativeName,
+            newCooperativeLocation: input.newCooperativeLocation,
+            confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
+            rateLimitEmail: rateLimitKey,
+            consumeRateLimit: () => {
+              try {
+                registrationRateLimiter.consume("create_cooperative", undefined, rateLimitKey);
+              } catch (error) {
+                if (error instanceof RegistrationRateLimitError) {
+                  throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
+                }
+                throw error;
+              }
+            },
+          });
+          if (resolved.kind === "needs_confirmation") {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `Did you mean "${resolved.suggestion.name}"? Confirm the existing cooperative or confirm creating a new one.`,
+              cause: { code: "COOP_NEEDS_CONFIRMATION", suggestion: resolved.suggestion },
+            });
+          }
+          cooperativeId = resolved.cooperativeId;
+        }
+        if (!cooperativeId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Select or add a cooperative." });
+        }
+
+        const [existing] = await tx.select().from(cooperativeAdminApplications)
+          .where(and(
+            eq(cooperativeAdminApplications.userId, actor.id),
+            inArray(cooperativeAdminApplications.status, ["awaiting_documents", "pending", "rejected"]),
+          ))
+          .orderBy(desc(cooperativeAdminApplications.id))
+          .limit(1);
+
+        let applicationId: number;
+        if (existing) {
+          const updated = await tx.update(cooperativeAdminApplications).set({
+            fullName: input.fullName,
+            positionTitle: input.positionTitle,
+            cooperativeId,
+            idDocumentPath: input.idDocumentPath,
+            proofDocumentPath: input.proofDocumentPath,
+            status: "pending",
+            rejectionReason: null,
+            reviewedBy: null,
+            reviewedAt: null,
+            updatedAt: new Date(),
+          }).where(eq(cooperativeAdminApplications.id, existing.id))
+            .returning({ id: cooperativeAdminApplications.id });
+          applicationId = updated[0]!.id;
+        } else {
+          const [created] = await tx.insert(cooperativeAdminApplications).values({
+            userId: actor.id,
+            fullName: input.fullName,
+            positionTitle: input.positionTitle,
+            cooperativeId,
+            idDocumentPath: input.idDocumentPath,
+            proofDocumentPath: input.proofDocumentPath,
+            status: "pending",
+          }).returning({ id: cooperativeAdminApplications.id });
+          applicationId = created!.id;
+        }
+
+        const superadmins = await tx.select({ id: users.id }).from(users).where(and(
+          eq(users.role, "superadmin"),
+          eq(users.approvalStatus, "approved"),
+        ));
+        for (const admin of superadmins) {
+          await createNotification(tx as any, {
+            userId: admin.id,
+            type: "cooperative_admin_application_submitted",
+            title: "Cooperative Admin application submitted",
+            content: `${input.fullName} submitted documents for Cooperative Admin review.`,
+            link: "/dashboard?tab=applications",
+            relatedEntityId: applicationId,
+            relatedEntityType: "cooperative_admin_application",
+          });
+        }
+        await createNotification(tx as any, {
+          userId: actor.id,
+          type: "cooperative_admin_application_submitted",
+          title: "Application submitted",
+          content: "Your application is waiting for approval. We will contact you once it is reviewed.",
+          link: "/applications/cooperative-admin",
+          relatedEntityId: applicationId,
+          relatedEntityType: "cooperative_admin_application",
+        });
+        return { success: true, status: "pending" as const };
+      });
+    }),
+
+  pendingList: protectedProcedure.query(async ({ ctx }) => {
+    requireOperationalRole(ctx.user, ["superadmin"]);
+    const db = await dbOrThrow();
+    return db
+      .select({
+        id: cooperativeAdminApplications.id,
+        fullName: cooperativeAdminApplications.fullName,
+        positionTitle: cooperativeAdminApplications.positionTitle,
+        status: cooperativeAdminApplications.status,
+        userId: cooperativeAdminApplications.userId,
+        email: users.email,
+        cooperativeId: cooperativeAdminApplications.cooperativeId,
+        cooperativeName: cooperatives.name,
+        createdAt: cooperativeAdminApplications.createdAt,
+        updatedAt: cooperativeAdminApplications.updatedAt,
+      })
+      .from(cooperativeAdminApplications)
+      .innerJoin(users, eq(cooperativeAdminApplications.userId, users.id))
+      .innerJoin(cooperatives, eq(cooperativeAdminApplications.cooperativeId, cooperatives.id))
+      .where(eq(cooperativeAdminApplications.status, "pending"))
+      .orderBy(desc(cooperativeAdminApplications.updatedAt));
+  }),
+
+  documentUrl: protectedProcedure
+    .input(z.object({
+      applicationId: z.number().int().positive(),
+      kind: z.enum(["id", "proof"]),
+    }).strict())
+    .query(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["buyer", "superadmin"]);
+      const db = await dbOrThrow();
+      const [row] = await db.select({
+        application: cooperativeAdminApplications,
+        openId: users.openId,
+      }).from(cooperativeAdminApplications)
+        .innerJoin(users, eq(cooperativeAdminApplications.userId, users.id))
+        .where(eq(cooperativeAdminApplications.id, input.applicationId))
+        .limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found." });
+      if (actor.role !== "superadmin" && row.application.userId !== actor.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You cannot view these documents." });
+      }
+      const path = input.kind === "id" ? row.application.idDocumentPath : row.application.proofDocumentPath;
+      if (!path || !isCoopAdminApplicationStorageKey(path, row.openId)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Document is not available." });
+      }
+      const url = await storageGetSignedUrl(path, {
+        bucket: COOP_ADMIN_APPLICATION_BUCKET,
+        public: false,
+        expiresIn: 300,
+      });
+      return { url };
+    }),
+
+  review: protectedProcedure
+    .input(z.object({
+      applicationId: z.number().int().positive(),
+      decision: z.enum(["approved", "rejected"]),
+      rejectionReason: z.string().trim().min(3).max(600).optional(),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["superadmin"]);
+      if (input.decision === "rejected" && !input.rejectionReason?.trim()) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "A rejection reason is required." });
+      }
+      const db = await dbOrThrow();
+      return db.transaction(async tx => {
+        const [row] = await tx.select().from(cooperativeAdminApplications)
+          .where(eq(cooperativeAdminApplications.id, input.applicationId))
+          .for("update")
+          .limit(1);
+        if (!row || row.status !== "pending") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "That application is not awaiting review." });
+        }
+        if (row.userId === actor.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot review your own application." });
+        }
+        const [target] = await tx.select().from(users).where(eq(users.id, row.userId)).limit(1);
+        if (!target?.openId) throw new TRPCError({ code: "NOT_FOUND", message: "Applicant account missing." });
+
+        await tx.update(cooperativeAdminApplications).set({
+          status: input.decision,
+          rejectionReason: input.decision === "rejected" ? input.rejectionReason!.trim() : null,
+          reviewedBy: actor.id,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(cooperativeAdminApplications.id, row.id));
+
+        if (input.decision === "approved") {
+          await tx.update(users).set({
+            role: "admin",
+            approvalStatus: "approved",
+            cooperativeId: row.cooperativeId,
+            requestedRole: null,
+            updatedAt: new Date(),
+          }).where(eq(users.id, target.id));
+          try {
+            await syncProfileRoleToApplicationRole(target.openId, "admin", tx);
+          } catch {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Role updated but profile sync failed. Retry from role reconciliation.",
+            });
+          }
+        }
+
+        await recordAuditLog(tx as any, {
+          actorUserId: actor.id,
+          action: input.decision === "approved"
+            ? "cooperative_admin_application_approved"
+            : "cooperative_admin_application_rejected",
+          entityType: "cooperative_admin_application",
+          entityId: row.id,
+          cooperativeId: row.cooperativeId,
+          metadata: {
+            applicantUserId: row.userId,
+            rejectionReason: input.rejectionReason ?? null,
+          },
+        });
+
+        await createNotification(tx as any, {
+          userId: row.userId,
+          type: input.decision === "approved"
+            ? "cooperative_admin_application_approved"
+            : "cooperative_admin_application_rejected",
+          title: input.decision === "approved"
+            ? "Cooperative Admin application approved"
+            : "Cooperative Admin application needs changes",
+          content: input.decision === "approved"
+            ? "Your Cooperative Admin (Officer Admin) access is now active."
+            : `Your application was rejected. Reason: ${input.rejectionReason}`,
+          link: input.decision === "approved" ? "/dashboard" : "/applications/cooperative-admin",
+          relatedEntityId: row.id,
+          relatedEntityType: "cooperative_admin_application",
+        });
+
+        return { success: true };
+      });
+    }),
+});
+
+export const adminAccountsRouter = router({
+  createAccount: protectedProcedure
+    .input(z.object({
+      name: z.string().trim().min(2).max(120),
+      email: z.string().trim().email().max(320).transform(v => v.toLowerCase()),
+      role: z.enum(["buyer", "seller", "admin"]),
+      cooperativeId: z.number().int().positive().optional(),
+      newCooperativeName: z.string().trim().min(3).max(180).optional(),
+      newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
+      confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      if (input.role === "admin" && actor.role !== "superadmin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only SuperAdmin can create Officer Admin accounts." });
+      }
+      if (input.role === "superadmin" as string) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "SuperAdmin accounts cannot be created from the UI." });
+      }
+      const needsCoop = input.role === "seller" || input.role === "admin";
+      if (needsCoop && !input.cooperativeId && !input.newCooperativeName) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Seller and Officer Admin accounts require a cooperative." });
+      }
+
+      const redirectTo = `${(process.env.APP_URL ?? "").replace(/\/$/, "")}/auth`;
+      const { data, error } = await supabaseAdmin.auth.admin.createUser({
+        email: input.email,
+        email_confirm: true,
+        user_metadata: { name: input.name, invited_by: actor.id },
+      });
+      if (error) {
+        if (isDuplicateSignupError(error)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "An account with this email already exists.",
+          });
+        }
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Unable to create the account. Try again later.",
+        });
+      }
+      const authUser = data.user;
+      if (!authUser) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to create the account." });
+      }
+
+      let inviteLink: string | null = null;
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: "recovery",
+        email: input.email,
+        options: { redirectTo },
+      });
+      if (!linkError && linkData?.properties?.action_link) {
+        inviteLink = linkData.properties.action_link;
+        try {
+          await createPublicAuthClient().auth.resetPasswordForEmail(input.email, { redirectTo });
+        } catch {
+          // Keep one-time link for the creating admin if email delivery fails.
+        }
+      }
+
+      try {
+        await withRequestDatabaseScope(authUser.id, async () => {
+          const db = await dbOrThrow();
+          let cooperativeId: number | null = null;
+          await upsertUser({
+            openId: authUser.id,
+            email: input.email,
+            name: input.name,
+            role: input.role === "admin" ? "admin" : input.role,
+            approvalStatus: input.role === "seller" ? "pending" : "approved",
+            cooperativeId: null,
+            loginMethod: "supabase",
+          } as any, undefined, input.role === "admin" ? undefined : { intent: input.role });
+
+          // Admin role upsert bypasses public registration plan — write explicitly.
+          if (input.role === "admin") {
+            await db.execute(sql`
+              update agricoop_app.users
+              set role = 'admin'::agricoop_app.user_role,
+                  "approvalStatus" = 'approved'::agricoop_app.user_approval_status
+              where "openId" = ${authUser.id}
+            `);
+          }
+
+          if (needsCoop) {
+            const resolved = await resolveUserCooperativeSelection(db, {
+              cooperativeId: input.cooperativeId,
+              newCooperativeName: input.newCooperativeName,
+              newCooperativeLocation: input.newCooperativeLocation,
+              confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
+              rateLimitEmail: input.email,
+              consumeRateLimit: () => {
+                registrationRateLimiter.consume("create_cooperative", undefined, input.email);
+              },
+            });
+            if (resolved.kind === "needs_confirmation") {
+              throw new TRPCError({
+                code: "CONFLICT",
+                message: `Did you mean "${resolved.suggestion.name}"?`,
+                cause: { code: "COOP_NEEDS_CONFIRMATION", suggestion: resolved.suggestion },
+              });
+            }
+            cooperativeId = resolved.cooperativeId;
+            await db.execute(sql`
+              update agricoop_app.users
+              set "cooperativeId" = ${cooperativeId}
+              where "openId" = ${authUser.id}
+            `);
+          }
+
+          const publicRoleName = input.role === "admin" ? "coop_officer"
+            : input.role === "seller" ? "seller" : "buyer";
+          const [publicRole] = await db.select({ roleId: users.id }).from(users).limit(0);
+          void publicRole;
+          const roleRows = await db.execute(sql`
+            select role_id from public.roles where role_name = ${publicRoleName} limit 1
+          `);
+          const roleId = Number((roleRows as any)?.[0]?.role_id ?? (roleRows as any)?.rows?.[0]?.role_id);
+          if (!Number.isFinite(roleId)) throw new Error("Canonical role missing.");
+          await db.execute(sql`
+            insert into public.profiles (user_id, full_name, email, role_id)
+            values (${authUser.id}::uuid, ${input.name}, ${input.email}, ${roleId})
+          `);
+
+          const [appUser] = await db.select({ id: users.id }).from(users)
+            .where(eq(users.openId, authUser.id)).limit(1);
+          if (appUser) {
+            await recordAuditLog(db, {
+              actorUserId: actor.id,
+              action: "admin_created_account",
+              entityType: "user",
+              entityId: appUser.id,
+              cooperativeId,
+              metadata: { role: input.role, email: input.email },
+            });
+          }
+        });
+      } catch (error) {
+        await supabaseAdmin.auth.admin.deleteUser(authUser.id).catch(() => undefined);
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: error instanceof Error ? error.message : "Account provisioning failed.",
+        });
+      }
+
+      // Never log inviteLink. Return only when email path is unavailable.
+      const emailLikelySent = !linkError;
+      return {
+        success: true,
+        inviteLink: emailLikelySent ? null : inviteLink,
+      };
+    }),
+});
+
+export const orderArchiveRouterExtras = {
+  buyerMineArchivedCapable: true as const,
+};
+
+export const orderArchiveProcedures = {
+  buyerMine: protectedProcedure
+    .input(z.object({ archived: z.boolean().optional() }).optional())
+    .query(({ ctx, input }) => {
+      requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      return getBuyerOrders(ctx.user.id, { archived: input?.archived ?? false });
+    }),
+  buyerMineCounts: protectedProcedure.query(({ ctx }) => {
+    requireOperationalRole(ctx.user, ["buyer", "seller"]);
+    return countBuyerOrderInboxStates(ctx.user.id);
+  }),
+  updateArchive: protectedProcedure
+    .input(z.object({
+      orderIds: z.array(z.number().int().positive()).min(1).max(100),
+      action: z.enum(["archive", "unarchive"]),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      const db = await dbOrThrow();
+      const owned = await db.select({ id: orders.id }).from(orders).where(and(
+        eq(orders.buyerId, ctx.user.id),
+        inArray(orders.id, input.orderIds),
+      ));
+      assertBuyerOwnsOrders(input.orderIds, owned);
+      const archiveNow = input.action === "archive";
+      const now = new Date();
+      for (const order of owned) {
+        const [existing] = await db.select().from(threadStates).where(and(
+          eq(threadStates.userId, ctx.user.id),
+          eq(threadStates.channel, "order"),
+          eq(threadStates.threadId, order.id),
+        )).limit(1);
+        if (existing) {
+          await db.update(threadStates).set({
+            archivedAt: archiveNow ? now : null,
+            updatedAt: now,
+          }).where(eq(threadStates.id, existing.id));
+        } else {
+          await db.insert(threadStates).values({
+            userId: ctx.user.id,
+            channel: "order",
+            threadId: order.id,
+            archivedAt: archiveNow ? now : null,
+          });
+        }
+      }
+      return { success: true, count: owned.length };
+    }),
+};

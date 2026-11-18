@@ -33,6 +33,7 @@ export type AuthenticatedApplicationUser = Pick<
   | "name"
   | "email"
   | "role"
+  | "requestedRole"
   | "approvalStatus"
   | "verificationStatus"
   | "cooperativeId"

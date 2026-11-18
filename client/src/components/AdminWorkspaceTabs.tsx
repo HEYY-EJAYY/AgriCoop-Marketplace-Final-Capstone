@@ -6,32 +6,45 @@ export const ADMIN_WORKSPACE_TABS = [
   { id: "orders", label: "Orders" },
   { id: "payments", label: "Payments" },
   { id: "users", label: "Users" },
+  { id: "applications", label: "Applications" },
 ] as const;
 
 export type AdminWorkspaceTabId = (typeof ADMIN_WORKSPACE_TABS)[number]["id"];
 
-function isAdminTab(value: string | null): value is AdminWorkspaceTabId {
-  return ADMIN_WORKSPACE_TABS.some(tab => tab.id === value);
+function isAdminTab(value: string | null, allowed: readonly AdminWorkspaceTabId[]): value is AdminWorkspaceTabId {
+  return allowed.some(tab => tab === value);
 }
 
-export function parseAdminWorkspaceTab(search: string): AdminWorkspaceTabId {
+export function parseAdminWorkspaceTab(
+  search: string,
+  allowed: readonly AdminWorkspaceTabId[] = ADMIN_WORKSPACE_TABS.map(tab => tab.id),
+): AdminWorkspaceTabId {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const raw = params.get("tab");
-  return isAdminTab(raw) ? raw : ADMIN_WORKSPACE_TABS[0].id;
+  return isAdminTab(raw, allowed) ? raw : (allowed[0] ?? "moderation");
 }
 
 type AdminWorkspaceTabsProps = {
-  panels: Record<AdminWorkspaceTabId, ReactNode>;
+  panels: Partial<Record<AdminWorkspaceTabId, ReactNode>> & Record<"moderation" | "orders" | "payments" | "users", ReactNode>;
+  /** Defaults to all tabs except Applications (SuperAdmin passes applications). */
+  visibleTabs?: readonly AdminWorkspaceTabId[];
 };
 
 /**
  * Spreadsheet-style body tabs for Admin / SuperAdmin dashboard.
  * Active tab persists in ?tab=; panels lazy-mount on first visit and stay cached.
  */
-export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
+export function AdminWorkspaceTabs({ panels, visibleTabs }: AdminWorkspaceTabsProps) {
   const search = useSearch();
   const [location, setLocation] = useLocation();
-  const active = parseAdminWorkspaceTab(search);
+  const tabs = useMemo(
+    () => ADMIN_WORKSPACE_TABS.filter(tab =>
+      (visibleTabs ?? ["moderation", "orders", "payments", "users"] as AdminWorkspaceTabId[]).includes(tab.id),
+    ),
+    [visibleTabs],
+  );
+  const allowedIds = useMemo(() => tabs.map(tab => tab.id), [tabs]);
+  const active = parseAdminWorkspaceTab(search, allowedIds);
   const [visited, setVisited] = useState(() => new Set<AdminWorkspaceTabId>([active]));
   const baseId = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -48,10 +61,10 @@ export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
 
   useEffect(() => {
     if (liveRef.current) {
-      const label = ADMIN_WORKSPACE_TABS.find(tab => tab.id === active)?.label ?? active;
+      const label = tabs.find(tab => tab.id === active)?.label ?? active;
       liveRef.current.textContent = `${label} panel selected`;
     }
-  }, [active]);
+  }, [active, tabs]);
 
   const setTab = useCallback(
     (next: AdminWorkspaceTabId) => {
@@ -64,9 +77,9 @@ export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
   );
 
   const focusTab = (index: number) => {
-    const clamped = (index + ADMIN_WORKSPACE_TABS.length) % ADMIN_WORKSPACE_TABS.length;
+    const clamped = (index + tabs.length) % tabs.length;
     tabRefs.current[clamped]?.focus();
-    setTab(ADMIN_WORKSPACE_TABS[clamped]!.id);
+    setTab(tabs[clamped]!.id);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -85,7 +98,7 @@ export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
         break;
       case "End":
         event.preventDefault();
-        focusTab(ADMIN_WORKSPACE_TABS.length - 1);
+        focusTab(tabs.length - 1);
         break;
       default:
         break;
@@ -93,12 +106,12 @@ export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
   };
 
   const tabIds = useMemo(
-    () => Object.fromEntries(ADMIN_WORKSPACE_TABS.map(tab => [tab.id, `${baseId}-tab-${tab.id}`])) as Record<AdminWorkspaceTabId, string>,
-    [baseId],
+    () => Object.fromEntries(tabs.map(tab => [tab.id, `${baseId}-tab-${tab.id}`])) as Record<AdminWorkspaceTabId, string>,
+    [baseId, tabs],
   );
   const panelIds = useMemo(
-    () => Object.fromEntries(ADMIN_WORKSPACE_TABS.map(tab => [tab.id, `${baseId}-panel-${tab.id}`])) as Record<AdminWorkspaceTabId, string>,
-    [baseId],
+    () => Object.fromEntries(tabs.map(tab => [tab.id, `${baseId}-panel-${tab.id}`])) as Record<AdminWorkspaceTabId, string>,
+    [baseId, tabs],
   );
 
   return (
@@ -108,7 +121,7 @@ export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
         aria-label="Administration sections"
         className="flex gap-1 overflow-x-auto rounded-2xl border border-[#dce4d6] bg-[#f3f7f0] p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {ADMIN_WORKSPACE_TABS.map((tab, index) => {
+        {tabs.map((tab, index) => {
           const selected = active === tab.id;
           return (
             <button
@@ -137,8 +150,8 @@ export function AdminWorkspaceTabs({ panels }: AdminWorkspaceTabsProps) {
         })}
       </div>
       <div ref={liveRef} className="sr-only" aria-live="polite" />
-      {ADMIN_WORKSPACE_TABS.map(tab => {
-        if (!visited.has(tab.id)) return null;
+      {tabs.map(tab => {
+        if (!visited.has(tab.id) || panels[tab.id] == null) return null;
         const selected = active === tab.id;
         return (
           <div

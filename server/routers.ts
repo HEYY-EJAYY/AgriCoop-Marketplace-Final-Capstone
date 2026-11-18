@@ -76,6 +76,7 @@ import { createRefundRecord, completedRefundAmountCents, parseRefundRecords, res
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../shared/profileVerification";
 import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
+import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures } from "./part2Routers";
 import {
   SYSTEM_PAYMENT_QR_BUCKET,
   ensureSystemPaymentSettings,
@@ -1532,11 +1533,11 @@ export const appRouter = router({
       }),
   }),
 
+  officerApplications: officerApplicationsRouter,
   orders: router({
-    buyerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["buyer", "seller"]);
-      return getBuyerOrders(ctx.user.id);
-    }),
+    buyerMine: orderArchiveProcedures.buyerMine,
+    buyerMineCounts: orderArchiveProcedures.buyerMineCounts,
+    updateArchive: orderArchiveProcedures.updateArchive,
     sellerMine: protectedProcedure.query(({ ctx }) => {
       requireOperationalRole(ctx.user, ["seller"]);
       return getSellerOrders(ctx.user.id);
@@ -3519,6 +3520,7 @@ export const appRouter = router({
   }),
 
   admin: router({
+    createAccount: adminAccountsRouter.createAccount,
     overview: protectedProcedure.query(({ ctx }) => {
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       return getAdminOverview(adminOverviewCooperativeScope(actor));

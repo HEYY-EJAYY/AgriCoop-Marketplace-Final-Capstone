@@ -307,6 +307,7 @@ async function loadAuthIdentityRecords(authUserId: string) {
       name: users.name,
       email: users.email,
       role: users.role,
+      requestedRole: users.requestedRole,
       approvalStatus: users.approvalStatus,
       verificationStatus: users.verificationStatus,
       cooperativeId: users.cooperativeId,
