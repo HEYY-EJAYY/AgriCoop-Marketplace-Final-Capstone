@@ -6,6 +6,22 @@ Updated: 2026-11-18 (verification + hardening follow-up)
 
 ---
 
+
+## Cooperative UX (picker, duplicates, soft delete) — 2026-11-18
+
+**Branch:** `finish/agricoop-complete`  
+**Production:** READY `dpl` aliased to https://agricoop-marketplace-final-capstone.vercel.app (`b26d4c5` / `48b428d`)  
+**Migration:** BLOCK 25 applied (address, normalizedLocation, deletedAt/deletedBy, unique name+location, audit soft delete/restore)
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| One Cooperative combobox | PASS | `CooperativeSelect` ARIA combobox; Auth/Add account/Coop Admin/Profile/Seller association/Admin manager |
+| Address + Location add-new | PASS | Schema + form fields; `listActive` returns `address` |
+| Duplicate exact block | PASS | Live `previewCreate` SUTAFACO+Butuan → 409 `This cooperative already exists.|AGRI_COOP_EXACT|…` |
+| Soft delete auth | PASS | `cooperativeSoftDelete.test.ts` forbids anon/buyer/seller |
+| Access audit matrix | PASS | All listed procedures PASS |
+| DB RLS harness | pending CI on push | — |
+
 ## Part 2 — registration, applications, add account, order archive (2026-11-18)
 
 **Branch:** `finish/agricoop-complete`  
@@ -524,6 +540,22 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | 9 Access audit + logs + axe | Vitest procedure/grant/security suites pass. Vercel runtime logs window: no new entries. Unauthenticated checkout/order axe: **pass** (payment-coop-orders 8/8). Payments-tab axe: needs Admin login (skipped). |
 
 ---
+
+
+## Cooperative UX (picker, duplicates, soft delete) — 2026-11-18
+
+**Branch:** `finish/agricoop-complete`  
+**Production:** READY `dpl` aliased to https://agricoop-marketplace-final-capstone.vercel.app (`b26d4c5` / `48b428d`)  
+**Migration:** BLOCK 25 applied (address, normalizedLocation, deletedAt/deletedBy, unique name+location, audit soft delete/restore)
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| One Cooperative combobox | PASS | `CooperativeSelect` ARIA combobox; Auth/Add account/Coop Admin/Profile/Seller association/Admin manager |
+| Address + Location add-new | PASS | Schema + form fields; `listActive` returns `address` |
+| Duplicate exact block | PASS | Live `previewCreate` SUTAFACO+Butuan → 409 `This cooperative already exists.|AGRI_COOP_EXACT|…` |
+| Soft delete auth | PASS | `cooperativeSoftDelete.test.ts` forbids anon/buyer/seller |
+| Access audit matrix | PASS | All listed procedures PASS |
+| DB RLS harness | pending CI on push | — |
 
 ## Part 2 — registration cooperatives, Coop Admin applications, Add account, order archive (2026-11-18)
 
