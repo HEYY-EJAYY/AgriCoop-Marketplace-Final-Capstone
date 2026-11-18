@@ -1,5 +1,5 @@
 import { ListingOptionBadges } from "@/components/ListingOptionBadges";
-import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { ProductImage } from "@/components/ProductImage";
 import { resolveProductImageSrc } from "@/lib/productImages";
 import { trpc } from "@/lib/trpc";
@@ -67,8 +67,7 @@ export default function CooperativePage() {
 
   if (!validSlug || (!isLoading && !error && !data) || isNotFound(error)) {
     return (
-      <>
-        <WorkspaceHeader title="Cooperative" description="Browse harvest listings from a cooperative marketplace page." />
+      <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
           <div className="agri-card mx-auto max-w-xl p-8 text-center">
             <Leaf className="mx-auto text-[#6d9852]" />
@@ -84,14 +83,13 @@ export default function CooperativePage() {
             </Link>
           </div>
         </main>
-      </>
+      </PageFrame>
     );
   }
 
   if (error) {
     return (
-      <>
-        <WorkspaceHeader title="Cooperative" description="Browse harvest listings from a cooperative marketplace page." />
+      <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
           <div className="agri-card mx-auto max-w-xl p-8 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Cooperative page unavailable</h1>
@@ -104,26 +102,24 @@ export default function CooperativePage() {
             </Link>
           </div>
         </main>
-      </>
+      </PageFrame>
     );
   }
 
   if (isLoading || !data) {
     return (
-      <div className="grid min-h-screen place-items-center bg-[#f8f5ee]">
-        <Loader2 className="animate-spin text-[#4e8257]" />
-      </div>
+      <PageFrame>
+        <main className={`${shellContainerClass} grid min-h-[50vh] place-items-center py-16`}>
+          <Loader2 className="animate-spin text-[#4e8257]" aria-label="Loading" />
+        </main>
+      </PageFrame>
     );
   }
 
   const { cooperative, products } = data;
 
   return (
-    <>
-      <WorkspaceHeader
-        title={cooperative.name}
-        description="Active harvest listings from this cooperative’s member farmers."
-      />
+    <PageFrame>
       <main className={`${shellContainerClass} py-8`}>
         <nav className="mb-5 text-xs font-bold text-[#66806b]" aria-label="Breadcrumb">
           <Link href="/" className="no-underline hover:text-[#1f5a3c]">Home</Link>
@@ -207,6 +203,6 @@ export default function CooperativePage() {
           )}
         </section>
       </main>
-    </>
+    </PageFrame>
   );
 }

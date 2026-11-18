@@ -1,4 +1,4 @@
-import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ProductImage } from "@/components/ProductImage";
 import { resolveProductImageSrc } from "@/lib/productImages";
@@ -20,15 +20,44 @@ export default function ProductDetails() {
   );
 
   if (!validId || (!isLoading && !error && !listing)) {
-    return <><WorkspaceHeader title="Product details" description="This marketplace listing is unavailable."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-8 text-center"><h1 className="font-display text-3xl font-bold text-[#254f37]">Listing not found</h1><p className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error?.message, "This product is not currently available.")}</p><Link href="/marketplace" className="agri-button mt-5 inline-flex min-h-11 text-sm no-underline"><ArrowLeft size={16}/> Back to marketplace</Link></div></main></>;
+    return (
+      <PageFrame>
+        <main className={`${shellContainerClass} py-10`}>
+          <div className="agri-card p-8 text-center">
+            <h1 className="font-display text-3xl font-bold text-[#254f37]">Listing not found</h1>
+            <p className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error?.message, "This product is not currently available.")}</p>
+            <Link href="/marketplace" className="agri-button mt-5 inline-flex min-h-11 text-sm no-underline"><ArrowLeft size={16}/> Back to marketplace</Link>
+          </div>
+        </main>
+      </PageFrame>
+    );
   }
 
   if (error) {
-    return <><WorkspaceHeader title="Product details" description="The marketplace could not load this listing."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-8 text-center"><h1 className="font-display text-3xl font-bold text-[#254f37]">Product details are unavailable</h1><p role="alert" className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error.message)}</p><button type="button" className="agri-button mt-5 min-h-11" disabled={isFetching} onClick={() => void refetch()}><Loader2 className={isFetching ? "animate-spin" : ""} size={16}/> Retry</button><Link href="/marketplace" className="agri-ghost mt-3 inline-flex min-h-11 text-sm no-underline"><ArrowLeft size={16}/> Back to marketplace</Link></div></main></>;
+    return (
+      <PageFrame>
+        <main className={`${shellContainerClass} py-10`}>
+          <div className="agri-card p-8 text-center">
+            <h1 className="font-display text-3xl font-bold text-[#254f37]">Product details are unavailable</h1>
+            <p role="alert" className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error.message)}</p>
+            <button type="button" className="agri-button mt-5 min-h-11" disabled={isFetching} onClick={() => void refetch()}>
+              <Loader2 className={isFetching ? "animate-spin" : ""} size={16}/> Retry
+            </button>
+            <Link href="/marketplace" className="agri-ghost mt-3 inline-flex min-h-11 text-sm no-underline"><ArrowLeft size={16}/> Back to marketplace</Link>
+          </div>
+        </main>
+      </PageFrame>
+    );
   }
 
   if (isLoading || !listing) {
-    return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
+    return (
+      <PageFrame>
+        <main className={`${shellContainerClass} grid min-h-[50vh] place-items-center py-16`}>
+          <Loader2 className="animate-spin text-[#4e8257]" aria-label="Loading" />
+        </main>
+      </PageFrame>
+    );
   }
 
   const { product, sellerName, cooperativeName } = listing;
@@ -40,8 +69,8 @@ export default function ProductDetails() {
   ).map(url => resolveProductImageSrc(url, product.name));
   const selectedImageUrl = imageUrls[selectedImageIndex] ?? imageUrls[0];
   const outOfStock = product.stockQty === 0;
-  return <>
-    <WorkspaceHeader title="Product details" description="Review the crop, unit price, available stock, and seller before ordering."/>
+  return (
+    <PageFrame>
     <main className={`${shellContainerClass} py-8`}>
       <nav className="mb-5 text-xs font-bold text-[#66806b]" aria-label="Breadcrumb">
         <Link href="/" className="no-underline hover:text-[#1f5a3c]">Home</Link>
@@ -92,5 +121,6 @@ export default function ProductDetails() {
         </div>
       </div>
     </main>
-  </>;
+    </PageFrame>
+  );
 }

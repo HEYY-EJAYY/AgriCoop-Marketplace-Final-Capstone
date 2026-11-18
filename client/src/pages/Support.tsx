@@ -1,4 +1,4 @@
-import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { PageFrame, marketingShellClass } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, MessageCircle, Pin, Send } from "lucide-react";
+import { Link } from "wouter";
 import { toast } from "sonner";
 
 export default function Support() {
@@ -121,29 +122,46 @@ export default function Support() {
 
   const activeThread = useMemo(() => threads.find(row => row.conversation.id === activeId), [threads, activeId]);
 
-  if (loading) return <div className="grid min-h-[40vh] place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]" /></div>;
+  if (loading) {
+    return (
+      <PageFrame>
+        <main className={`${marketingShellClass} py-16`}>
+          <div className="grid min-h-[40vh] place-items-center" data-testid="support-auth-loading">
+            <Loader2 className="animate-spin text-[#4e8257]" aria-label="Loading" />
+          </div>
+        </main>
+      </PageFrame>
+    );
+  }
+
   if (!user) {
     return (
-      <>
-        <WorkspaceHeader title="Platform support" description="Sign in to contact AgriCoop about accounts, billing, and platform help." />
-        <main className={`${shellContainerClass} py-10`}>
+      <PageFrame>
+        <main className={`${marketingShellClass} py-10`}>
           <div className="agri-card p-8 text-center">
             <MessageCircle className="mx-auto text-[#6d9852]" />
             <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to open an inquiry</h1>
             <p className="mt-2 text-sm text-[#6d7d70]">Order coordination with sellers belongs under Messages, not here.</p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Link href="/auth" className="agri-ghost inline-flex min-h-11 items-center no-underline">Login</Link>
+              <Link href="/auth?register=1" className="agri-button inline-flex min-h-11 items-center no-underline">Join AgriCoop</Link>
+            </div>
           </div>
         </main>
-      </>
+      </PageFrame>
     );
   }
 
   return (
-    <>
-      <WorkspaceHeader
-        title="Platform support"
-        description="Account, billing, and AgriCoop platform help. For buyer–seller order chat, use Messages instead."
-      />
-      <main className={`${shellContainerClass} py-8`}>
+    <PageFrame>
+      <main className={`${marketingShellClass} py-8`}>
+        <div className="mb-6">
+          <p className="text-sm font-extrabold uppercase tracking-[.13em] text-[#668d49]">Platform support</p>
+          <h1 className="mt-1 font-display text-3xl font-bold text-[#244e36]">Account and platform help</h1>
+          <p className="mt-2 max-w-2xl text-sm text-[#6d7d70]">
+            Account, billing, and AgriCoop platform help. For buyer–seller order chat, use Messages instead.
+          </p>
+        </div>
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <button type="button" className={`min-h-11 rounded-xl px-3 text-sm font-bold ${!archivedView ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => setArchivedView(false)}>Inbox</button>
           <button type="button" className={`min-h-11 rounded-xl px-3 text-sm font-bold ${archivedView ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => setArchivedView(true)}>Archived</button>
@@ -276,6 +294,6 @@ export default function Support() {
           </section>
         </div>
       </main>
-    </>
+    </PageFrame>
   );
 }

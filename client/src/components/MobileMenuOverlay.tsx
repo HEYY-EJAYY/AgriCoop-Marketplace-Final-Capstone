@@ -244,7 +244,7 @@ export function MobileMenuOverlay({
                 className="flex min-h-11 w-full max-w-sm items-center justify-center rounded-2xl bg-[#1f4f36] px-4 text-base font-bold text-[#fffdf8] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#eab75d]"
                 onClick={() => {
                   onClose();
-                  goToAuth("PublicHeader.drawer");
+                  goToAuth("PublicHeader.drawer", { register: true });
                 }}
               >
                 Join AgriCoop

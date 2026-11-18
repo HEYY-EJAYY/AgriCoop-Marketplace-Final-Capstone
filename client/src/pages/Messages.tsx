@@ -1,4 +1,4 @@
-import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { PageFrame, shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
@@ -6,7 +6,7 @@ import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { Loader2, MessageCircle, Pin, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useSearch } from "wouter";
+import { Link, useSearch } from "wouter";
 
 export default function Messages() {
   const { user, loading } = useAuth();
@@ -48,13 +48,29 @@ export default function Messages() {
     if (Number.isFinite(id) && id > 0) setSelectedId(id);
   }, [params]);
 
-  if (loading) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]" /></div>;
+  if (loading) {
+    return (
+      <PageFrame>
+        <main className={`${shellContainerClass} grid min-h-[50vh] place-items-center py-16`}>
+          <Loader2 className="animate-spin text-[#4e8257]" aria-label="Loading" />
+        </main>
+      </PageFrame>
+    );
+  }
   if (!user) {
     return (
-      <>
-        <WorkspaceHeader title="Messages" description="Sign in to view buyer–seller order chats." />
-        <main className={`${shellContainerClass} py-10`}><div className="agri-card p-8 text-center"><MessageCircle className="mx-auto text-[#6d9852]" /><h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to open messages</h1></div></main>
-      </>
+      <PageFrame>
+        <main className={`${shellContainerClass} py-10`}>
+          <div className="agri-card p-8 text-center">
+            <MessageCircle className="mx-auto text-[#6d9852]" />
+            <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to open messages</h1>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Link href="/auth" className="agri-ghost inline-flex min-h-11 items-center no-underline">Login</Link>
+              <Link href="/auth?register=1" className="agri-button inline-flex min-h-11 items-center no-underline">Join AgriCoop</Link>
+            </div>
+          </div>
+        </main>
+      </PageFrame>
     );
   }
 

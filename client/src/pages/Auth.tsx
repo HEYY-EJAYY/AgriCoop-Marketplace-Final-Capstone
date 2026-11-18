@@ -17,7 +17,11 @@ function isEmailConfirmationError(error: { code?: string; message?: string }) {
 export default function Auth() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
-  const [register, setRegister] = useState(false);
+  const [register, setRegister] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("register") === "1" || params.get("mode") === "register";
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
