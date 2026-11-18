@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { PageFrame, marketingShellClass } from "@/components/AgriShell";
 import Home from "@/pages/Home";
 import Marketplace from "@/pages/Marketplace";
 import NotFound from "@/pages/NotFound";
@@ -24,7 +25,13 @@ const ProductDetails = lazy(() => import("@/pages/ProductDetails"));
 const OrderDetail = lazy(() => import("@/pages/OrderDetail"));
 const CooperativePage = lazy(() => import("@/pages/CooperativePage"));
 
-const LazyFallback = <div className="grid min-h-screen place-items-center bg-[#f8f5ee] text-sm text-[#647568]">Loading AgriCoop…</div>;
+const LazyFallback = (
+  <PageFrame>
+    <main className={`${marketingShellClass} grid min-h-[40vh] place-items-center py-16 text-sm text-[#647568]`}>
+      Loading AgriCoop…
+    </main>
+  </PageFrame>
+);
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={LazyFallback}>{children}</Suspense>;
