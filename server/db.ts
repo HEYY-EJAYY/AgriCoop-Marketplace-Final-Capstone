@@ -323,6 +323,7 @@ async function loadAuthIdentityRecords(authUserId: string) {
       phone: users.phone,
       address: users.address,
       profileImageUrl: users.profileImageUrl,
+      deletedAt: users.deletedAt,
       // Intentionally omit seller onlinePayment* columns — BLOCK 17 revoked
       // authenticated/anon SELECT on those fields; selecting them returns 42501
       // and blocks every login after Supabase Auth succeeds.
@@ -389,8 +390,33 @@ export async function getUserByVerifiedAuthId(
       });
     }
   }
+  // Soft-deleted accounts must not self-heal or resolve to a usable session.
+  if (
+    resolution.status === "application_user_resolved"
+    && first.applicationUsers[0]
+    && (first.applicationUsers[0] as { deletedAt?: Date | null }).deletedAt
+  ) {
+    return { status: "application_user_deleted" as const, user: null };
+  }
+
   if (resolution.status === "application_user_missing") {
     const email = identityContext?.email?.trim().toLowerCase() ?? "";
+    // Never revive a soft-deleted account via self-heal.
+    if (email) {
+      try {
+        const db = await getDb();
+        const [deleted] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.email, email), sql`${users.deletedAt} is not null`))
+          .limit(1);
+        if (deleted) {
+          return { status: "application_user_deleted" as const, user: null };
+        }
+      } catch {
+        // Fall through to normal self-heal if the deleted check fails.
+      }
+    }
     const rateSubject = email || authUserId;
     try {
       registrationRateLimiter.consume("self_heal", undefined, rateSubject);
@@ -912,6 +938,7 @@ export async function getAdminOverview(cooperativeId?: number | null) {
         role: users.role,
         approvalStatus: users.approvalStatus,
         cooperativeId: users.cooperativeId,
+        deletedAt: users.deletedAt,
       },
       cooperativeName: cooperatives.name,
     })

@@ -29,7 +29,7 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { cartItems, conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
 import { previewUserCooperativeSelection, resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
 import {
@@ -83,6 +83,7 @@ import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey,
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
 import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures } from "./part2Routers";
 import { cartRouter } from "./cart";
+import { accountInactiveMessage, canSoftDeleteTargetUser } from "./userSoftDelete";
 import {
   SYSTEM_PAYMENT_QR_BUCKET,
   ensureSystemPaymentSettings,
@@ -362,6 +363,21 @@ export const appRouter = router({
         }
 
         const correlationId = `reg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+        // Soft-deleted emails cannot register again (same contact-admin message as login).
+        {
+          const db = await getDb();
+          if (db) {
+            const [deleted] = await db
+              .select({ id: users.id })
+              .from(users)
+              .where(and(eq(users.email, input.email.toLowerCase()), sql`${users.deletedAt} is not null`))
+              .limit(1);
+            if (deleted) {
+              throw new TRPCError({ code: "FORBIDDEN", message: accountInactiveMessage() });
+            }
+          }
+        }
 
         // Duplicate / "Did you mean?" check before Auth createUser (no orphan accounts).
         if (input.cooperativeId || input.newCooperativeName) {
@@ -4020,6 +4036,154 @@ export const appRouter = router({
             title: "Account access updated",
             content: "An administrator updated your account role, approval status, or cooperative assignment.",
             link: "/dashboard",
+          });
+          return { success: true };
+        });
+      }),
+    userDeletePreview: protectedProcedure
+      .input(z.object({ userId: z.number().int().positive() }).strict())
+      .query(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [target] = await db.select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          role: users.role,
+          cooperativeId: users.cooperativeId,
+          deletedAt: users.deletedAt,
+        }).from(users).where(eq(users.id, input.userId)).limit(1);
+        if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+        if (!canSoftDeleteTargetUser(actor, target)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot delete this user." });
+        }
+        const [listingCount] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
+          .where(and(eq(products.sellerId, target.id), isNull(products.deletedAt)));
+        const [openOrderCount] = await db.select({ count: sql<number>`count(*)::int` }).from(orders)
+          .where(and(
+            or(eq(orders.buyerId, target.id), eq(orders.sellerId, target.id)),
+            inArray(orders.status, ["submitted", "confirmed", "ready", "processing", "shipped"]),
+          ));
+        return {
+          ...target,
+          listingCount: Number(listingCount?.count ?? 0),
+          openOrderCount: Number(openOrderCount?.count ?? 0),
+        };
+      }),
+    softDeleteUser: protectedProcedure
+      .input(z.object({
+        userId: z.number().int().positive(),
+        confirm: z.literal(true),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [target] = await tx.select({
+            id: users.id,
+            openId: users.openId,
+            role: users.role,
+            cooperativeId: users.cooperativeId,
+            deletedAt: users.deletedAt,
+          }).from(users).where(eq(users.id, input.userId)).for("update").limit(1);
+          if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+          if (target.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This account is already deleted." });
+          if (!canSoftDeleteTargetUser(actor, target)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot delete this user." });
+          }
+          if (actor.role === "admin" && actor.cooperativeId !== target.cooperativeId) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You can only delete users in your cooperative." });
+          }
+
+          const [listingCount] = await tx.select({ count: sql<number>`count(*)::int` }).from(products)
+            .where(and(eq(products.sellerId, target.id), isNull(products.deletedAt)));
+          const [openOrderCount] = await tx.select({ count: sql<number>`count(*)::int` }).from(orders)
+            .where(and(
+              or(eq(orders.buyerId, target.id), eq(orders.sellerId, target.id)),
+              inArray(orders.status, ["submitted", "confirmed", "ready", "processing", "shipped"]),
+            ));
+
+          await tx.update(users).set({
+            deletedAt: new Date(),
+            deletedBy: actor.id,
+            deletedByRole: actor.role,
+          }).where(eq(users.id, target.id));
+
+          await tx.update(products).set({
+            deletedAt: new Date(),
+            deletedBy: actor.id,
+            visibility: "hidden",
+          }).where(and(eq(products.sellerId, target.id), isNull(products.deletedAt)));
+
+          await tx.delete(cartItems).where(eq(cartItems.userId, target.id));
+
+          if (target.openId) {
+            await supabaseAdmin.auth.admin.updateUserById(target.openId, {
+              ban_duration: "876000h",
+            });
+          }
+
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "user_soft_deleted",
+            entityType: "user",
+            entityId: target.id,
+            cooperativeId: target.cooperativeId,
+            metadata: {
+              targetRole: target.role,
+              listingCount: Number(listingCount?.count ?? 0),
+              openOrderCount: Number(openOrderCount?.count ?? 0),
+            },
+          });
+
+          return {
+            success: true,
+            listingCount: Number(listingCount?.count ?? 0),
+            openOrderCount: Number(openOrderCount?.count ?? 0),
+          };
+        });
+      }),
+    restoreUser: protectedProcedure
+      .input(z.object({ userId: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [target] = await tx.select({
+            id: users.id,
+            openId: users.openId,
+            role: users.role,
+            cooperativeId: users.cooperativeId,
+            deletedAt: users.deletedAt,
+          }).from(users).where(eq(users.id, input.userId)).for("update").limit(1);
+          if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+          if (!target.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This account is not deleted." });
+          if (!canSoftDeleteTargetUser(actor, target)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot restore this user." });
+          }
+          if (actor.role === "admin" && actor.cooperativeId !== target.cooperativeId) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You can only restore users in your cooperative." });
+          }
+
+          await tx.update(users).set({
+            deletedAt: null,
+            deletedBy: null,
+            deletedByRole: null,
+          }).where(eq(users.id, target.id));
+
+          if (target.openId) {
+            await supabaseAdmin.auth.admin.updateUserById(target.openId, {
+              ban_duration: "none",
+            });
+          }
+
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "user_restored",
+            entityType: "user",
+            entityId: target.id,
+            cooperativeId: target.cooperativeId,
+            metadata: { targetRole: target.role },
           });
           return { success: true };
         });

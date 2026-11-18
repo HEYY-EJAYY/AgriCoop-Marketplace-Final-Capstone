@@ -108,7 +108,13 @@ export const users = appSchema.table("users", {
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
   lastSignedIn: timestamp("lastSignedIn", { mode: "date" }).defaultNow().notNull(),
-}, table => [index("users_cooperative_id_idx").on(table.cooperativeId)]);
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
+  deletedBy: integer("deletedBy").references((): AnyPgColumn => users.id),
+  deletedByRole: varchar("deletedByRole", { length: 32 }),
+}, table => [
+  index("users_cooperative_id_idx").on(table.cooperativeId),
+  index("users_deleted_at_idx").on(table.deletedAt),
+]);
 
 export const cooperativeAdminApplications = appSchema.table("cooperativeAdminApplications", {
   id: serial("id").primaryKey(),

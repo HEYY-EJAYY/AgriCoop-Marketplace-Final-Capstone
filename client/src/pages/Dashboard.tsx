@@ -819,9 +819,80 @@ function OfficerDashboard() {
   return <><WorkspaceHeader title="Cooperative officer workspace" description="Validate members, oversee listings and transactions, and keep cooperative trade accountable."/><main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-5"><Metric label="Cooperative members" value={String(overview?.members.length || 0)} icon={Users}/><Metric label="Listings monitored" value={String(overview?.products.length || 0)} icon={Package}/><Metric label="Quotations monitored" value={String(overview?.quotations.length || 0)} icon={FileText}/><Metric label="Orders recorded" value={String(overview?.orders.length || 0)} icon={ClipboardList}/><Metric label="Recorded sales" value={peso(totalSales)} icon={BarChart3}/></div><section className="mt-8 grid gap-8 xl:grid-cols-[1.15fr_.85fr]"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Member validation</h2><p className="mt-1 text-sm text-[#6a796e]">Approve or suspend cooperative member roles within your assigned organization.</p><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b border-[#e2e9dd] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="pb-3">Member</th><th className="pb-3">Role</th><th className="pb-3">Status</th><th className="pb-3"></th></tr></thead><tbody>{overview?.members.map(member => <tr key={member.id} className="border-b border-[#edf0e9]"><td className="py-3 font-bold text-[#315640]">{member.name || "Unnamed member"}</td><td className="py-3 capitalize text-[#647568]">{member.role}</td><td className="py-3"><Status value={member.approvalStatus}/></td><td className="py-3 text-right">{member.role !== "admin" && member.role !== "superadmin" && (member.approvalStatus !== "approved" ? <button className="agri-ghost px-2.5 py-1.5 text-xs" onClick={() => updateMember.mutate({ userId: member.id, approvalStatus: "approved" })}>Approve</button> : <button className="text-xs font-bold text-[#a34838]" onClick={() => updateMember.mutate({ userId: member.id, approvalStatus: "suspended" })}>Suspend</button>)}</td></tr>)}</tbody></table>{!overview?.members.length && <p className="py-8 text-center text-sm text-[#6d7d70]">No members are associated with this cooperative yet.</p>}</div></div><div className="space-y-8"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Inventory pulse</h2><div className="mt-4 space-y-3">{overview?.products.length ? overview.products.map(product => <div key={product.id} className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3"><div><p className="font-bold text-[#315640]">{product.name}</p><p className="text-xs text-[#6c7c70]">{product.category} · {product.unit}</p></div><span className={`text-sm font-bold ${product.stockQty < 10 ? "text-[#a35538]" : "text-[#2c6b43]"}`}>{product.stockQty} left</span></div>) : <p className="text-sm text-[#6d7d70]">No cooperative listings to monitor yet.</p>}</div></div><div className="agri-card p-5 sm:p-6"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Report snapshot</h2><p className="mt-2 text-sm leading-6 text-[#65766b]">Live sales, inventory, quotation, and completed-transaction reporting for your cooperative.</p></div><button onClick={downloadReport} className="agri-ghost shrink-0 px-3 py-2 text-xs"><Download size={15}/> Export CSV</button></div><div className="mt-4 rounded-xl bg-[#edf3e9] p-4"><p className="text-xs font-extrabold uppercase tracking-[.12em] text-[#638947]">Payment coordination / status</p><p className="mt-1 text-sm text-[#41634c]">{overview?.transactions.length || 0} completed transactions documented with payment reference notes where provided.</p></div></div></div></section></main></>;
 }
 
-function AdminUserRow({ user, cooperativeName, cooperatives, canAssignSuperAdmin, onSave }: { user: any; cooperativeName: string | null; cooperatives: any[]; canAssignSuperAdmin: boolean; onSave: (values: any) => void }) {
-  const [role, setRole] = useState(user.role === "user" ? "buyer" : user.role); const [approvalStatus, setApprovalStatus] = useState(user.approvalStatus); const [cooperativeId, setCooperativeId] = useState(user.cooperativeId?.toString() || "");
-  return <tr className="border-t border-[#edf0e9]"><td className="p-3"><p className="font-bold text-[#315640]">{user.name || "Unnamed user"}</p><p className="text-xs text-[#718074]">{user.email || "No email"}</p></td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={role} onChange={e => setRole(e.target.value)}><option value="buyer">Buyer</option><option value="seller">Seller</option><option value="admin">Officer</option>{canAssignSuperAdmin && <option value="superadmin">SuperAdmin</option>}</select></td><td className="p-3"><select className="max-w-40 rounded border border-[#d5e0d1] bg-white p-1.5" value={cooperativeId} onChange={e => setCooperativeId(e.target.value)}><option value="">None</option>{cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}</select>{cooperativeName && <p className="mt-1 text-xs text-[#718074]">Current: {cooperativeName}</p>}</td><td className="p-3"><select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={approvalStatus} onChange={e => setApprovalStatus(e.target.value)}><option value="approved">Approved</option><option value="pending">Pending</option><option value="suspended">Suspended</option></select></td><td className="p-3"><button onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost px-3 py-2 text-xs">Save</button></td></tr>;
+function AdminUserRow({
+  user,
+  cooperativeName,
+  cooperatives,
+  canAssignSuperAdmin,
+  currentUserId,
+  currentUserRole,
+  onSave,
+  onRequestDelete,
+  onRestore,
+}: {
+  user: any;
+  cooperativeName: string | null;
+  cooperatives: any[];
+  canAssignSuperAdmin: boolean;
+  currentUserId?: number;
+  currentUserRole?: string;
+  onSave: (values: any) => void;
+  onRequestDelete: (user: any) => void;
+  onRestore: (userId: number) => void;
+}) {
+  const [role, setRole] = useState(user.role === "user" ? "buyer" : user.role);
+  const [approvalStatus, setApprovalStatus] = useState(user.approvalStatus);
+  const [cooperativeId, setCooperativeId] = useState(user.cooperativeId?.toString() || "");
+  const isSelf = currentUserId === user.id;
+  const isDeleted = Boolean(user.deletedAt);
+  const canDelete = !isSelf
+    && user.role !== "superadmin"
+    && (currentUserRole === "superadmin"
+      ? user.role === "buyer" || user.role === "seller" || user.role === "admin"
+      : user.role === "buyer" || user.role === "seller");
+
+  return (
+    <tr className={`border-t border-[#edf0e9] ${isDeleted ? "opacity-70" : ""}`}>
+      <td className="p-3">
+        <p className="font-bold text-[#315640]">{user.name || "Unnamed user"}{isDeleted ? " (deleted)" : ""}</p>
+        <p className="text-xs text-[#718074]">{user.email || "No email"}</p>
+      </td>
+      <td className="p-3">
+        <select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={role} disabled={isDeleted} onChange={e => setRole(e.target.value)}>
+          <option value="buyer">Buyer</option>
+          <option value="seller">Seller</option>
+          <option value="admin">Officer</option>
+          {canAssignSuperAdmin && <option value="superadmin">SuperAdmin</option>}
+        </select>
+      </td>
+      <td className="p-3">
+        <select className="max-w-40 rounded border border-[#d5e0d1] bg-white p-1.5" value={cooperativeId} disabled={isDeleted} onChange={e => setCooperativeId(e.target.value)}>
+          <option value="">None</option>
+          {cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}
+        </select>
+        {cooperativeName && <p className="mt-1 text-xs text-[#718074]">Current: {cooperativeName}</p>}
+      </td>
+      <td className="p-3">
+        <select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={approvalStatus} disabled={isDeleted} onChange={e => setApprovalStatus(e.target.value)}>
+          <option value="approved">Approved</option>
+          <option value="pending">Pending</option>
+          <option value="suspended">Suspended</option>
+        </select>
+      </td>
+      <td className="p-3">
+        <div className="flex flex-wrap gap-2">
+          {!isDeleted && (
+            <button type="button" onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost px-3 py-2 text-xs">Save</button>
+          )}
+          {isDeleted ? (
+            <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => onRestore(user.id)}>Restore</button>
+          ) : canDelete ? (
+            <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => onRequestDelete(user)}>Delete</button>
+          ) : null}
+        </div>
+      </td>
+    </tr>
+  );
 }
 
 function AdminOrderCard({ orderId }: { orderId: number }) {
@@ -1462,6 +1533,34 @@ function AdminDashboard() {
   });
 
   const [addAccountOpen, setAddAccountOpen] = useState(false);
+  const [usersFilter, setUsersFilter] = useState<"active" | "deleted">("active");
+  const [deleteUserTarget, setDeleteUserTarget] = useState<{
+    id: number;
+    name: string | null;
+    email: string | null;
+    role: string;
+    listingCount: number;
+    openOrderCount: number;
+  } | null>(null);
+  const softDeleteUser = trpc.admin.softDeleteUser.useMutation({
+    onSuccess: () => {
+      toast.success("User deleted.");
+      setDeleteUserTarget(null);
+      void utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const restoreUser = trpc.admin.restoreUser.useMutation({
+    onSuccess: () => {
+      toast.success("User restored.");
+      void utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const userDeletePreview = trpc.admin.userDeletePreview.useQuery(
+    { userId: deleteUserTarget?.id ?? 0 },
+    { enabled: Boolean(deleteUserTarget?.id) },
+  );
   const adminTabs: AdminWorkspaceTabId[] = user?.role === "superadmin"
     ? ["moderation", "orders", "payments", "users", "applications"]
     : ["moderation", "orders", "payments", "users"];
@@ -1621,6 +1720,10 @@ function AdminDashboard() {
                     <div>
                       <h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2>
                       <p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p>
+                      <div className="mt-3 flex gap-2" role="tablist" aria-label="User list filter">
+                        <button type="button" role="tab" aria-selected={usersFilter === "active"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "active" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("active")}>Active</button>
+                        <button type="button" role="tab" aria-selected={usersFilter === "deleted"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "deleted" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("deleted")}>Deleted</button>
+                      </div>
                     </div>
                     {(user?.role === "admin" || user?.role === "superadmin") && (
                       <button type="button" className="agri-button min-h-11 text-sm" onClick={() => setAddAccountOpen(true)}>
@@ -1640,24 +1743,64 @@ function AdminDashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {overview?.users.map(row => (
+                        {overview?.users
+                          .filter(row => usersFilter === "deleted" ? Boolean(row.user.deletedAt) : !row.user.deletedAt)
+                          .map(row => (
                           <AdminUserRow
                             key={row.user.id}
                             user={row.user}
                             cooperativeName={row.cooperativeName}
                             cooperatives={overview.cooperatives}
                             canAssignSuperAdmin={user?.role === "superadmin"}
+                            currentUserId={user?.id}
+                            currentUserRole={user?.role}
                             onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}
+                            onRequestDelete={target => setDeleteUserTarget({
+                              id: target.id,
+                              name: target.name,
+                              email: target.email,
+                              role: target.role,
+                              listingCount: 0,
+                              openOrderCount: 0,
+                            })}
+                            onRestore={userId => restoreUser.mutate({ userId })}
                           />
                         ))}
                       </tbody>
                     </table>
-                    {!overview?.users.length && <p className="p-8 text-center text-sm text-[#6d7d70]">No user accounts are available yet.</p>}
+                    {!overview?.users.filter(row => usersFilter === "deleted" ? Boolean(row.user.deletedAt) : !row.user.deletedAt).length && (
+                      <p className="p-8 text-center text-sm text-[#6d7d70]">
+                        {usersFilter === "deleted" ? "No deleted users." : "No user accounts are available yet."}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-8">
                   {(user?.role === "admin" || user?.role === "superadmin") && <CooperativesAdminPanel />}
                 </div>
+                <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete {deleteUserTarget?.name || deleteUserTarget?.email || "user"}?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Role: {deleteUserTarget?.role}. Listings: {userDeletePreview.data?.listingCount ?? "…"}. Open orders: {userDeletePreview.data?.openOrderCount ?? "…"}.
+                        This soft-deletes the account, bans sign-in, hides their listings, and clears their cart. Orders stay intact.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-[#a34838]"
+                        disabled={softDeleteUser.isPending || !deleteUserTarget}
+                        onClick={() => {
+                          if (deleteUserTarget) softDeleteUser.mutate({ userId: deleteUserTarget.id, confirm: true });
+                        }}
+                      >
+                        Confirm delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </section>
             ),
           }}

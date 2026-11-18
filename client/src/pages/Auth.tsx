@@ -64,6 +64,12 @@ export default function Auth() {
       setVerificationState("required");
       return false;
     }
+    if (authResolution === "application_user_deleted") {
+      logAuthDiagnostic("application_user_deleted_after_login", { supabaseSessionPresent: true });
+      toast.error("This account is no longer active. Please contact an administrator.");
+      await supabase.auth.signOut().catch(() => undefined);
+      return false;
+    }
     if (authResolution === "application_user_missing") {
       logAuthDiagnostic("application_user_missing_after_login", { supabaseSessionPresent: true });
       toast.error("We could not finish linking your AgriCoop profile yet. Wait a moment and sign in again, or contact support if this continues.");

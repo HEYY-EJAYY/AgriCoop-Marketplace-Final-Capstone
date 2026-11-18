@@ -130,6 +130,7 @@ type AppIdentityRecord = Pick<User, "openId" | "role">;
 export type AuthIdentityResolution<TUser extends AppIdentityRecord = User> =
   | { status: "application_user_resolved"; user: TUser }
   | { status: "application_user_missing"; user: null }
+  | { status: "application_user_deleted"; user: null }
   | { status: "application_user_mapping_unavailable"; user: null }
   | { status: "application_profile_missing"; user: null }
   | { status: "application_role_mapping_unavailable"; user: null }

@@ -184,3 +184,6 @@ This supersedes the earlier assumption that checkout online payment uses the sel
 ## Group 2 (2026-11-18)
 - Confirm dialogs: `AlertDialogContent` now uses opaque white + dark text (`bg-background` was unset → nearly invisible). Overlay dimmed `#102c1e/55`. Radix still traps focus and Esc closes.
 - Cooperatives manager column already labels `Listings` (CSS uppercase → LISTINGS) beside `Sellers`; no `SellerListing` string found in source.
+
+## Group 3 — user soft-delete (2026-11-18)
+- Soft-delete via `admin.softDeleteUser` / `restoreUser`; login/register blocked with contact-admin message; Active/Deleted filter on Users tab.

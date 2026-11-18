@@ -4089,3 +4089,9 @@ Anon has no UPDATE privilege on `deletedAt` / `deletedBy`.
 **Purpose:** Persistent buyer/seller cart rows in `agricoop_app."cartItems"` (userId, productId, quantity) with owner-only RLS and column-scoped GRANTs. Marketplace "Your order", nav badge, and checkout share this table.
 
 **Applied:** Supabase MCP (2026-11-18).
+
+## BLOCK 29: `20261118190000_user_soft_delete_columns.sql`
+
+**Purpose:** Additive `deletedAt` / `deletedBy` / `deletedByRole` on `agricoop_app.users` with column UPDATE grants. Soft-delete bans Auth user (no Auth delete), hides listings, clears cart rows, keeps orders.
+
+**Applied:** Supabase MCP `user_soft_delete_columns` (2026-11-18).
