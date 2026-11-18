@@ -40,7 +40,11 @@ vi.mock("./storage", async () => {
 
 import { appRouter } from "./routers";
 
-function caller(role: "buyer" | "seller" | "admin" | "superadmin" | null, id = 50) {
+function caller(
+  role: "buyer" | "seller" | "admin" | "superadmin" | null,
+  id = 50,
+  extras: { requestedRole?: "admin" | null } = {},
+) {
   return appRouter.createCaller({
     req: { headers: {} },
     res: {},
@@ -49,6 +53,7 @@ function caller(role: "buyer" | "seller" | "admin" | "superadmin" | null, id = 5
           id: role === "admin" ? 30 : role === "superadmin" ? 1 : id,
           openId: "auth-user",
           role,
+          requestedRole: extras.requestedRole ?? null,
           approvalStatus: "approved",
           verificationStatus: "approved",
           cooperativeId: role === "admin" ? 2 : null,
@@ -175,5 +180,35 @@ describe("tRPC role × procedure access matrix", () => {
   it("accepts marketplace.list with nullish input (avoids Zod null crash)", async () => {
     await expect(caller(null).marketplace.list(null)).resolves.toEqual([]);
     await expect(caller(null).marketplace.list(undefined)).resolves.toEqual([]);
+  });
+
+  it("keeps pending Cooperative Admin applicants off officer application review", async () => {
+    await expect(caller("buyer", 10, { requestedRole: "admin" }).officerApplications.pendingList())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("buyer", 10, { requestedRole: "admin" }).officerApplications.review({
+      applicationId: 1,
+      decision: "approved",
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("buyer", 10).admin.overview()).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("blocks Officer Admin from reading application files or approving applications", async () => {
+    await expect(caller("admin").officerApplications.pendingList())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("admin").officerApplications.documentUrl({ applicationId: 1, kind: "id" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("admin").officerApplications.review({
+      applicationId: 1,
+      decision: "approved",
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("blocks Admin from creating Officer Admin accounts via admin.createAccount", async () => {
+    await expect(caller("admin").admin.createAccount({
+      name: "Officer",
+      email: "officer@example.test",
+      role: "admin",
+      cooperativeId: 2,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

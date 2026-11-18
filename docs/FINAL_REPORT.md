@@ -2,7 +2,64 @@
 
 Branch: `finish/agricoop-complete`  
 Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
-Updated: 2026-11-18
+Updated: 2026-11-18 (Part 2 Item E documentation polish)
+
+---
+
+## Part 2 — registration, applications, add account, order archive (2026-11-18)
+
+**Branch:** `finish/agricoop-complete`  
+**Design freeze:** No new marketing/shell layout changes in Part 2; additive DB and targeted surfaces only (Auth coop select, Cooperative Admin application, SuperAdmin Applications tab, buyer Activity Active/Archived, Add account). Officer Admin (`admin` role) remains **global** — not scoped to a single cooperative.
+
+### Deliverables (A–E)
+
+| Item | Scope | Commit |
+|------|--------|--------|
+| **A** | Cooperative choice at registration (searchable select, add-new, Did you mean…?, `source`/`createdBy`) | `4930460` |
+| **B** | Registration intent → `upsertUser` with `requestedRole` for Cooperative Admin applicants | `61dc596` |
+| **C** | Buyer per-user order archive via `threadStates.channel = 'order'`; Activity Active/Archived | `51a5879` |
+| **D** | Admin-managed account creation (Buyer/Seller; SuperAdmin may create Officer Admin) + invite recovery | `c4994ad` |
+| **D₂** | Cooperative Admin application + SuperAdmin review (`/applications/cooperative-admin`, dashboard `?tab=applications`) | `54ecacd` |
+| **E** | Storage key hardening (`{openId}/…`), `coop-admin-applications` bucket ensure, access tests, docs/MANUAL_SQL/PDF | _(this commit)_ |
+
+### Database (additive only)
+
+| Migration | MANUAL_SQL | Purpose |
+|-----------|------------|---------|
+| `20261118120000_part2_registration_applications_order_archive.sql` | **BLOCK 20** | `cooperativeAdminApplications`, `requestedRole`, coop provenance, private application bucket + RLS, notification types, `create_user_cooperative` |
+| `20261118121000_buyer_order_archive_channel.sql` | **BLOCK 21** | `threadStates` channel check includes `order` |
+
+**Production apply status:** Pending owner run of BLOCK 20–21 in Supabase SQL Editor (parent agent may apply via MCP separately). No DROP/TRUNCATE/unscoped DELETE.
+
+### Item E code polish (uncommitted → this commit)
+
+| Area | Change |
+|------|--------|
+| Storage upload path | `officerApplications.*` signed upload uses bucket-relative `{openId}/{uuid}.ext` (matches storage RLS `split_part(name,'/',1) = auth.uid()`) |
+| Validator | `isCoopAdminApplicationStorageKey` accepts preferred key + legacy `{bucket}/{openId}/…` draft |
+| Bucket bootstrap | `ensureBucket` size/MIME for `coop-admin-applications` |
+| Audit | SuperAdmin review uses allowlisted `user_access_updated` with `decision` metadata (parent aligns `write_audit_log` allowlist) |
+| Tests | `trpcProcedureAccess.test.ts` (applicant vs Officer Admin vs SuperAdmin); `dbHarness.rls.test.ts` Part 2 privilege smoke; existing `part2Access.test.ts` + `orderArchive.test.ts` |
+
+### Tests / gates (Item E)
+
+| Gate | Command |
+|------|---------|
+| Typecheck | `pnpm run check` |
+| Part 2 unit | `pnpm exec vitest run server/part2Access.test.ts server/trpcProcedureAccess.test.ts server/orderArchive.test.ts` |
+| Docker RLS (optional local) | `pnpm run db:test:rls` includes Part 2 harness case when `TEST_DATABASE_URL` set |
+
+### Thesis PDF
+
+Regenerated via `pnpm run docs:system` (`scripts/build-system-docs.mjs` → `docs/AgriCoop_System_Documentation.pdf`) with Part 2 registration/application/archive notes in §3.
+
+### Deploy / verify blockers
+
+- Apply **BLOCK 20** then **BLOCK 21** on production Postgres before Cooperative Admin uploads and buyer archive persist correctly.
+- Ensure `write_audit_log` allowlist includes `user_access_updated` for SuperAdmin application decisions (parent migration).
+- QA password env vars still required for authenticated Playwright (`QA_*`).
+
+Companion: `docs/UX_DECISIONS.md` (Part 2), `docs/UX_AUDIT.md` (Part 2 surfaces), `docs/MANUAL_SQL.md` BLOCK 20–21.
 
 ---
 

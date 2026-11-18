@@ -54,6 +54,20 @@ There is **no** `/cart` route; basket state lives on `/marketplace` in the `#ord
 
 ---
 
+## Part 2 surfaces (2026-11-18)
+
+| Surface | Route / tab | Expected | Actual | Verdict |
+|---------|-------------|----------|--------|---------|
+| Auth cooperative select | `/auth?register=1` | Searchable coop for Seller/Coop Admin; optional for Buyer; add-new + Did you mean | `CooperativeSelect` on registration form; ties to `cooperatives.*` registration APIs | Makes sense |
+| Cooperative Admin application | `/applications/cooperative-admin` | Applicant uploads ID + proof after verify; no Admin powers until approval | Buyer workspace banner + guided form; private bucket uploads via signed URLs | Makes sense |
+| SuperAdmin applications | `/dashboard?tab=applications` | SuperAdmin-only queue, document preview, approve/reject | Dashboard body tab; Officer Admin and pending applicants blocked server-side | Makes sense |
+| Add account | Admin dashboard (managed accounts) | Admin → Buyer/Seller; SuperAdmin may add Officer Admin; invite link fallback | `admin.createAccount` UI; no SuperAdmin creation from UI | Makes sense |
+| Order archive | `/activity?tab=active` \| `archived` | Buyer-only hide from Active list; seller/admin unchanged | `orders.buyerMine` + `orders.buyerMineCounts` + `orders.updateArchive`; archive state in `threadStates` channel `order` | Makes sense |
+
+**Role note:** Cooperative Admin signup label = **Officer Admin**; approved users get global `admin` (not coop-scoped) per `docs/UX_DECISIONS.md`.
+
+---
+
 ## 1. Global shell and navigation (`AgriShell`)
 
 | Screen | Element | Expected (marketplace standard) | Actual | Verdict | Fix applied |

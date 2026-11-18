@@ -65,6 +65,8 @@ async function ensureBucket(bucketName: string, isPublic: boolean) {
     ? { maxBytes: PAYMENT_PROOF_MAX_BYTES, contentTypes: PAYMENT_PROOF_CONTENT_TYPES }
     : bucketName === PROFILE_VERIFICATION_BUCKET
       ? { maxBytes: PROFILE_VERIFICATION_MAX_BYTES, contentTypes: PROFILE_VERIFICATION_CONTENT_TYPES }
+      : bucketName === "coop-admin-applications"
+        ? { maxBytes: 5 * 1024 * 1024, contentTypes: ["image/jpeg", "image/png", "image/webp"] as const }
       : bucketName === SELLER_PAYMENT_QR_BUCKET || bucketName === SYSTEM_PAYMENT_QR_BUCKET
         ? { maxBytes: PAYMENT_PROOF_MAX_BYTES, contentTypes: PAYMENT_PROOF_CONTENT_TYPES }
         : null;

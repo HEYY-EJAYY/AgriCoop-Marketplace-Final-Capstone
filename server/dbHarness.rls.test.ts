@@ -194,6 +194,49 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
       await sql.end({ timeout: 5 });
     }
   });
+
+  it("enforces cooperativeAdminApplications and order archive privileges for Part 2", async () => {
+    assertLocalTestDatabaseUrl(testDatabaseUrl);
+    const postgres = (await import("postgres")).default;
+    const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
+    try {
+      const [grants] = await sql`
+        select
+          has_table_privilege('authenticated', 'agricoop_app."cooperativeAdminApplications"', 'SELECT') as apps_sel,
+          has_table_privilege('anon', 'agricoop_app."cooperativeAdminApplications"', 'SELECT') as anon_apps_sel,
+          has_column_privilege('authenticated', 'agricoop_app.users', 'requestedRole', 'SELECT') as requested_role_sel,
+          has_column_privilege('authenticated', 'agricoop_app.cooperatives', 'source', 'SELECT') as coop_source_sel,
+          exists(
+            select 1 from pg_proc
+            where pronamespace = 'agricoop_app'::regnamespace
+              and proname = 'create_user_cooperative'
+          ) as create_user_coop_fn,
+          exists(
+            select 1 from storage.buckets where id = 'coop-admin-applications' and public = false
+          ) as private_app_bucket
+      `;
+      expect(grants.apps_sel).toBe(true);
+      expect(grants.anon_apps_sel).toBe(false);
+      expect(grants.requested_role_sel).toBe(true);
+      expect(grants.coop_source_sel).toBe(true);
+      expect(grants.create_user_coop_fn).toBe(true);
+      expect(grants.private_app_bucket).toBe(true);
+
+      await sql.begin(async tx => {
+        await tx`select set_config('role', 'authenticated', true)`;
+        await tx.unsafe("set local role authenticated");
+        await tx`select set_config('search_path', 'public, agricoop_app', true)`;
+        await tx`select set_config('request.jwt.claim.sub', '', true)`;
+        await tx`select set_config('request.jwt.claims', '{"role":"authenticated"}', true)`;
+        const apps = await tx`select id from agricoop_app."cooperativeAdminApplications"`;
+        expect(apps).toEqual([]);
+        const states = await tx`select id from agricoop_app."threadStates" where channel = 'order'`;
+        expect(states).toEqual([]);
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
 });
 
 if (!testDatabaseUrl) {

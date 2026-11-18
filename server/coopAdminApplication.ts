@@ -93,9 +93,16 @@ export function verifyCoopAdminApplicationUploadIntent(
 }
 
 export function isCoopAdminApplicationStorageKey(key: string, openId: string) {
-  const prefix = `${COOP_ADMIN_APPLICATION_BUCKET}/${openId}/`;
-  if (!key.startsWith(prefix)) return false;
-  const fileName = key.slice(prefix.length);
+  // Preferred: `{openId}/{uuid}.ext` (bucket-relative, user-id prefix).
+  // Legacy Part 2 draft also accepted `{bucket}/{openId}/{uuid}.ext`.
+  const preferred = `${openId}/`;
+  const legacy = `${COOP_ADMIN_APPLICATION_BUCKET}/${openId}/`;
+  const fileName = key.startsWith(preferred)
+    ? key.slice(preferred.length)
+    : key.startsWith(legacy)
+      ? key.slice(legacy.length)
+      : null;
+  if (!fileName || fileName.includes("/")) return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp)$/i.test(fileName);
 }
 

@@ -153,12 +153,13 @@ Runtime roles are enumerated in `drizzle/pg-schema.ts` as `user_role`: `buyer`, 
 - Public marketplace browse: `marketplace.list`, `marketplace.categories`, `marketplace.byId`; filters require published, approved, visible listings and approved sellers (`getMarketplace` in `server/db.ts`).
 - Basket and checkout on `/marketplace` (`#order` aside) and `/checkout` with `sessionStorage` cart (`docs/UX_AUDIT.md`).
 - Quotation request and accept/decline flow: `quotations.request`, `quotations.decide`; place order from accepted quote via `orders.create` rules in `marketplaceRules.ts` (`canPlaceAcceptedQuotationOrder`).
-- Order history: `orders.buyerMine`, buyer views in `/dashboard` and `/activity`.
+- Order history: `orders.buyerMine`, `orders.buyerMineCounts`, Active/Archived tabs on `/activity` (`?tab=`). Archive/unarchive is per-buyer via `threadStates` channel `order` (`orders.updateArchive`) and never changes seller/admin views, payment, or history.
 - Profile and identity verification upload: `account.requestVerificationUpload`, `account.submitVerification`.
 - Online receipt submission at checkout and re-upload: checkout receipt intents + `payments.uploadProof` / `payments.finalizeProofUpload`.
 - Support conversations: `conversations.*`; support tickets: `support.createTicket`, `support.myTickets`.
+- Optional cooperative at signup via searchable `CooperativeSelect` (add-new supported).
 
-Self-registration sets `buyer` with `approvalStatus` **approved** (`resolvePublicRegistrationIdentity` in `server/authIdentity.ts`).
+Self-registration sets `buyer` with `approvalStatus` **approved** (`resolvePublicRegistrationIdentity` in `server/authIdentity.ts`). Cooperative Admin applicants also start as buyers (see §3.5).
 
 ### 3.2 Seller (Farmer)
 
@@ -183,7 +184,7 @@ Self-registration sets `seller` with `approvalStatus` **pending** until admin ap
 
 - Cooperative-scoped overview: `cooperativeAdmin.overview`, `admin.overview` (scoped by `cooperativeId` via `adminOverviewCooperativeScope`).
 - Product verification queue: `admin.reviewProduct`.
-- User management: `admin.updateUser`, `cooperativeAdmin.updateMemberStatus`.
+- User management: `admin.updateUser`, `cooperativeAdmin.updateMemberStatus`, and **Add account** (`admin.createAccount`) for Buyer/Seller (confirmed Auth user + set-password invite; no password shown).
 - Association request review: `cooperativeAssociations.reviewAssociationRequest` (router `cooperativeAdmin.reviewAssociationRequest`).
 - Order completion with final quantities: `orders.updateStatus` → `prepareOrderCompletion` in `marketplaceRules.ts`.
 - Payment and profile verification queues: `payments.reviewProof`, `payments.recordCashReceipt`, `systemPayment.*`, `account.reviewVerification`.
@@ -192,7 +193,7 @@ Self-registration sets `seller` with `approvalStatus` **pending** until admin ap
 - Audit log read (cooperative scope): `auditLogs.list` on `/admin/audit-logs`.
 - Support ticket staff workflows: `support.listAll`, `assign`, `reply`, `updateStatus`.
 
-Admins are not created through public `auth.register`; role assignment occurs through administrative user updates.
+Public signup may choose **Cooperative Admin** (displayed as Officer Admin) but that path never grants `admin` until SuperAdmin approval (§3.5). Officer Admins retain **global** Admin powers; cooperative-scoped Officer Admin is not implemented (`docs/UX_DECISIONS.md`).
 
 ### 3.4 SuperAdmin
 
@@ -202,9 +203,21 @@ Admins are not created through public `auth.register`; role assignment occurs th
 
 - Cooperative lifecycle: `cooperatives.create`, `update`, `setStatus` (superadmin only per `server/routers.ts`).
 - Role conflict detection and reconciliation: `admin.listRoleConflicts`, `admin.reconcileRole` with UI `RoleConflictsPanel` on `/dashboard`.
-- Assign superadmin role only when `canAssignSuperAdmin` permits (`docs/UX_AUDIT.md`).
+- Assign superadmin role only when `canAssignSuperAdmin` permits (`docs/UX_AUDIT.md`). Nobody creates SuperAdmin from Add account UI.
+- Add account may also create Officer Admin (`admin`) accounts (`admin.createAccount` + `canCreateManagedAccountRole`).
+- Cooperative Admin applications queue: dashboard body tab `?tab=applications` → `officerApplications.pendingList` / `review` / `documentUrl` (SuperAdmin only).
 - Unscoped or platform-wide admin overview and audit where queries omit cooperative filter for superadmin.
 - Platform-scoped payment options and refund queues: `payments.refundQueue`, `recordRefund`, `updateRefundStatus`.
+
+### 3.5 Cooperative Admin application (no fifth role)
+
+**Registration.** Signup offers Buyer, Seller, and Cooperative Admin. Cooperative Admin is the existing `admin` role, labeled **Officer Admin**. Choosing it creates a Buyer account with `requestedRole = admin` and a `cooperativeAdminApplications` row in `awaiting_documents` — no Admin privilege until approval.
+
+**Applicant flow.** After email verify/login: `/applications/cooperative-admin` (banner on buyer dashboard). Form: full name, cooperative (select/add-new), position, ID image, proof-of-position image (JPEG/PNG/WebP ≤ 5 MB, client compress). Uploads require a session; private bucket `coop-admin-applications` with Auth-user-id path prefix; signed URLs only after server authz for uploader or SuperAdmin.
+
+**Review.** Submit → `pending`. SuperAdmin Approves (sets role `admin`, clears `requestedRole`, audit + in-app notification) or Rejects (reason required; applicant may resubmit). Officer Admins cannot read files or approve; self-approve blocked. Soft states only (records/files kept). Application decision emails: **not sent** — no product transactional email provider beyond Supabase Auth.
+
+**Cooperatives at signup.** Searchable active list + add-new; required for Seller/Cooperative Admin; optional for Buyers. New coops use Part 1 normalize / Did you mean…? / rate limit / `source='user'` / `createdBy` inside the signup transaction (`create_user_cooperative`). Anon has no cooperative INSERT.
 
 ---
 
@@ -303,7 +316,8 @@ Application tables are defined in `drizzle/pg-schema.ts`. The `agricoop_app` Pos
 | `agricoop_app.systemPaymentSettings` / `systemOnlinePaymentAccounts` / `systemPaymentSettingsAudit` | Platform method toggles, active Online account + QR, change history |
 | `agricoop_app.paymentOptions` / `paymentProofs` | Legacy coop payment options tooling; private Online receipt uploads |
 | `agricoop_app.conversations` / `conversationMessages` | Trade messages (buyer↔seller) and platform support inquiries (separated by FK presence) |
-| `agricoop_app.threadStates` | Per-user read / pin / archive / soft-delete for conversation inboxes |
+| `agricoop_app.threadStates` | Per-user read / pin / archive / soft-delete for conversation inboxes; channel `order` for buyer-only My Orders archive |
+| `agricoop_app.cooperativeAdminApplications` | Cooperative Admin applicant documents and review soft-states |
 | `agricoop_app.notifications` | In-app notifications |
 | `agricoop_app.supportTickets` / `supportTicketMessages` | Structured support tickets |
 | `agricoop_app.auditLogs` | Append-only audit trail |
@@ -589,7 +603,7 @@ Functions: `applicationRoleToPublicRoleName`, `publicRoleNameToApplicationRole`,
 3. If counts exceed one or roles disagree → fail closed (`application_identity_conflict`, `application_role_mapping_conflict`, etc.).
 4. **Self-heal:** On exactly one user and one profile with role mismatch, `syncProfileRoleToApplicationRole` updates `profiles.role_id` to match the application role, then re-resolves (`getUserByVerifiedAuthId` in `server/db.ts`).
 
-**Registration.** Only `buyer` and `seller` are valid public registration roles; server assigns `approvalStatus` per role. Admin and superadmin are provisioned administratively.
+**Registration.** Public roles are `buyer`, `seller`, and `coop_admin` (maps to Buyer + `requestedRole=admin`). Server assigns `approvalStatus` and never accepts client-supplied role/status/approval fields beyond that enum. SuperAdmin is never created from the UI; Officer Admin may be created by SuperAdmin via Add account or via application approval.
 
 **Database session.** `buildRequestDatabaseClaims` sets PostgreSQL `authenticated` or `anon` and JWT claim JSON for RLS helpers, within a single transaction per request.
 

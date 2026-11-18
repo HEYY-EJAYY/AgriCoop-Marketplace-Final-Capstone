@@ -117,7 +117,8 @@ export const officerApplicationsRouter = router({
       const openId = actor.openId;
       const extension = coopAdminApplicationExtension(input.contentType);
       if (!extension) throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image." });
-      const storagePath = `${COOP_ADMIN_APPLICATION_BUCKET}/${openId}/${randomUUID()}.${extension}`;
+      // Object key is user-id prefixed inside the private bucket (matches storage RLS).
+      const storagePath = `${openId}/${randomUUID()}.${extension}`;
       const signedUpload = await storageCreateSignedUploadUrl(storagePath, COOP_ADMIN_APPLICATION_BUCKET);
       if (signedUpload.path !== storagePath || !isCoopAdminApplicationStorageKey(signedUpload.path, openId)) {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Upload path could not be prepared." });
@@ -369,16 +370,16 @@ export const officerApplicationsRouter = router({
           }
         }
 
+        // write_audit_log allowlist: reuse user_access_updated with application metadata.
         await recordAuditLog(tx as any, {
           actorUserId: actor.id,
-          action: input.decision === "approved"
-            ? "cooperative_admin_application_approved"
-            : "cooperative_admin_application_rejected",
+          action: "user_access_updated",
           entityType: "cooperative_admin_application",
           entityId: row.id,
           cooperativeId: row.cooperativeId,
           metadata: {
             applicantUserId: row.userId,
+            decision: input.decision,
             rejectionReason: input.rejectionReason ?? null,
           },
         });
