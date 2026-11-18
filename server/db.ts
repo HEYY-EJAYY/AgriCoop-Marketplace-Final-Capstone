@@ -34,6 +34,8 @@ import {
   matchesPublicRegistrationIdentity,
   resolveAuthIdentityMapping,
   resolvePublicRegistrationIdentity,
+  resolveRegistrationIntent,
+  type RegistrationIntent,
 } from "./authIdentity";
 
 function createDb(url: string | undefined) {
@@ -147,21 +149,37 @@ export async function withRequestDatabaseScope<T>(
   });
 }
 
-export function buildUserUpsertPlan(user: InsertUser) {
+export function buildUserUpsertPlan(
+  user: InsertUser,
+  options?: { intent?: RegistrationIntent },
+) {
   if (!user.openId) throw new Error("User openId is required for upsert");
-  const identity = resolvePublicRegistrationIdentity(user.role);
-  if (!identity
-    || user.approvalStatus !== identity.approvalStatus
-    || (user.cooperativeId !== undefined && user.cooperativeId !== null)) {
-    throw new Error("User upsert requires a verified Buyer or Seller registration identity.");
+  const intent = options?.intent
+    ?? (user.role === "seller"
+      ? "seller"
+      : user.requestedRole === "admin"
+        ? "cooperative_admin"
+        : "buyer");
+  const resolved = resolveRegistrationIntent(intent);
+  if (
+    user.role !== resolved.applicationRole
+    || user.approvalStatus !== resolved.approvalStatus
+    || (resolved.requestedRole && user.requestedRole !== resolved.requestedRole)
+    || (!resolved.requestedRole && user.requestedRole)
+  ) {
+    throw new Error("User upsert requires a verified public registration identity.");
+  }
+  if (resolved.applicationRole !== "seller" && user.cooperativeId != null) {
+    throw new Error("Only Seller registration may set cooperativeId at signup.");
   }
 
   const now = new Date();
   const values: InsertUser = {
     openId: user.openId,
-    role: identity.applicationRole,
-    approvalStatus: identity.approvalStatus,
-    cooperativeId: null,
+    role: resolved.applicationRole,
+    approvalStatus: resolved.approvalStatus,
+    cooperativeId: resolved.applicationRole === "seller" ? (user.cooperativeId ?? null) : null,
+    requestedRole: resolved.requestedRole ?? null,
     lastSignedIn: now,
   };
   const updateSet: Partial<InsertUser> = { lastSignedIn: now };
@@ -172,24 +190,39 @@ export function buildUserUpsertPlan(user: InsertUser) {
   if (user.birthdate !== undefined) values.birthdate = updateSet.birthdate = user.birthdate ?? null;
   if (user.phone !== undefined) values.phone = updateSet.phone = user.phone ?? null;
   if (user.address !== undefined) values.address = updateSet.address = user.address ?? null;
-  return { values, updateSet, identity };
+  const identity = {
+    publicRoleName: resolved.publicRoleNameForProfile,
+    applicationRole: resolved.applicationRole as "buyer" | "seller",
+    approvalStatus: resolved.approvalStatus as "approved" | "pending",
+    registrationChoice: intent === "cooperative_admin" ? "coop_admin" as const
+      : intent === "seller" ? "seller" as const
+      : "buyer" as const,
+  };
+  return { values, updateSet, identity, intent };
 }
 
-export async function upsertUser(user: InsertUser, executor?: RootDb | RootTransaction): Promise<void> {
+export async function upsertUser(
+  user: InsertUser,
+  executor?: RootDb | RootTransaction,
+  options?: { intent?: RegistrationIntent },
+): Promise<void> {
   const db = executor ?? await getDb();
-  const plan = buildUserUpsertPlan(user);
+  const plan = buildUserUpsertPlan(user, options);
   // Explicit column list only: Drizzle's full-table insert lists every users column
   // (including onlinePayment* as DEFAULT). BLOCK 17 revoked authenticated INSERT on
   // those payment columns, so the expanded insert raises 42501 and registration fails.
   const rows = await db.execute(sql`
     insert into agricoop_app.users (
-      "openId", name, email, "loginMethod", role, "approvalStatus", "cooperativeId", "lastSignedIn"
+      "openId", name, email, "loginMethod", role, "requestedRole", "approvalStatus", "cooperativeId", "lastSignedIn"
     ) values (
       ${plan.values.openId},
       ${plan.values.name ?? null},
       ${plan.values.email ?? null},
       ${plan.values.loginMethod ?? null},
       ${plan.values.role}::agricoop_app.user_role,
+      ${plan.values.requestedRole
+        ? sql`${plan.values.requestedRole}::agricoop_app.user_role`
+        : sql`null`},
       ${plan.values.approvalStatus}::agricoop_app.user_approval_status,
       ${plan.values.cooperativeId ?? null},
       ${(plan.values.lastSignedIn instanceof Date
@@ -201,12 +234,13 @@ export async function upsertUser(user: InsertUser, executor?: RootDb | RootTrans
       email = coalesce(excluded.email, agricoop_app.users.email),
       "loginMethod" = coalesce(excluded."loginMethod", agricoop_app.users."loginMethod"),
       "lastSignedIn" = excluded."lastSignedIn"
-    returning role, "approvalStatus", "cooperativeId"
+    returning role, "approvalStatus", "cooperativeId", "requestedRole"
   `);
   const persisted = (rows as unknown as Array<{
     role: "buyer" | "seller" | "admin" | "superadmin";
     approvalStatus: "approved" | "pending" | "suspended";
     cooperativeId: number | null;
+    requestedRole: "buyer" | "seller" | "admin" | "superadmin" | null;
   }>)[0];
   if (!persisted || !matchesPublicRegistrationIdentity(persisted, plan.identity)) {
     throw new Error("Existing application role or approval status conflicts with the canonical public role.");
@@ -542,15 +576,61 @@ export async function getSellerProducts(sellerId: number) {
   });
 }
 
-export async function getBuyerOrders(buyerId: number) {
+export type BuyerOrderListOptions = {
+  archived?: boolean;
+};
+
+export async function countBuyerOrderInboxStates(buyerId: number) {
+  const db = await getDb();
+  if (!db) return { active: 0, archived: 0 };
+  const rows = await db
+    .select({
+      archived: sql<boolean>`${threadStates.archivedAt} is not null`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(orders)
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, buyerId),
+      eq(threadStates.channel, "order"),
+      eq(threadStates.threadId, orders.id),
+    ))
+    .where(eq(orders.buyerId, buyerId))
+    .groupBy(sql`${threadStates.archivedAt} is not null`);
+
+  let active = 0;
+  let archived = 0;
+  for (const row of rows) {
+    if (row.archived) archived += row.count;
+    else active += row.count;
+  }
+  return { active, archived };
+}
+
+export async function getBuyerOrders(buyerId: number, options: BuyerOrderListOptions = {}) {
+  const archived = options.archived ?? false;
   const db = await getDb();
   if (!db) return [];
   const rows = await db
-    .select({ order: orders, sellerName: users.name, cooperativeName: cooperatives.name })
+    .select({
+      order: orders,
+      sellerName: users.name,
+      cooperativeName: cooperatives.name,
+      archivedAt: threadStates.archivedAt,
+    })
     .from(orders)
     .innerJoin(users, eq(orders.sellerId, users.id))
     .leftJoin(cooperatives, eq(orders.cooperativeId, cooperatives.id))
-    .where(eq(orders.buyerId, buyerId))
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, buyerId),
+      eq(threadStates.channel, "order"),
+      eq(threadStates.threadId, orders.id),
+    ))
+    .where(and(
+      eq(orders.buyerId, buyerId),
+      archived
+        ? sql`${threadStates.archivedAt} is not null`
+        : and(isNull(threadStates.archivedAt), isNull(threadStates.deletedAt)),
+    ))
     .orderBy(desc(orders.createdAt));
   if (!rows.length) return [];
   const items = await db
@@ -559,7 +639,10 @@ export async function getBuyerOrders(buyerId: number) {
     .innerJoin(products, eq(orderItems.productId, products.id))
     .where(inArray(orderItems.orderId, rows.map(row => row.order.id)));
   return rows.map(row => ({
-    ...row,
+    order: row.order,
+    sellerName: row.sellerName,
+    cooperativeName: row.cooperativeName,
+    archivedAt: row.archivedAt,
     items: items.filter(item => item.item.orderId === row.order.id),
   }));
 }

@@ -27,7 +27,7 @@ describe("PostgreSQL identity lookup schema", () => {
 
   it("uses the confirmed identity and canonical role columns", () => {
     expect(getTableConfig(users).columns.map(column => column.name)).toEqual([
-      "id", "openId", "name", "email", "loginMethod", "role", "approvalStatus",
+      "id", "openId", "name", "email", "loginMethod", "role", "requestedRole", "approvalStatus",
       "verificationStatus", "verificationNote", "verifiedBy", "verifiedAt",
       "profileImageUrl", "birthdate", "phone", "address", "cooperativeId",
       "contactNumber", "onlinePaymentQrPath", "onlinePaymentAccountName",
