@@ -100,4 +100,14 @@
 - **Not verified:** No browser launched and no live QA credentials/backend were used. `playwright --list` verifies discovery only, not UI behavior. Some data-dependent cases skip clearly if the QA account has no suitable listing/order/cooperative.
 - **Exact local commands:** Terminal 1: set `PORT=3000` and ensure `.env.local` points only to a disposable local/test backend, then run `fnm exec --using=22.23.5 pnpm.cmd dev`. Terminal 2: set `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000` and the four `QA_*` variables above, then run `fnm exec --using=22.23.5 pnpm.cmd exec playwright test e2e/stage-fixes.spec.ts --project=desktop-1280 --project=mobile-360`. Do not point `.env.local` or Playwright at production.
 
-Stages 7–8 remain.
+## Stage 7 — Documentation
+
+**Status:** DONE
+
+- **Files changed:** `docs/FINAL_REPORT.md`, `docs/UX_DECISIONS.md`, `docs/ACCESSIBILITY.md`, `docs/PROGRESS.md`.
+- **Deliverables:** Replaced the oversized final report with a concise under-40-line report including stage statuses, ordered unapplied SQL blocks with previews in `MANUAL_SQL.md`, local/live checks, risks, and push/verification commands. Added Stage 3–6 UX assumptions and an accessibility note that explicitly does not claim WCAG conformance.
+- **Verified:** Final report is under 40 lines; SQL block order and migration names match generated `MANUAL_SQL.md`; documentation links point to the corresponding manual SQL and test instructions.
+- **Not verified:** Documentation does not represent live database, production, browser, or assistive-technology validation.
+- **Manual action:** Review the read-only previews and follow the local CI/browser checks listed in the final report before applying SQL or pushing.
+
+Stage 8 remains pending: the defense guide has not been authored.

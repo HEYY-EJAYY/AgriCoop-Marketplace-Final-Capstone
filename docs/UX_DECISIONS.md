@@ -187,3 +187,18 @@ This supersedes the earlier assumption that checkout online payment uses the sel
 
 ## Group 3 — user soft-delete (2026-11-18)
 - Soft-delete via `admin.softDeleteUser` / `restoreUser`; login/register blocked with contact-admin message; Active/Deleted filter on Users tab.
+
+## Cooperative requests, Officer Admin scope, and display labels (Stage 3)
+
+- Existing seller-association request flow is extended for both unassigned Sellers and Sellers requesting a different active cooperative. A Seller must give a reason; the same-cooperative, suspended, Buyer, and already-pending cases have distinct outcomes. Only one request may remain pending per Seller.
+- Admin and SuperAdmin decisions may include a note and notify the requester. Approval changes the Seller's cooperative; moving that Seller's existing listings is an explicit opt-in, not the default. Listing cooperative assignments otherwise remain unchanged.
+- Officer Admin (`admin`) is scoped to their cooperative for marketplace administration; SuperAdmin retains cross-cooperative scope. Dashboard defaults to "My cooperative" where applicable. This is a data-access decision, not a visual redesign.
+- Deleted cooperatives are hidden by default in management lists and become visible only when "Show deleted" is enabled. Deleting a cooperative is soft-delete; historical references remain.
+- Product and order status labels use a shared Title Case formatter; combined moderation values use `Published - Approved`. Stored enum values are not rewritten.
+
+## Password, mobile, and test environment decisions (Stage 4–6)
+
+- Password visibility is an explicit, keyboard-operable control on password inputs; it is not shown as an unlabeled decorative icon. It must not move surrounding content when toggled.
+- The mobile marketplace exposes "Your order" through a button and sheet when the desktop order card is not in view. This supplements rather than replaces the existing cart.
+- Playwright is intentionally local-only. Tests use QA credentials from environment variables, report missing variables as skips, and may create a quotation and a stable soft-deleted QA cooperative. Use a disposable backend; never point the suite at production. Browser behavior remains unverified until the documented command is run.
+- Accessibility documentation reports tested behaviors and known gaps; passing component tests or test discovery is not treated as WCAG conformance.
