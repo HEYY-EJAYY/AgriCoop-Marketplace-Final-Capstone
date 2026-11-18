@@ -442,5 +442,7 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | Security proofs | Signup cannot set admin/status/approval (`part2Access`); pending applicant no admin (`trpcProcedureAccess`); Officer Admin cannot read/approve apps; Admin cannot create Admin/SuperAdmin (`canCreateManagedAccountRole`) |
 | Vitest | **376 passed**, 6 skipped (local without Docker) |
 | Thesis docs / PDF | Updated + regenerated |
+| Production deploy | `dpl_7TTfdbDiss3Wu73UzPAPT4sWTj8v` **READY** on https://agricoop-marketplace-final-capstone.vercel.app — smoke `/`, `/auth`, `/activity`, `/api/health` = 200 |
 | QA_* signed-in Playwright | Still **MISSING** env vars — authenticated axe/QA create-cleanup deferred |
 | Email for application decisions | **Not implemented** — no app transactional mailer; Auth emails only |
+| DB RLS harness CI | Re-run after Part 2 privilege harness hardening; prior green reference https://github.com/HEYY-EJAYY/AgriCoop-Marketplace-Final-Capstone/actions/runs/44234745224 (`f326caf`, 361 passed) |

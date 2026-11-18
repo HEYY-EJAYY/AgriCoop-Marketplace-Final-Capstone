@@ -93,6 +93,10 @@ jobs:
             echo "Missing executed registration/login role test."
             exit 1
           fi
+          if ! grep -q "enforces cooperativeAdminApplications and order archive privileges for Part 2" harness-output.txt; then
+            echo "Missing executed Part 2 applications/archive privilege test."
+            exit 1
+          fi
           if echo "$summary" | grep -Eqi 'failed'; then
             echo "Harness vitest reported failures."
             exit 1

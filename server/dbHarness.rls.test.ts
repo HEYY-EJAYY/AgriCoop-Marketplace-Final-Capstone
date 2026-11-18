@@ -200,38 +200,53 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
     const postgres = (await import("postgres")).default;
     const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
     try {
-      // Column-scoped GRANTs (not table-level SELECT) — match other harness privilege checks.
-      const [grants] = await sql`
+      const [meta] = await sql`
         select
-          has_column_privilege(
-            'authenticated',
-            to_regclass('agricoop_app."cooperativeAdminApplications"'),
-            'id',
-            'SELECT'
-          ) as apps_sel,
-          has_column_privilege(
-            'anon',
-            to_regclass('agricoop_app."cooperativeAdminApplications"'),
-            'id',
-            'SELECT'
-          ) as anon_apps_sel,
-          has_column_privilege('authenticated', 'agricoop_app.users', 'requestedRole', 'SELECT') as requested_role_sel,
-          has_column_privilege('authenticated', 'agricoop_app.cooperatives', 'source', 'SELECT') as coop_source_sel,
+          to_regclass('agricoop_app."cooperativeAdminApplications"') is not null as apps_table,
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'agricoop_app' and table_name = 'users' and column_name = 'requestedRole'
+          ) as requested_role_col,
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'agricoop_app' and table_name = 'cooperatives' and column_name = 'source'
+          ) as coop_source_col,
           exists(
             select 1 from pg_proc
             where pronamespace = 'agricoop_app'::regnamespace
               and proname = 'create_user_cooperative'
           ) as create_user_coop_fn,
           exists(
+            select 1 from pg_constraint
+            where conname = 'thread_states_channel_check'
+              and conrelid = 'agricoop_app."threadStates"'::regclass
+              and pg_get_constraintdef(oid) like '%order%'
+          ) as order_channel_allowed,
+          exists(
             select 1 from storage.buckets where id = 'coop-admin-applications' and public = false
           ) as private_app_bucket
       `;
-      expect(grants.apps_sel).toBe(true);
-      expect(grants.anon_apps_sel).toBe(false);
-      expect(grants.requested_role_sel).toBe(true);
-      expect(grants.coop_source_sel).toBe(true);
-      expect(grants.create_user_coop_fn).toBe(true);
-      expect(grants.private_app_bucket).toBe(true);
+      expect(meta.apps_table).toBe(true);
+      expect(meta.requested_role_col).toBe(true);
+      expect(meta.coop_source_col).toBe(true);
+      expect(meta.create_user_coop_fn).toBe(true);
+      expect(meta.order_channel_allowed).toBe(true);
+      expect(meta.private_app_bucket).toBe(true);
+
+      expect(await sql`
+        select has_column_privilege('authenticated', 'agricoop_app.users', 'requestedRole', 'SELECT') as ok
+      `.then(rows => rows[0]?.ok)).toBe(true);
+      expect(await sql`
+        select has_column_privilege('authenticated', 'agricoop_app.cooperatives', 'source', 'SELECT') as ok
+      `.then(rows => rows[0]?.ok)).toBe(true);
+      expect(await sql`
+        select has_column_privilege(
+          'anon',
+          to_regclass('agricoop_app."cooperativeAdminApplications"'),
+          'id',
+          'SELECT'
+        ) as ok
+      `.then(rows => rows[0]?.ok)).toBe(false);
 
       await sql.begin(async tx => {
         await tx`select set_config('role', 'authenticated', true)`;
