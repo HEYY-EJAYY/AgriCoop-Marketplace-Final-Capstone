@@ -127,20 +127,44 @@ describe("tRPC role × procedure access matrix", () => {
     await expect(caller("superadmin").orders.byId({ id: 9 })).resolves.toMatchObject({ order: { id: 9 } });
   });
 
-  it("hides another seller's online payment details", async () => {
+  it("returns the system online account to buyers and blocks seller payment management", async () => {
     mocks.getDb.mockResolvedValue(chain([{
-      id: 22,
-      role: "seller",
-      approvalStatus: "approved",
-      onlinePaymentQrPath: "22/qr.png",
-      onlinePaymentAccountName: "Secret Name",
-      onlinePaymentAccountNumber: "0917",
-      onlinePaymentLabel: "GCash",
+      id: 1,
+      qrImagePath: "system/qr.png",
+      accountName: "Coop Treasury",
+      accountNumber: "09170001111",
+      label: "GCash",
+      cashPickupEnabled: true,
+      cashDeliveryEnabled: true,
+      onlineEnabled: false,
+      isActive: true,
+      archivedAt: null,
     }]));
     await expect(caller("seller", 50).sellers.getOnlinePayment({ sellerId: 22 }))
       .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(caller("seller", 50).sellers.getOnlinePayment())
+      .resolves.toMatchObject({ hasQr: false, accountName: null });
     await expect(caller("buyer", 10).sellers.getOnlinePayment({ sellerId: 22 }))
-      .resolves.toMatchObject({ accountName: "Secret Name", hasQr: true });
+      .resolves.toMatchObject({ accountName: "Coop Treasury", hasQr: true });
+    expect(mocks.storageGetSignedUrl).toHaveBeenCalledWith(
+      "system/qr.png",
+      expect.objectContaining({ bucket: "system-payment-qr" }),
+    );
+    await expect(caller("seller", 50).sellers.uploadOnlinePaymentQr({
+      fileName: "qr.png",
+      contentType: "image/png",
+      base64: "aGk=",
+    })).rejects.toMatchObject({ code: "FORBIDDEN", message: "Online payment is managed by cooperative officers." });
+    await expect(caller("seller", 50).sellers.saveOnlinePaymentDetails({ accountName: "Secret" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN", message: "Online payment is managed by cooperative officers." });
+    await expect(caller("seller", 20).systemPayment.getCheckoutOnlineDetails())
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(caller("buyer", 10).systemPayment.getCheckoutOnlineDetails())
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(caller(null).systemPayment.getAvailability())
+      .rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller("seller", 20).systemPayment.getSettings())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("lets sellers manage their own listings list", async () => {

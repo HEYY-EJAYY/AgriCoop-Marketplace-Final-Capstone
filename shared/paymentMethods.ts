@@ -10,7 +10,16 @@ export const LEGACY_PAYMENT_METHODS = ["gcash", "f2f"] as const;
 export type ListingPaymentFlags = {
   allowsPickup: boolean;
   allowsDelivery: boolean;
-  acceptsOnlinePayment: boolean;
+  /** @deprecated Ignored for checkout availability; online is a system setting. Kept for legacy DTO compatibility. */
+  acceptsOnlinePayment?: boolean;
+};
+
+/** Platform toggles + whether an active online account+QR exists. */
+export type SystemPaymentAvailability = {
+  cashPickupEnabled: boolean;
+  cashDeliveryEnabled: boolean;
+  onlineEnabled: boolean;
+  onlineAccountReady: boolean;
 };
 
 export function isPaymentMethod(value: string | null | undefined): value is PaymentMethod {
@@ -87,15 +96,28 @@ export function defaultFulfillmentForPayment(
   return null;
 }
 
-/** Intersection of supported payment methods across a seller group of listings. */
+/**
+ * Intersection of supported payment methods across a seller group of listings.
+ * Pickup/delivery require listing flags AND system toggles.
+ * Online requires system online enabled + active account/QR (identical for every seller).
+ */
 export function methodsForListings(
   listings: ListingPaymentFlags[],
-  sellerHasOnlineQr: boolean,
+  availability: boolean | SystemPaymentAvailability,
 ): PaymentMethod[] {
   if (!listings.length) return [];
-  const pickup = listings.every(l => l.allowsPickup);
-  const delivery = listings.every(l => l.allowsDelivery);
-  const online = listings.every(l => l.acceptsOnlinePayment) && sellerHasOnlineQr;
+  const system: SystemPaymentAvailability = typeof availability === "boolean"
+    ? {
+      // Legacy boolean = “seller has QR”; treat as online-only hint for old call sites/tests.
+      cashPickupEnabled: true,
+      cashDeliveryEnabled: true,
+      onlineEnabled: availability,
+      onlineAccountReady: availability,
+    }
+    : availability;
+  const pickup = system.cashPickupEnabled && listings.every(l => l.allowsPickup);
+  const delivery = system.cashDeliveryEnabled && listings.every(l => l.allowsDelivery);
+  const online = system.onlineEnabled && system.onlineAccountReady;
   const methods: PaymentMethod[] = [];
   if (pickup) methods.push("cash_pickup");
   if (delivery) methods.push("cash_delivery");
@@ -116,7 +138,7 @@ export function isPaymentSettled(paymentStatus: string | null | undefined): bool
 }
 
 export const PAYMENT_METHOD_HELPERS: Record<PaymentMethod, string> = {
-  cash_pickup: "Pay the seller in cash when you collect your order.",
-  cash_delivery: "Pay the seller in cash when your order is delivered.",
-  online: "Pay via the seller’s QR code and upload your receipt before placing the order.",
+  cash_pickup: "Pay in cash when you collect your order. An officer confirms cash received.",
+  cash_delivery: "Pay in cash when your order is delivered. An officer confirms cash received.",
+  online: "Pay via the AgriCoop QR code and upload your receipt before placing the order.",
 };

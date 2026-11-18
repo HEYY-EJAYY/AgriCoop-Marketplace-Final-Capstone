@@ -107,3 +107,14 @@ Storage upload via service role could succeed, but `UPDATE agricoop_app.users SE
 - Multi-seller cart allowed; one order per seller group; payment/fulfillment chosen per group. Online groups require a receipt path at create (private `payment-proofs`, buyer-prefixed).
 - Timeline: additive `orderHistory` (+ keep `orderEvents` for stock/fulfillment). Cooperative page slug = `normalizedName`. Backfill NULL coop assignments to **SUTAFACO Cooperative** (exact name).
 - Removed cash disclaimer sentence must not return. Design freeze: soft cards / existing tokens only.
+
+## System payment (Admin / SuperAdmin only) (2026-11-18)
+
+This supersedes the earlier assumption that checkout online payment uses the seller’s QR.
+
+### Locked assumptions
+
+- Online payment QR, account name, number, and instructions are cooperative-officer settings (`systemPaymentSettings`, `systemOnlinePaymentAccounts`). Seller `onlinePayment*` columns stay in the database and are not written or shown.
+- Checkout offers online payment only when online is enabled and the active account has a QR. Buyers receive a short-lived signed QR URL. Anonymous users and sellers do not.
+- Sellers see payment status as read-only, including “Waiting for payment confirmation” while unpaid. Officers verify receipts and record cash received. Sellers are notified for fulfillment, then again when an officer confirms payment.
+- Listing flags `allowsPickup` and `allowsDelivery` stay seller-controlled. `acceptsOnlinePayment` is forced off on create/update and is not a marketplace badge.

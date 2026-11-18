@@ -5,54 +5,9 @@ import { roleDisplayLabel } from "@/lib/roleLabels";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
-import { MAX_PRODUCT_IMAGE_SIZE_BYTES } from "@shared/productOptions";
-import { Loader2, QrCode } from "lucide-react";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
-type SellerOnlinePaymentState = {
-  qrImageUrl?: string | null;
-  accountName?: string | null;
-  accountNumber?: string | null;
-  label?: string | null;
-};
-
-type SellerOnlinePaymentQuery = {
-  useQuery: (
-    input?: undefined,
-    opts?: { enabled?: boolean },
-  ) => { data?: SellerOnlinePaymentState; isLoading: boolean; refetch: () => unknown };
-};
-
-type SellerQrUploadMutation = {
-  useMutation: () => {
-    mutateAsync: (input: {
-      fileName: string;
-      contentType: "image/jpeg" | "image/png" | "image/webp";
-      base64: string;
-    }) => Promise<{ qrImageUrl?: string; url?: string }>;
-    isPending: boolean;
-  };
-};
-
-type SellerPaymentDetailsMutation = {
-  useMutation: () => {
-    mutateAsync: (input: {
-      accountName?: string;
-      accountNumber?: string;
-      label?: string;
-    }) => Promise<unknown>;
-    isPending: boolean;
-  };
-};
-
-function readImageAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("Could not read the selected QR image."));
-    reader.readAsDataURL(file);
-  });
-}
 
 export default function Profile() {
   const { user, loading, refresh } = useAuth();
@@ -66,28 +21,6 @@ export default function Profile() {
   const [busy, setBusy] = useState(false);
   const updateProfile = trpc.account.updateProfile.useMutation();
   const uploadPhoto = trpc.account.uploadProfileImage.useMutation();
-  const sellerRole = user?.role === "seller" || user?.role === "admin" || user?.role === "superadmin";
-  const onlinePaymentQuery = trpc.sellers.getOnlinePayment.useQuery(undefined, {
-    enabled: Boolean(user && sellerRole),
-  });
-  const uploadSellerQr = trpc.sellers.uploadOnlinePaymentQr.useMutation();
-  const saveSellerPayment = trpc.sellers.saveOnlinePaymentDetails.useMutation();
-  const canUploadSellerQr = true;
-  const canSaveSellerPayment = true;
-  const [paymentAccountName, setPaymentAccountName] = useState("");
-  const [paymentAccountNumber, setPaymentAccountNumber] = useState("");
-  const [paymentLabel, setPaymentLabel] = useState("");
-  const qrPreview = useMemo(
-    () => onlinePaymentQuery.data?.qrImageUrl ?? null,
-    [onlinePaymentQuery.data?.qrImageUrl],
-  );
-
-  useEffect(() => {
-    if (!onlinePaymentQuery.data) return;
-    setPaymentAccountName(onlinePaymentQuery.data.accountName ?? "");
-    setPaymentAccountNumber(onlinePaymentQuery.data.accountNumber ?? "");
-    setPaymentLabel(onlinePaymentQuery.data.label ?? "");
-  }, [onlinePaymentQuery.data]);
 
   useEffect(() => {
     if (!user) return;
@@ -161,56 +94,6 @@ export default function Profile() {
     }
   };
 
-  const uploadQr = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file || !canUploadSellerQr) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      toast.error("Choose a JPEG, PNG, or WebP QR image.");
-      return;
-    }
-    if (file.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
-      toast.error("QR images must be 3 MB or less.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const base64 = await readImageAsBase64(file);
-      const result = await uploadSellerQr.mutateAsync({
-        fileName: file.name,
-        contentType: file.type as "image/jpeg" | "image/png" | "image/webp",
-        base64,
-      });
-      if (result.url) toast.success("Online payment QR updated.");
-      await onlinePaymentQuery.refetch();
-    } catch (error) {
-      toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "QR upload failed."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveOnlinePayment = async () => {
-    if (!canSaveSellerPayment) {
-      toast.error("Saving online payment details is not available yet.");
-      return;
-    }
-    setBusy(true);
-    try {
-      await saveSellerPayment.mutateAsync({
-        accountName: paymentAccountName.trim() || undefined,
-        accountNumber: paymentAccountNumber.trim() || undefined,
-        label: paymentLabel.trim() || undefined,
-      });
-      await onlinePaymentQuery.refetch();
-      toast.success("Online payment details saved.");
-    } catch (error) {
-      toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Could not save payment details."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const removePhoto = async () => {
     setBusy(true);
     try {
@@ -279,77 +162,6 @@ export default function Profile() {
           </section>
 
           <div className="grid w-full gap-6">
-            {sellerRole && (
-              <section className="agri-card w-full p-6 sm:p-8">
-                <h2 className="font-display text-xl font-bold text-[#264f37]">Online payment (seller)</h2>
-                <p className="mt-1 text-sm text-[#6a796e]">
-                  Upload your QR and account details so buyers can pay online at checkout.
-                </p>
-                <div className="mt-4 flex flex-wrap items-start gap-4">
-                  {qrPreview ? (
-                    <img src={qrPreview} alt="Your payment QR" className="h-28 w-28 rounded-xl border border-[#e2e9dd] object-contain" />
-                  ) : (
-                    <div className="grid h-28 w-28 place-items-center rounded-xl bg-[#edf3e9] text-[#82987a]">
-                      <QrCode />
-                    </div>
-                  )}
-                  <div className="flex flex-col gap-2">
-                    <label className="agri-ghost min-h-11 cursor-pointer px-4 text-sm">
-                      Upload QR image
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        className="sr-only"
-                        disabled={busy || !canUploadSellerQr}
-                        onChange={e => void uploadQr(e)}
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <label className="field-label">
-                    Account name
-                    <input
-                      className="field-control"
-                      maxLength={150}
-                      value={paymentAccountName}
-                      onChange={e => setPaymentAccountName(e.target.value)}
-                      disabled={!canSaveSellerPayment}
-                    />
-                  </label>
-                  <label className="field-label">
-                    Account number
-                    <input
-                      className="field-control"
-                      maxLength={100}
-                      value={paymentAccountNumber}
-                      onChange={e => setPaymentAccountNumber(e.target.value)}
-                      disabled={!canSaveSellerPayment}
-                    />
-                  </label>
-                  <label className="field-label sm:col-span-2">
-                    Label (e.g. GCash, Maya)
-                    <input
-                      className="field-control"
-                      maxLength={150}
-                      value={paymentLabel}
-                      onChange={e => setPaymentLabel(e.target.value)}
-                      disabled={!canSaveSellerPayment}
-                    />
-                  </label>
-                </div>
-                {canSaveSellerPayment && (
-                  <button type="button" className="agri-button mt-4 text-sm" disabled={busy} onClick={() => void saveOnlinePayment()}>
-                    {busy ? <Loader2 className="animate-spin" size={16} /> : null} Save payment details
-                  </button>
-                )}
-                <p className="mt-3 text-xs text-[#66766b]">
-                  After your QR is saved, enable <strong>Accepts Online Payment</strong> on each listing in your farmer
-                  workspace.
-                </p>
-              </section>
-            )}
-
             <section className="agri-card w-full p-6 sm:p-8">
               <h2 className="font-display text-xl font-bold text-[#264f37]">Change password</h2>
               <p className="mt-1 text-sm text-[#6a796e]">Leave blank to keep your current password.</p>

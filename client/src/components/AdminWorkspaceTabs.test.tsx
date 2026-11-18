@@ -18,6 +18,7 @@ describe("parseAdminWorkspaceTab", () => {
     expect(parseAdminWorkspaceTab("")).toBe("moderation");
     expect(parseAdminWorkspaceTab("?tab=orders")).toBe("orders");
     expect(parseAdminWorkspaceTab("tab=users")).toBe("users");
+    expect(parseAdminWorkspaceTab("?tab=payments")).toBe("payments");
     expect(parseAdminWorkspaceTab("?tab=nope")).toBe("moderation");
   });
 });
@@ -30,6 +31,7 @@ describe("AdminWorkspaceTabs", () => {
         panels: {
           moderation: React.createElement("div", null, "Moderation body"),
           orders: React.createElement("div", null, "Orders body"),
+          payments: React.createElement("div", null, "Payments body"),
           users: React.createElement("div", null, "Users body"),
         },
       }),
@@ -52,6 +54,7 @@ describe("AdminWorkspaceTabs", () => {
         panels: {
           moderation: React.createElement("div", null, "Moderation body"),
           orders: React.createElement("div", null, "Orders body"),
+          payments: React.createElement("div", null, "Payments body"),
           users: React.createElement("div", null, "Users body"),
         },
       }),
@@ -68,6 +71,7 @@ describe("AdminWorkspaceTabs", () => {
         panels: {
           moderation: React.createElement("div", null, "Moderation body"),
           orders: React.createElement("div", null, "Orders body"),
+          payments: React.createElement("div", null, "Payments body"),
           users: React.createElement("div", null, "Users body"),
         },
       }),

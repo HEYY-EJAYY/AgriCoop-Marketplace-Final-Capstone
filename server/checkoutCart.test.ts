@@ -72,4 +72,26 @@ describe("payment method helpers", () => {
       { allowsPickup: true, allowsDelivery: true, acceptsOnlinePayment: true },
     ], false)).toEqual(["cash_pickup", "cash_delivery"]);
   });
+
+  it("applies system payment availability instead of listing online flags", () => {
+    const flags = [{ allowsPickup: true, allowsDelivery: true, acceptsOnlinePayment: true }];
+    expect(methodsForListings(flags, {
+      cashPickupEnabled: false,
+      cashDeliveryEnabled: true,
+      onlineEnabled: true,
+      onlineAccountReady: false,
+    })).toEqual(["cash_delivery"]);
+    expect(methodsForListings(flags, {
+      cashPickupEnabled: true,
+      cashDeliveryEnabled: false,
+      onlineEnabled: true,
+      onlineAccountReady: true,
+    })).toEqual(["cash_pickup", "online"]);
+    expect(methodsForListings(flags, {
+      cashPickupEnabled: false,
+      cashDeliveryEnabled: false,
+      onlineEnabled: false,
+      onlineAccountReady: true,
+    })).toEqual([]);
+  });
 });

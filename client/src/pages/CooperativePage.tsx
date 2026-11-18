@@ -185,7 +185,6 @@ export default function CooperativePage() {
                         className="mt-3"
                         allowsPickup={product.allowsPickup}
                         allowsDelivery={product.allowsDelivery}
-                        acceptsOnlinePayment={product.acceptsOnlinePayment}
                       />
                     </div>
                   </Link>

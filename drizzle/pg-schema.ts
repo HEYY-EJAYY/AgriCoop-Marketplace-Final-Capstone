@@ -438,8 +438,49 @@ export const profileVerificationSubmissions = appSchema.table("profileVerificati
   check("profileVerificationSubmissionsMimeTypeCheck", sql`${table.mimeType} IN ('image/jpeg', 'image/png', 'image/webp')`),
 ]);
 
+/** Platform payment method toggles — Admin/SuperAdmin only (singleton id=1). */
+export const systemPaymentSettings = appSchema.table("systemPaymentSettings", {
+  id: integer("id").primaryKey().default(1),
+  cashPickupEnabled: boolean("cashPickupEnabled").notNull().default(true),
+  cashDeliveryEnabled: boolean("cashDeliveryEnabled").notNull().default(true),
+  onlineEnabled: boolean("onlineEnabled").notNull().default(false),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
+  updatedBy: integer("updatedBy").references(() => users.id),
+});
+
+/** System online payment accounts — one active non-archived at a time. */
+export const systemOnlinePaymentAccounts = appSchema.table("systemOnlinePaymentAccounts", {
+  id: serial("id").primaryKey(),
+  label: varchar("label", { length: 150 }).notNull(),
+  accountName: varchar("accountName", { length: 150 }).notNull(),
+  accountNumber: varchar("accountNumber", { length: 100 }).notNull(),
+  instructions: text("instructions"),
+  qrImagePath: text("qrImagePath"),
+  isActive: boolean("isActive").notNull().default(false),
+  archivedAt: timestamp("archivedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
+  createdBy: integer("createdBy").references(() => users.id),
+  updatedBy: integer("updatedBy").references(() => users.id),
+}, table => [
+  uniqueIndex("system_online_payment_one_active_idx")
+    .on(table.isActive)
+    .where(sql`${table.isActive} = true AND ${table.archivedAt} IS NULL`),
+]);
+
+export const systemPaymentSettingsAudit = appSchema.table("systemPaymentSettingsAudit", {
+  id: serial("id").primaryKey(),
+  actorUserId: integer("actorUserId").notNull().references(() => users.id),
+  actorRole: text("actorRole").notNull(),
+  action: varchar("action", { length: 100 }).notNull(),
+  details: text("details"),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Cooperative = typeof cooperatives.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type Order = typeof orders.$inferSelect;
+export type SystemPaymentSettings = typeof systemPaymentSettings.$inferSelect;
+export type SystemOnlinePaymentAccount = typeof systemOnlinePaymentAccounts.$inferSelect;

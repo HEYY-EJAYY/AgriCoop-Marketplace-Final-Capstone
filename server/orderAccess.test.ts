@@ -16,9 +16,9 @@ describe("orderAccess", () => {
     expect(canViewOrder({ id: 3, role: "buyer" }, order)).toBe(false);
   });
 
-  it("lets the order seller review payment proofs", () => {
+  it("limits payment proof review to admin and superadmin", () => {
     const order = { sellerId: 22, cooperativeId: 4 };
-    expect(canReviewOrderPaymentProof({ id: 22, role: "seller" }, order, null)).toBe(true);
+    expect(canReviewOrderPaymentProof({ id: 22, role: "seller" }, order, null)).toBe(false);
     expect(canReviewOrderPaymentProof({ id: 23, role: "seller" }, order, null)).toBe(false);
     expect(canReviewOrderPaymentProof({ id: 40, role: "admin" }, order, 4)).toBe(true);
     expect(canReviewOrderPaymentProof({ id: 40, role: "admin" }, order, 5)).toBe(false);

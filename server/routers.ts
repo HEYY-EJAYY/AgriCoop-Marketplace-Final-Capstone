@@ -29,7 +29,7 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { conversationMessages, conversations, cooperativeAssociationRequests, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { conversationMessages, conversations, cooperativeAssociationRequests, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import {
   defaultFulfillmentForPayment,
   fulfillmentOptionsForListings,
@@ -59,16 +59,12 @@ import { canRequestCooperativeAssociation, canReviewCooperativeAssociation } fro
 import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
 import {
   assertBuyerOwnsReceiptPath,
-  canViewSellerOnlinePaymentDetails,
   createCheckoutReceiptUploadIntent,
   createPaymentProofUploadIntent,
   isCheckoutReceiptStorageKey,
   isPaymentProofStorageKey,
-  isSellerPaymentQrKey,
   PAYMENT_PROOF_BUCKET,
   sanitizePaymentProofFileName,
-  sellerPaymentQrPrefix,
-  SELLER_PAYMENT_QR_BUCKET,
   verifyCheckoutReceiptUploadIntent,
   verifyPaymentProofUploadIntent,
 } from "./paymentProofs";
@@ -79,6 +75,14 @@ import { createRefundRecord, completedRefundAmountCents, parseRefundRecords, res
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../shared/profileVerification";
 import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
+import {
+  SYSTEM_PAYMENT_QR_BUCKET,
+  ensureSystemPaymentSettings,
+  getActiveOnlineAccount,
+  getSystemPaymentAvailability,
+  recordSystemPaymentAudit,
+  systemPaymentQrPrefix,
+} from "./systemPayment";
 
 export const registrationRoleSchema = z.enum(["buyer", "seller"]);
 export const publicRegistrationInputSchema = z.object({
@@ -243,6 +247,28 @@ async function createNotification(db: Awaited<ReturnType<typeof dbOrThrow>>, inp
       ${input.relatedEntityType ?? null}
     )
   `);
+}
+
+/** Officers only. Uses order_status_updated because the DB allowlist rejects ad-hoc payment types for non-buyer recipients. */
+async function notifyApprovedOfficers(
+  db: Awaited<ReturnType<typeof dbOrThrow>>,
+  input: { title: string; content: string; link: string; relatedEntityId: number },
+) {
+  const officers = await db.select({ id: users.id }).from(users).where(and(
+    inArray(users.role, ["admin", "superadmin"]),
+    eq(users.approvalStatus, "approved"),
+  ));
+  for (const officer of officers) {
+    await createNotification(db, {
+      userId: officer.id,
+      type: "order_status_updated",
+      title: input.title,
+      content: input.content,
+      link: input.link,
+      relatedEntityId: input.relatedEntityId,
+      relatedEntityType: "order",
+    });
+  }
 }
 
 export const appRouter = router({
@@ -943,53 +969,43 @@ export const appRouter = router({
       .input(z.object({ sellerId: z.number().int().positive() }).optional())
       .query(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
-        const sellerId = input?.sellerId ?? actor.id;
-        if (input?.sellerId === undefined) {
-          requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const empty = {
+          sellerId: input?.sellerId ?? actor.id,
+          qrImageUrl: null as string | null,
+          hasQr: false,
+          accountName: null as string | null,
+          accountNumber: null as string | null,
+          label: null as string | null,
+        };
+        // Legacy seller profile path: do not read or write users.onlinePayment* columns.
+        if (actor.role === "seller" && (input?.sellerId === undefined || input.sellerId === actor.id)) {
+          return empty;
         }
-        if (!canViewSellerOnlinePaymentDetails(actor, sellerId)) {
+        if (actor.role === "seller") {
           throw new TRPCError({ code: "NOT_FOUND", message: "Seller payment details were not found." });
         }
         const db = await dbOrThrow();
-        const [seller] = await db.select({
-          id: users.id,
-          role: users.role,
-          approvalStatus: users.approvalStatus,
-          onlinePaymentQrPath: users.onlinePaymentQrPath,
-          onlinePaymentAccountName: users.onlinePaymentAccountName,
-          onlinePaymentAccountNumber: users.onlinePaymentAccountNumber,
-          onlinePaymentLabel: users.onlinePaymentLabel,
-        }).from(users).where(eq(users.id, sellerId)).limit(1);
-        if (!seller || (seller.role !== "seller" && seller.role !== "admin" && seller.role !== "superadmin")) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Seller payment details were not found." });
-        }
-        if (input?.sellerId !== undefined && seller.approvalStatus !== "approved" && seller.id !== actor.id) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Seller payment details were not found." });
-        }
+        const account = await getActiveOnlineAccount(db);
+        if (!account?.qrImagePath) return empty;
         let qrImageUrl: string | null = null;
-        if (seller.onlinePaymentQrPath) {
-          try {
-            if (seller.onlinePaymentQrPath.startsWith("http")) {
-              // Legacy public URLs remain readable; new uploads use private signed URLs.
-              qrImageUrl = seller.onlinePaymentQrPath;
-            } else {
-              qrImageUrl = await storageGetSignedUrl(seller.onlinePaymentQrPath, {
-                bucket: SELLER_PAYMENT_QR_BUCKET,
-                public: false,
-                expiresIn: 300,
-              });
-            }
-          } catch {
-            qrImageUrl = null;
-          }
+        try {
+          qrImageUrl = account.qrImagePath.startsWith("http")
+            ? account.qrImagePath
+            : await storageGetSignedUrl(account.qrImagePath, {
+              bucket: SYSTEM_PAYMENT_QR_BUCKET,
+              public: false,
+              expiresIn: 300,
+            });
+        } catch {
+          qrImageUrl = null;
         }
         return {
-          sellerId: seller.id,
+          sellerId: input?.sellerId ?? actor.id,
           qrImageUrl,
-          hasQr: Boolean(seller.onlinePaymentQrPath),
-          accountName: seller.onlinePaymentAccountName,
-          accountNumber: seller.onlinePaymentAccountNumber,
-          label: seller.onlinePaymentLabel,
+          hasQr: Boolean(account.qrImagePath),
+          accountName: account.accountName ?? null,
+          accountNumber: account.accountNumber ?? null,
+          label: account.label ?? null,
         };
       }),
     uploadOnlinePaymentQr: protectedProcedure
@@ -998,36 +1014,8 @@ export const appRouter = router({
         contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
         base64: z.string().min(1).max(Math.ceil(PAYMENT_PROOF_MAX_BYTES / 3) * 4),
       }))
-      .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
-        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected QR image is invalid." });
-        }
-        const bytes = Buffer.from(input.base64, "base64");
-        if (bytes.length < 1 || bytes.length > PAYMENT_PROOF_MAX_BYTES) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "QR images must be 5 MB or less." });
-        }
-        if (!matchesImageContentTypeSignature(bytes, input.contentType)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image for your QR code." });
-        }
-        const safeName = sanitizePaymentProofFileName(input.fileName);
-        const uploaded = await storagePut(
-          `${sellerPaymentQrPrefix(seller.id)}${Date.now()}-${safeName}`,
-          bytes,
-          input.contentType,
-          { bucket: SELLER_PAYMENT_QR_BUCKET, public: false },
-        );
-        if (!uploaded.key.startsWith(sellerPaymentQrPrefix(seller.id))) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "QR upload path was invalid." });
-        }
-        const db = await dbOrThrow();
-        await db.update(users).set({ onlinePaymentQrPath: uploaded.key }).where(eq(users.id, seller.id));
-        const signedUrl = await storageGetSignedUrl(uploaded.key, {
-          bucket: SELLER_PAYMENT_QR_BUCKET,
-          public: false,
-          expiresIn: 300,
-        });
-        return { url: signedUrl, path: uploaded.key };
+      .mutation(async () => {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Online payment is managed by cooperative officers." });
       }),
     saveOnlinePaymentDetails: protectedProcedure
       .input(z.object({
@@ -1035,15 +1023,8 @@ export const appRouter = router({
         accountNumber: z.string().trim().max(100).optional(),
         label: z.string().trim().max(150).optional(),
       }).strict())
-      .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
-        const db = await dbOrThrow();
-        await db.update(users).set({
-          onlinePaymentAccountName: input.accountName?.trim() || null,
-          onlinePaymentAccountNumber: input.accountNumber?.trim() || null,
-          onlinePaymentLabel: input.label?.trim() || null,
-        }).where(eq(users.id, seller.id));
-        return { success: true };
+      .mutation(async () => {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Online payment is managed by cooperative officers." });
       }),
   }),
 
@@ -1079,18 +1060,13 @@ export const appRouter = router({
             message: "Ask an Admin to assign you to a cooperative before publishing listings.",
           });
         }
-        if (input.acceptsOnlinePayment && !seller.onlinePaymentQrPath) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Upload your online payment QR in Profile before enabling Online Payment on a listing.",
-          });
-        }
         const db = await dbOrThrow();
         validateProductImageUrls(input.imageUrls, seller.id);
         const { imageUrls, submitForVerification, ...productValues } = input;
         return db.transaction(async tx => {
           const [created] = await tx.insert(products).values({
             ...productValues,
+            acceptsOnlinePayment: false,
             sellerId: seller.id,
             cooperativeId: seller.cooperativeId,
             verificationStatus: submitForVerification ? "pending" : "draft",
@@ -1149,12 +1125,6 @@ export const appRouter = router({
         .input(updateProductSchema)
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
-        if (input.acceptsOnlinePayment && !seller.onlinePaymentQrPath) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Upload your online payment QR in Profile before enabling Online Payment on a listing.",
-          });
-        }
         const db = await dbOrThrow();
         const { id, imageUrls, primaryImageUrl, ...values } = input;
         assertProductImageUpdateInput(imageUrls, primaryImageUrl);
@@ -1202,6 +1172,7 @@ export const appRouter = router({
           const updateValues = {
             ...(imageUrls === undefined ? values : { ...values, primaryImageUrl: nextPrimaryImageUrl }),
             ...reviewState.moderationUpdate,
+            acceptsOnlinePayment: false,
           };
           const result = await tx.update(products).set(updateValues).where(and(eq(products.id, id), eq(products.sellerId, seller.id))).returning({ id: products.id });
           if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
@@ -1400,7 +1371,6 @@ export const appRouter = router({
           }
           const [currentSeller] = await tx.select({
             approvalStatus: users.approvalStatus,
-            onlinePaymentQrPath: users.onlinePaymentQrPath,
           })
             .from(users)
             .where(eq(users.id, currentOrder.sellerId))
@@ -1409,16 +1379,17 @@ export const appRouter = router({
             throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive orders." });
           }
 
+          const availability = await getSystemPaymentAvailability(tx);
           const listingFlags = currentProducts.map(product => ({
             allowsPickup: product.allowsPickup ?? true,
             allowsDelivery: product.allowsDelivery ?? true,
-            acceptsOnlinePayment: product.acceptsOnlinePayment ?? false,
+            acceptsOnlinePayment: false,
           }));
-          const allowedMethods = methodsForListings(listingFlags, Boolean(currentSeller?.onlinePaymentQrPath));
+          const allowedMethods = methodsForListings(listingFlags, availability);
           if (!allowedMethods.includes(paymentMethod)) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `This seller group does not support ${paymentMethod.replaceAll("_", " ")}. Check each listing's Pickup, Delivery, and Online Payment options.`,
+              message: `This order cannot use ${paymentMethod.replaceAll("_", " ")}. Check pickup, delivery, and the cooperative payment settings.`,
             });
           }
 
@@ -1468,7 +1439,7 @@ export const appRouter = router({
             assertPaymentOptionSelection(
               paymentMethod,
               input.paymentOptionId,
-              selectedPaymentOptionId !== undefined || (isOnlinePaymentMethod(paymentMethod) && Boolean(currentSeller?.onlinePaymentQrPath)),
+              selectedPaymentOptionId !== undefined || (isOnlinePaymentMethod(paymentMethod) && availability.onlineAccountReady),
             );
           } catch (error) {
             throw new TRPCError({
@@ -1478,8 +1449,8 @@ export const appRouter = router({
           }
 
           if (isOnlinePaymentMethod(paymentMethod)) {
-            if (!currentSeller?.onlinePaymentQrPath) {
-              throw new TRPCError({ code: "BAD_REQUEST", message: "This seller has not configured an online payment QR yet." });
+            if (!availability.onlineEnabled || !availability.onlineAccountReady) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "Online payment is not available right now." });
             }
             if (!input.receiptStoragePath) {
               throw new TRPCError({ code: "BAD_REQUEST", message: "Upload your payment receipt before placing an online payment order." });
@@ -1563,7 +1534,7 @@ export const appRouter = router({
               eventType: "payment_status",
               fromValue: null,
               toValue: initialPaymentStatus,
-              note: isOnlinePaymentMethod(paymentMethod) ? "Receipt uploaded; awaiting seller verification." : "Awaiting cash payment.",
+              note: isOnlinePaymentMethod(paymentMethod) ? "Receipt uploaded; awaiting officer verification." : "Awaiting cash payment.",
             },
           ]);
 
@@ -1624,26 +1595,29 @@ export const appRouter = router({
             await tx.update(transactions)
               .set({ status: "pending" })
               .where(eq(transactions.orderId, newOrder.id));
-            await createNotification(tx, {
-              userId: currentOrder.sellerId,
-              type: "payment_proof_uploaded",
+            await notifyApprovedOfficers(tx, {
               title: "Payment receipt uploaded",
-              content: `Order #${newOrder.id} has a receipt waiting for your review.`,
+              content: `Order #${newOrder.id} has a receipt awaiting officer verification.`,
               link: `/orders/${newOrder.id}`,
               relatedEntityId: newOrder.id,
-              relatedEntityType: "order",
             });
           } else {
-            await createNotification(tx, {
-              userId: currentOrder.sellerId,
-              type: "order_placed",
-              title: "New order received",
-              content: `Order #${newOrder.id} is waiting for your confirmation.`,
+            await notifyApprovedOfficers(tx, {
+              title: "Cash order awaiting confirmation",
+              content: `Order #${newOrder.id} is awaiting payment confirmation.`,
               link: `/orders/${newOrder.id}`,
               relatedEntityId: newOrder.id,
-              relatedEntityType: "order",
             });
           }
+          await createNotification(tx, {
+            userId: currentOrder.sellerId,
+            type: "order_status_updated",
+            title: "New order for fulfillment",
+            content: `Order #${newOrder.id} was placed and is waiting for fulfillment. Payment review is handled by a cooperative officer.`,
+            link: `/orders/${newOrder.id}`,
+            relatedEntityId: newOrder.id,
+            relatedEntityType: "order",
+          });
 
           const conversationId = await openSupportThread(tx, {
             buyerId: buyer.id,
@@ -1665,8 +1639,9 @@ export const appRouter = router({
         if (!detail || !canViewOrder(actor, detail.order)) {
           throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
         }
+        const maySeeProof = actor.id === detail.order.buyerId || actor.role === "admin" || actor.role === "superadmin";
         let proofSignedUrl: string | null = null;
-        if (detail.proof?.storagePath && isPaymentProofStorageKey(detail.proof.storagePath, detail.order.buyerId, detail.order.id)) {
+        if (maySeeProof && detail.proof?.storagePath && isPaymentProofStorageKey(detail.proof.storagePath, detail.order.buyerId, detail.order.id)) {
           try {
             proofSignedUrl = await storageGetSignedUrl(detail.proof.storagePath, {
               bucket: PAYMENT_PROOF_BUCKET,
@@ -1680,7 +1655,12 @@ export const appRouter = router({
         return {
           ...detail,
           proof: detail.proof
-            ? { ...detail.proof, signedUrl: proofSignedUrl, evidenceUrl: proofSignedUrl }
+            ? {
+              ...detail.proof,
+              storagePath: maySeeProof ? detail.proof.storagePath : null,
+              signedUrl: proofSignedUrl,
+              evidenceUrl: proofSignedUrl,
+            }
             : null,
         };
       }),
@@ -1921,6 +1901,277 @@ export const appRouter = router({
       }),
   }),
 
+  systemPayment: router({
+    getAvailability: protectedProcedure.query(async ({ ctx }) => {
+      requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
+      const db = await dbOrThrow();
+      return getSystemPaymentAvailability(db);
+    }),
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      return ensureSystemPaymentSettings(db);
+    }),
+    updateSettings: protectedProcedure
+      .input(z.object({
+        cashPickupEnabled: z.boolean(),
+        cashDeliveryEnabled: z.boolean(),
+        onlineEnabled: z.boolean(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        await ensureSystemPaymentSettings(db);
+        await db.update(systemPaymentSettings).set({
+          cashPickupEnabled: input.cashPickupEnabled,
+          cashDeliveryEnabled: input.cashDeliveryEnabled,
+          onlineEnabled: input.onlineEnabled,
+          updatedAt: new Date(),
+          updatedBy: actor.id,
+        }).where(eq(systemPaymentSettings.id, 1));
+        await recordSystemPaymentAudit(db, {
+          actorUserId: actor.id,
+          actorRole: actor.role,
+          action: "settings_updated",
+          details: input,
+        });
+        return { success: true };
+      }),
+    listAccounts: protectedProcedure.query(async ({ ctx }) => {
+      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const accounts = await db.select().from(systemOnlinePaymentAccounts)
+        .orderBy(desc(systemOnlinePaymentAccounts.updatedAt), desc(systemOnlinePaymentAccounts.id));
+      return Promise.all(accounts.map(async account => {
+        let qrImageUrl: string | null = null;
+        if (account.qrImagePath) {
+          try {
+            qrImageUrl = account.qrImagePath.startsWith("http")
+              ? account.qrImagePath
+              : await storageGetSignedUrl(account.qrImagePath, {
+                bucket: SYSTEM_PAYMENT_QR_BUCKET,
+                public: false,
+                expiresIn: 300,
+              });
+          } catch {
+            qrImageUrl = null;
+          }
+        }
+        return { ...account, qrImageUrl };
+      }));
+    }),
+    createAccount: protectedProcedure
+      .input(z.object({
+        label: z.string().trim().min(1).max(150),
+        accountName: z.string().trim().min(1).max(150),
+        accountNumber: z.string().trim().min(1).max(100),
+        instructions: z.string().trim().max(2000).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [created] = await db.insert(systemOnlinePaymentAccounts).values({
+          label: input.label,
+          accountName: input.accountName,
+          accountNumber: input.accountNumber,
+          instructions: input.instructions?.trim() || null,
+          isActive: false,
+          createdBy: actor.id,
+          updatedBy: actor.id,
+        }).returning({ id: systemOnlinePaymentAccounts.id });
+        if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The payment account was not created." });
+        await recordSystemPaymentAudit(db, {
+          actorUserId: actor.id,
+          actorRole: actor.role,
+          action: "account_created",
+          details: { accountId: created.id, label: input.label },
+        });
+        return { success: true, id: created.id };
+      }),
+    updateAccount: protectedProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        label: z.string().trim().min(1).max(150),
+        accountName: z.string().trim().min(1).max(150),
+        accountNumber: z.string().trim().min(1).max(100),
+        instructions: z.string().trim().max(2000).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const updated = await db.update(systemOnlinePaymentAccounts).set({
+          label: input.label,
+          accountName: input.accountName,
+          accountNumber: input.accountNumber,
+          instructions: input.instructions?.trim() || null,
+          updatedAt: new Date(),
+          updatedBy: actor.id,
+        }).where(and(
+          eq(systemOnlinePaymentAccounts.id, input.id),
+          isNull(systemOnlinePaymentAccounts.archivedAt),
+        )).returning({ id: systemOnlinePaymentAccounts.id });
+        if (!updated.length) throw new TRPCError({ code: "NOT_FOUND", message: "That payment account is not available." });
+        await recordSystemPaymentAudit(db, {
+          actorUserId: actor.id,
+          actorRole: actor.role,
+          action: "account_updated",
+          details: { accountId: input.id, label: input.label },
+        });
+        return { success: true };
+      }),
+    activateAccount: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        await db.transaction(async tx => {
+          const [account] = await tx.select({
+            id: systemOnlinePaymentAccounts.id,
+            archivedAt: systemOnlinePaymentAccounts.archivedAt,
+          }).from(systemOnlinePaymentAccounts)
+            .where(eq(systemOnlinePaymentAccounts.id, input.id))
+            .limit(1);
+          if (!account || account.archivedAt) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "That payment account is not available." });
+          }
+          await tx.update(systemOnlinePaymentAccounts).set({
+            isActive: false,
+            updatedAt: new Date(),
+            updatedBy: actor.id,
+          }).where(eq(systemOnlinePaymentAccounts.isActive, true));
+          const activated = await tx.update(systemOnlinePaymentAccounts).set({
+            isActive: true,
+            updatedAt: new Date(),
+            updatedBy: actor.id,
+          }).where(and(
+            eq(systemOnlinePaymentAccounts.id, input.id),
+            isNull(systemOnlinePaymentAccounts.archivedAt),
+          )).returning({ id: systemOnlinePaymentAccounts.id });
+          if (!activated.length) throw new TRPCError({ code: "NOT_FOUND", message: "That payment account is not available." });
+          await recordSystemPaymentAudit(tx, {
+            actorUserId: actor.id,
+            actorRole: actor.role,
+            action: "account_activated",
+            details: { accountId: input.id },
+          });
+        });
+        return { success: true };
+      }),
+    archiveAccount: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const archived = await db.update(systemOnlinePaymentAccounts).set({
+          isActive: false,
+          archivedAt: new Date(),
+          updatedAt: new Date(),
+          updatedBy: actor.id,
+        }).where(and(
+          eq(systemOnlinePaymentAccounts.id, input.id),
+          isNull(systemOnlinePaymentAccounts.archivedAt),
+        )).returning({ id: systemOnlinePaymentAccounts.id });
+        if (!archived.length) throw new TRPCError({ code: "NOT_FOUND", message: "That payment account is not available." });
+        await recordSystemPaymentAudit(db, {
+          actorUserId: actor.id,
+          actorRole: actor.role,
+          action: "account_archived",
+          details: { accountId: input.id },
+        });
+        return { success: true };
+      }),
+    uploadQr: protectedProcedure
+      .input(z.object({
+        accountId: z.number().int().positive(),
+        fileName: z.string().min(1).max(255),
+        contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+        base64: z.string().min(1).max(Math.ceil(PAYMENT_PROOF_MAX_BYTES / 3) * 4),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected QR image is invalid." });
+        }
+        const bytes = Buffer.from(input.base64, "base64");
+        if (bytes.length < 1 || bytes.length > PAYMENT_PROOF_MAX_BYTES) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "QR images must be 5 MB or less." });
+        }
+        if (!matchesImageContentTypeSignature(bytes, input.contentType)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image for the QR code." });
+        }
+        const db = await dbOrThrow();
+        const [account] = await db.select({ id: systemOnlinePaymentAccounts.id })
+          .from(systemOnlinePaymentAccounts)
+          .where(and(
+            eq(systemOnlinePaymentAccounts.id, input.accountId),
+            isNull(systemOnlinePaymentAccounts.archivedAt),
+          ))
+          .limit(1);
+        if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "That payment account is not available." });
+        const safeName = sanitizePaymentProofFileName(input.fileName);
+        const uploaded = await storagePut(
+          `${systemPaymentQrPrefix()}${input.accountId}/${Date.now()}-${safeName}`,
+          bytes,
+          input.contentType,
+          { bucket: SYSTEM_PAYMENT_QR_BUCKET, public: false },
+        );
+        if (!uploaded.key.startsWith(systemPaymentQrPrefix())) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "QR upload path was invalid." });
+        }
+        await db.update(systemOnlinePaymentAccounts).set({
+          qrImagePath: uploaded.key,
+          updatedAt: new Date(),
+          updatedBy: actor.id,
+        }).where(eq(systemOnlinePaymentAccounts.id, input.accountId));
+        await recordSystemPaymentAudit(db, {
+          actorUserId: actor.id,
+          actorRole: actor.role,
+          action: "qr_uploaded",
+          details: { accountId: input.accountId },
+        });
+        const url = await storageGetSignedUrl(uploaded.key, {
+          bucket: SYSTEM_PAYMENT_QR_BUCKET,
+          public: false,
+          expiresIn: 300,
+        });
+        return { success: true, url };
+      }),
+    getCheckoutOnlineDetails: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "buyer") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Online payment details are not available." });
+      }
+      requireOperationalRole(ctx.user, ["buyer"]);
+      const db = await dbOrThrow();
+      const availability = await getSystemPaymentAvailability(db);
+      if (!availability.onlineEnabled || !availability.onlineAccountReady) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Online payment is not available." });
+      }
+      const account = await getActiveOnlineAccount(db);
+      if (!account?.qrImagePath) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Online payment is not available." });
+      }
+      let qrImageUrl: string;
+      try {
+        qrImageUrl = account.qrImagePath.startsWith("http")
+          ? account.qrImagePath
+          : await storageGetSignedUrl(account.qrImagePath, {
+            bucket: SYSTEM_PAYMENT_QR_BUCKET,
+            public: false,
+            expiresIn: 300,
+          });
+      } catch {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Online payment is not available." });
+      }
+      return {
+        qrImageUrl,
+        accountName: account.accountName,
+        accountNumber: account.accountNumber,
+        label: account.label,
+        instructions: account.instructions,
+      };
+    }),
+  }),
+
   payments: router({
     mine: protectedProcedure.query(async ({ ctx }) => {
       const actor = requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
@@ -2003,7 +2254,9 @@ export const appRouter = router({
     reviewQueue: protectedProcedure.query(async ({ ctx }) => {
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       const db = await dbOrThrow();
-      if (actor.role === "admin" && actor.cooperativeId === null) return [];
+      if (actor.role === "admin" && actor.cooperativeId === null) {
+        return { proofs: [], cashAwaitingReceived: [] };
+      }
       const scope = actor.role === "admin"
         ? and(
           eq(paymentProofs.verificationStatus, "pending"),
@@ -2024,7 +2277,7 @@ export const appRouter = router({
         .where(scope)
         .orderBy(desc(paymentProofs.createdAt), desc(paymentProofs.id));
       const authorized = pending.filter(({ order }) => canReviewPaymentProof(actor, order));
-      return Promise.all(authorized.map(async ({ proof, order }) => {
+      const proofs = await Promise.all(authorized.map(async ({ proof, order }) => {
         const [transaction] = await db.select().from(transactions)
           .where(eq(transactions.orderId, order.id))
           .limit(1);
@@ -2045,6 +2298,30 @@ export const appRouter = router({
         }
         return { proof, order, transaction: transaction ?? null, evidenceUrl, evidenceUnavailable };
       }));
+      const cashScope = actor.role === "admin"
+        ? and(
+          eq(orders.cooperativeId, actor.cooperativeId!),
+          inArray(orders.paymentMethod, ["cash_pickup", "cash_delivery"]),
+          eq(orders.status, "ready"),
+          inArray(orders.paymentStatus, ["pending", "F2F-pending-confirmation"]),
+        )
+        : and(
+          inArray(orders.paymentMethod, ["cash_pickup", "cash_delivery"]),
+          eq(orders.status, "ready"),
+          inArray(orders.paymentStatus, ["pending", "F2F-pending-confirmation"]),
+        );
+      const cashRows = await db.select({
+        id: orders.id,
+        buyerId: orders.buyerId,
+        sellerId: orders.sellerId,
+        cooperativeId: orders.cooperativeId,
+        totalCents: orders.totalCents,
+        paymentMethod: orders.paymentMethod,
+        paymentStatus: orders.paymentStatus,
+        status: orders.status,
+      }).from(orders).where(cashScope).orderBy(desc(orders.createdAt));
+      const cashAwaitingReceived = cashRows.filter(order => canManageCashReceipt(actor, order));
+      return { proofs, cashAwaitingReceived };
     }),
     uploadProof: protectedProcedure.input(z.object({
       orderId: z.number().int().positive(),
@@ -2310,7 +2587,7 @@ export const appRouter = router({
         context.addIssue({ code: "custom", path: ["reviewNote"], message: "A review note is required when rejecting payment proof." });
       }
     })).mutation(async ({ ctx, input }) => {
-      const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
       const db = await dbOrThrow();
       await db.transaction(async tx => {
         const [observedProof] = await tx.select({ orderId: paymentProofs.orderId })
@@ -2443,6 +2720,17 @@ export const appRouter = router({
           relatedEntityId: order.id,
           relatedEntityType: "order",
         });
+        if (input.decision === "verified") {
+          await createNotification(tx, {
+            userId: order.sellerId,
+            type: "order_status_updated",
+            title: "Payment confirmed",
+            content: `Payment for order #${order.id} is confirmed. Continue fulfillment.`,
+            link: `/orders/${order.id}`,
+            relatedEntityId: order.id,
+            relatedEntityType: "order",
+          });
+        }
       });
       return { success: true };
     }),
@@ -2640,7 +2928,7 @@ export const appRouter = router({
     recordCashReceipt: protectedProcedure
       .input(z.object({ orderId: z.number().int().positive(), note: z.string().trim().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         await db.transaction(async tx => {
           const [order] = await tx.select().from(orders)

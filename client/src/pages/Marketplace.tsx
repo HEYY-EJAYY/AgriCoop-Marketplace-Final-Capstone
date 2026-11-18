@@ -677,7 +677,6 @@ export default function Marketplace() {
                           className="mt-2"
                           allowsPickup={product.allowsPickup}
                           allowsDelivery={product.allowsDelivery}
-                          acceptsOnlinePayment={product.acceptsOnlinePayment}
                         />
                         <div className="mt-3 border-t border-[#edf0e9] pt-3">
                           <p className="font-display text-xl font-bold text-[#1d5639]">

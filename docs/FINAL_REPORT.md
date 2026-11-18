@@ -200,3 +200,63 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 2. Confirm Supabase Auth Site URL + email redirects match production.  
 3. Optional: explicit dispute escalation path for officer access to order chats (logged) — not built; privacy decision documented.
 4. Authenticated production E2E for Cash Pickup / Delivery / Online (receipt gate + seller confirm/reject + buyer re-upload) with temporary `qa-test-` accounts — no QA credentials in the agent environment; CI unit/matrix/security tests cover the authorization and receipt rules.
+
+---
+
+## System payment (Admin/SuperAdmin only) — Step 0 inventory (2026-11-18)
+
+**Goal:** Payments controlled only by Admin (“Officer Admin”) and SuperAdmin. Sellers lose QR/account setup, receipt review, and “cash received”. Seller-owned columns/files are preserved (no DROP); grants/policies revoked.
+
+### Live preserved data (SELECT 2026-11-18)
+
+| Metric | Count |
+|--------|------:|
+| Sellers total | 2 |
+| Users with `onlinePaymentQrPath` | 2 |
+| Users with account name/number/label | 2 |
+| Products with `acceptsOnlinePayment = true` | 0 |
+| Orders `awaiting_verification` | 0 |
+| Cash orders awaiting received (`pending` / `F2F-pending-confirmation`) | 4 |
+| Storage objects in `seller-payment-qr` | 2 |
+| Storage objects in `payment-proofs` | 0 |
+| `paymentOptions` rows | 0 |
+
+### Seller-owned surface (pre-change)
+
+| Area | Location | Notes |
+|------|----------|-------|
+| Columns | `users.onlinePaymentQrPath\|AccountName\|AccountNumber\|Label`; `products.acceptsOnlinePayment` | Drizzle `pg-schema.ts`; BLOCK 14–16 |
+| Profile UI | `client/src/pages/Profile.tsx` “Online payment (seller)” | `sellers.getOnlinePayment` / `uploadOnlinePaymentQr` / `saveOnlinePaymentDetails` |
+| Bucket | `seller-payment-qr` private | Owner insert/update/select policies; `SELLER_PAYMENT_QR_BUCKET` |
+| Listing flag | Dashboard `ListingPaymentFlagFields` + Marketplace/Coop badges | Gated by seller QR presence |
+| Marketplace DTO | `getMarketplace` → `sellerHasOnlineQr` | Boolean only; no account fields |
+| Checkout | `methodsForListings(listings, sellerHasOnlineQr)` + `sellers.getOnlinePayment` | Per-seller QR |
+| Confirm/reject | `payments.reviewProof` via `canReviewOrderPaymentProof` (seller OR staff) | OrderDetail + Admin queue |
+| Cash received | `payments.recordCashReceipt` via `canManageCashReceipt` (seller OR staff) | SellerDashboard + OrderDetail |
+| Notifications | `payment_proof_uploaded` → seller; verify/reject/cash → buyer | `create_notification` |
+| Admin coop QR | `adminPayment.*` / `paymentOptions` / `/admin/payment-options` | Separate from seller QR; not checkout source after seller-QR era |
+| CI guards | `paymentGrantContract`, `paymentSecurity`, `trpcProcedureAccess` | Encode seller-QR model |
+
+### Target model (post-change)
+
+- Tables: `systemPaymentSettings` (singleton), `systemOnlinePaymentAccounts` (one active), `systemPaymentSettingsAudit`
+- Bucket: `system-payment-qr` (private; service-role + signed URLs)
+- Dashboard body tab `?tab=payments` (Settings + Verification Queue); no main-nav item
+- Online availability = settings.onlineEnabled ∧ active account with QR; pickup/delivery = listing flags ∧ settings toggles
+- Payment status mutations: Admin/SuperAdmin only; sellers read-only on order detail
+- Migration: `20261118022138_system_payment_admin_only.sql` (BLOCK 17) + `docs/MANUAL_SQL.md`
+
+### Implementation status (2026-11-18)
+
+| Check | Result |
+|-------|--------|
+| Seller QR/account UI removed (Profile) | Done |
+| Listing “Accepts Online Payment” removed | Done (writes force false) |
+| Seller reviewProof / recordCashReceipt | Denied (authz + UI) |
+| Seller receipt signed URL | Denied |
+| Admin Payments tab | Settings + verification + cash queue |
+| Checkout system QR | `systemPayment.getCheckoutOnlineDetails` (buyer) |
+| Legacy seller columns / `seller-payment-qr` files | Preserved (2 users, 2 files); grants REVOKEd; storage owner policies dropped |
+| Live privilege | anon QR SELECT **false**; auth account SELECT/UPDATE **false**; `system-payment-qr` public=false; seller_qr policies **0** |
+| vitest | **351 passed**, 2 skipped |
+| typecheck | pass |

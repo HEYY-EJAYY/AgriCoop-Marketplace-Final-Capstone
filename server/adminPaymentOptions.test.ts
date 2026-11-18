@@ -375,8 +375,8 @@ describe("admin payment option router authorization", () => {
     };
     const adminDb = createDb([[payment]]);
     mocks.getDb.mockResolvedValueOnce(adminDb.db);
-    await expect(caller("admin", 12).payments.reviewQueue()).resolves.toEqual([]);
-    expect(adminDb.db.select).toHaveBeenCalledTimes(1);
+    await expect(caller("admin", 12).payments.reviewQueue()).resolves.toEqual({ proofs: [], cashAwaitingReceived: [] });
+    expect(adminDb.db.select).toHaveBeenCalledTimes(2);
     expect(mocks.storageGetSignedUrl).not.toHaveBeenCalled();
 
     const proofKey = "payment-proofs/50/14/receipt.png";
@@ -386,7 +386,7 @@ describe("admin payment option router authorization", () => {
     ]);
     mocks.getDb.mockResolvedValueOnce(superAdminDb.db);
     await expect(caller("superadmin", null).payments.reviewQueue())
-      .resolves.toMatchObject([{ proof: { id: 4 }, evidenceUrl: "https://storage.example.test/signed-proof" }]);
+      .resolves.toMatchObject({ proofs: [{ proof: { id: 4 }, evidenceUrl: "https://storage.example.test/signed-proof" }] });
     expect(mocks.storageGetSignedUrl).toHaveBeenCalledWith(
       proofKey,
       { bucket: "payment-proofs", public: false, expiresIn: 300 },

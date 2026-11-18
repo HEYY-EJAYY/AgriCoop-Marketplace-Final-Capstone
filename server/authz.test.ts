@@ -18,7 +18,7 @@ describe("AgriCoop role authorization", () => {
     expect(canManageSellerOrder({ id: 1, role: "superadmin" }, 10)).toBe(true);
   });
 
-  it("allows the seller or in-scope staff to record only a matching pending cash receipt", () => {
+  it("lets in-scope staff record only a matching pending cash receipt", () => {
     const payment = {
       buyerId: 10,
       sellerId: 20,
@@ -47,7 +47,7 @@ describe("AgriCoop role authorization", () => {
       status: "payment_coordinated",
     };
 
-    expect(canRecordCashReceipt({ id: 20, role: "seller", cooperativeId: 2 }, payment, order, transaction)).toBe(true);
+    expect(canRecordCashReceipt({ id: 20, role: "seller", cooperativeId: 2 }, payment, order, transaction)).toBe(false);
     expect(canRecordCashReceipt({ id: 30, role: "admin", cooperativeId: 2 }, payment, order, transaction)).toBe(true);
     expect(canRecordCashReceipt({ id: 31, role: "admin", cooperativeId: 3 }, payment, order, transaction)).toBe(false);
     expect(canRecordCashReceipt({ id: 1, role: "superadmin", cooperativeId: null }, payment, order, transaction)).toBe(true);

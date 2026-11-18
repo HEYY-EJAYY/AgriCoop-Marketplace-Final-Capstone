@@ -136,15 +136,15 @@ export function isPaymentTransactionConsistent(
     && transaction.paymentMethod === payment.paymentMethod;
 }
 
+/** Cash-received is Admin / SuperAdmin only (sellers are read-only on payment status). */
 export function canManageCashReceipt(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
   payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
 ) {
-  if (actor.role === "seller") return actor.id === payment.sellerId;
+  if (actor.role !== "admin" && actor.role !== "superadmin") return false;
   if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
   if (actor.role === "superadmin") return true;
-  return actor.role === "admin"
-    && actor.cooperativeId !== null
+  return actor.cooperativeId !== null
     && payment.cooperativeId !== null
     && actor.cooperativeId === payment.cooperativeId;
 }

@@ -18,6 +18,7 @@ import {
   paymentMethodLabel,
   type FulfillmentMethod,
   type PaymentMethod,
+  type SystemPaymentAvailability,
 } from "../../../shared/paymentMethods";
 import {
   PAYMENT_PROOF_BUCKET,
@@ -36,46 +37,20 @@ type SellerGroupChoice = {
   receiptStoragePath?: string;
 };
 
-type SellerOnlinePayment = {
-  qrImageUrl?: string | null;
-  accountName?: string | null;
-  accountNumber?: string | null;
-  label?: string | null;
+type CheckoutOnlineDetails = {
+  qrImageUrl: string;
+  accountName: string;
+  accountNumber: string;
+  label: string;
+  instructions?: string | null;
 };
 
-type OnlinePaymentQueryHook = {
-  useQuery: (
-    input: { sellerId: number },
-    opts?: { enabled?: boolean },
-  ) => {
-    data: SellerOnlinePayment | undefined;
-    isLoading: boolean;
-    error: { message?: string } | null;
-  };
+const checkoutAvailabilityFallback: SystemPaymentAvailability = {
+  cashPickupEnabled: true,
+  cashDeliveryEnabled: true,
+  onlineEnabled: false,
+  onlineAccountReady: false,
 };
-
-type CheckoutReceiptUploadHook = {
-  useMutation: () => {
-    mutateAsync: (input: {
-      sellerId: number;
-      fileName: string;
-      contentType: (typeof PAYMENT_PROOF_CONTENT_TYPES)[number];
-      fileSizeBytes: number;
-    }) => Promise<{ storagePath: string; uploadToken: string; uploadIntent: string }>;
-    isPending: boolean;
-  };
-};
-
-type CheckoutReceiptFinalizeHook = {
-  useMutation: () => {
-    mutateAsync: (input: { sellerId: number; uploadIntent: string }) => Promise<{ receiptStoragePath: string }>;
-    isPending: boolean;
-  };
-};
-
-function useSellerOnlinePayment(sellerId: number, enabled: boolean) {
-  return trpc.sellers.getOnlinePayment.useQuery({ sellerId }, { enabled });
-}
 
 function readCheckoutCart() {
   try {
@@ -109,28 +84,27 @@ function listingFlags(items: CheckoutCartItem[]) {
   }));
 }
 
-function sellerHasOnlineQr(items: CheckoutCartItem[]) {
-  return items.every(item => item.sellerHasOnlineQr === true);
-}
-
 function SellerCheckoutGroup({
   sellerId,
   sellerName,
   items,
   choice,
   onChoiceChange,
+  availability,
+  onlineDetails,
+  onlineLoading,
 }: {
   sellerId: number;
   sellerName: string;
   items: CheckoutCartItem[];
   choice: SellerGroupChoice;
   onChoiceChange: (next: SellerGroupChoice) => void;
+  availability: SystemPaymentAvailability;
+  onlineDetails?: CheckoutOnlineDetails | null;
+  onlineLoading: boolean;
 }) {
   const flags = useMemo(() => listingFlags(items), [items]);
-  const onlineQuery = useSellerOnlinePayment(sellerId, true);
-  const onlineDetails = onlineQuery.data;
-  const hasQr = sellerHasOnlineQr(items) || Boolean(onlineDetails?.qrImageUrl);
-  const methods = useMemo(() => methodsForListings(flags, hasQr), [flags, hasQr]);
+  const methods = useMemo(() => methodsForListings(flags, availability), [flags, availability]);
   const fulfillmentOptions = fulfillmentOptionsForListings(flags);
   const groupTotal = items.reduce((sum, item) => sum + item.priceCents * item.quantity, 0);
 
@@ -304,21 +278,25 @@ function SellerCheckoutGroup({
 
       {showOnline && (
         <div className="mt-5 rounded-2xl border border-[#dfe8db] bg-white p-4">
-          <h4 className="font-bold text-[#315640]">Pay via seller QR</h4>
-          {onlineQuery.isLoading ? (
+          <h4 className="font-bold text-[#315640]">Pay via AgriCoop QR</h4>
+          <p className="mt-1 text-xs text-[#66766b]">A cooperative officer verifies the receipt before the seller fulfills the order.</p>
+          {onlineLoading ? (
             <Loader2 className="mt-4 animate-spin text-[#4e8257]" />
           ) : (
             <>
               {onlineDetails?.qrImageUrl ? (
                 <img
                   src={onlineDetails.qrImageUrl}
-                  alt={`${sellerName} payment QR`}
+                  alt="AgriCoop payment QR"
                   className="mt-3 h-32 w-32 rounded-lg border border-[#e2e8de] object-contain"
                 />
               ) : (
                 <div className="mt-3 grid h-32 w-32 place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a]">
                   <QrCode />
                 </div>
+              )}
+              {onlineDetails?.instructions && (
+                <p className="mt-3 text-xs leading-5 text-[#4d6854]">{onlineDetails.instructions}</p>
               )}
               <p className="mt-3 text-sm font-bold text-[#315640]">
                 {onlineDetails?.label || onlineDetails?.accountName || "Online payment"}
@@ -420,11 +398,20 @@ export default function Checkout() {
   const [cart] = useState(readCheckoutCart);
   const sellerMap = useMemo(() => (cart ? groupCartItemsBySeller(cart.items) : new Map()), [cart]);
 
+  const availabilityQuery = trpc.systemPayment.getAvailability.useQuery(undefined, {
+    enabled: Boolean(user && (user.role === "buyer" || user.role === "seller")),
+  });
+  const availability = availabilityQuery.data ?? checkoutAvailabilityFallback;
+  const onlineDetailsQuery = trpc.systemPayment.getCheckoutOnlineDetails.useQuery(undefined, {
+    enabled: Boolean(user?.role === "buyer" && availability.onlineEnabled && availability.onlineAccountReady),
+    retry: false,
+  });
+
   const initialChoices = useMemo(() => {
     const map = new Map<number, SellerGroupChoice>();
     Array.from(sellerMap.entries()).forEach(([sellerId, items]) => {
       const flags = listingFlags(items);
-      const methods = methodsForListings(flags, sellerHasOnlineQr(items));
+      const methods = methodsForListings(flags, availability);
       const paymentMethod = methods[0] ?? "cash_pickup";
       const fulfillmentMethod =
         defaultFulfillmentForPayment(paymentMethod, {
@@ -435,7 +422,7 @@ export default function Checkout() {
       map.set(sellerId, { paymentMethod, fulfillmentMethod });
     });
     return map;
-  }, [sellerMap]);
+  }, [sellerMap, availability]);
 
   const [choices, setChoices] = useState<Map<number, SellerGroupChoice>>(initialChoices);
 
@@ -487,7 +474,7 @@ export default function Checkout() {
           receiptStoragePath: choice.receiptStoragePath,
           buyerNote:
             choice.paymentMethod === "online"
-              ? "Buyer paid via seller QR; receipt attached at checkout."
+              ? "Buyer paid via the AgriCoop QR; receipt attached at checkout."
               : "Please confirm availability and arrange the selected cash handover.",
         });
         createdIds.push(result.orderId);
@@ -593,6 +580,9 @@ export default function Checkout() {
                   items={items}
                   choice={choice}
                   onChoiceChange={next => updateChoice(sellerId, next)}
+                  availability={availability}
+                  onlineDetails={onlineDetailsQuery.data}
+                  onlineLoading={onlineDetailsQuery.isLoading}
                 />
               );
             })}

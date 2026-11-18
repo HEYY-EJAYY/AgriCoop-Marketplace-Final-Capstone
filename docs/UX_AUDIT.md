@@ -127,7 +127,7 @@ There is **no** `/cart` route; basket state lives on `/marketplace` in the `#ord
 | Screen | Element | Expected | Actual | Verdict | Fix applied |
 |--------|---------|----------|--------|---------|-------------|
 | Checkout | Cart persistence | Survive navigation | `sessionStorage` + `checkoutCartSchema` | Makes sense | — |
-| Checkout | Payment methods | Cash + optional digital | Per-seller Cash Pickup / Delivery / Online (seller QR + receipt at create) | Makes sense | Online uses seller QR; coop QR remains admin tooling |
+| Checkout | Payment methods | Cash + optional digital | Per-seller Cash Pickup / Delivery / Online (system QR + receipt at create) | Makes sense | Online uses Admin/SuperAdmin system account; seller QR retired from UX |
 | Checkout | Success path | Order confirmation view | Toast + redirect to `/dashboard` (not dedicated confirmation page) | Makes sense (coop) | — |
 | Checkout | Empty cart | Recovery | Message + link back to marketplace | Makes sense | — |
 
@@ -179,18 +179,18 @@ Sellers with approval may also buy from other farmers (same gates as buyers on `
 | Admin dashboard | Association requests | Approve seller coop link | `AssociationRequestsManager` | Makes sense | — |
 | Admin dashboard | Product verification | Approve listings | Queue with approve/reject + reason | Makes sense | — |
 | Admin dashboard | Order fulfillment | Complete with adjusted qty | `AdminOrderCard` modal for final quantities | Makes sense | — |
-| Admin dashboard | GCash review | Verify proofs | `AdminPaymentReviewQueue` | Makes sense | — |
+| Admin dashboard | Payment review | Verify proofs + cash | Payments tab (`?tab=payments`) | Makes sense | Sellers read-only on payment status |
 | Admin dashboard | Profile verification | Review ID docs | `AdminProfileVerificationQueue` | Makes sense | — |
 | Admin dashboard | User management | Role/approval/coop | Inline table edits (no superadmin assign unless superadmin) | Makes sense | — |
 | Admin dashboard | Act as seller | Support testing | Toggles embedded `SellerDashboard` | Makes sense | — |
 
-### Payment options (`/admin/payment-options`)
+### Payments tab (`/dashboard?tab=payments`)
 
 | Screen | Element | Expected | Actual | Verdict | Fix applied |
 |--------|---------|----------|--------|---------|-------------|
-| Payment options | CRUD + QR | Configure checkout GCash | Create/edit/delete, upload QR, active flag | Makes sense | — |
-| Payment options | Scope | Coop vs platform | Admin: own coop; SuperAdmin: platform-wide or per coop | Makes sense | — |
-| Payment options | Access gate | Restricted roles | Pending admin blocked via `getAccountAccessRestriction` | Makes sense | — |
+| Payments | Settings + QR | System online account | `systemPayment` settings, accounts, QR upload | Makes sense | Seller QR UI removed |
+| Payments | Verification queue | Receipt + cash | Confirm/reject + mark cash received | Makes sense | Admin/SuperAdmin only |
+| Legacy payment options | `/admin/payment-options` | Not checkout source | Retained coop tooling; checkout uses system account | Makes sense | Documented |
 
 ### Reports (`/reports`)
 

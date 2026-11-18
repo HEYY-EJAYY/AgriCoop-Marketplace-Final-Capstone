@@ -24,13 +24,13 @@ export function isOnlinePaymentMethod(method: string | null | undefined): boolea
   return method === "online" || method === "gcash";
 }
 
+/** Payment proof review is Admin / SuperAdmin only (sellers are read-only). */
 export function canReviewOrderPaymentProof(
   actor: OrderAccessActor,
   order: { sellerId: number; cooperativeId: number | null },
   actorCooperativeId: number | null,
 ): boolean {
   if (actor.role === "superadmin") return true;
-  if (actor.role === "seller" && actor.id === order.sellerId) return true;
   if (actor.role === "admin" && actorCooperativeId !== null && order.cooperativeId === actorCooperativeId) {
     return true;
   }

@@ -3362,3 +3362,70 @@ GRANT INSERT ("id", "createdAt", "updatedAt") ON TABLE agricoop_app."paymentOpti
 ```
 
 Verification (2026-11-17): authenticated INSERT/UPDATE on product flags; paymentOptions id INSERT; EXECUTE on sync_profile_role_from_app.
+
+## BLOCK 17: `20261118022138_system_payment_admin_only.sql` (applied via MCP as `system_payment_admin_only`)
+
+**Purpose:** Move online payment to Admin/SuperAdmin system settings. Additive only: seller `onlinePayment*` columns and the `seller-payment-qr` bucket are kept. Seller column grants and seller-owned storage policies are revoked.
+
+```sql
+-- PURPOSE: systemPaymentSettings, systemOnlinePaymentAccounts, systemPaymentSettingsAudit,
+-- private system-payment-qr bucket, staff-only RLS, REVOKE seller payment column grants.
+-- IDEMPOTENT / ADDITIVE ONLY. Does not DROP COLUMN.
+-- Full script: supabase/migrations/20261118022138_system_payment_admin_only.sql
+
+CREATE TABLE IF NOT EXISTS agricoop_app."systemPaymentSettings" (
+  id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  "cashPickupEnabled" boolean NOT NULL DEFAULT true,
+  "cashDeliveryEnabled" boolean NOT NULL DEFAULT true,
+  "onlineEnabled" boolean NOT NULL DEFAULT false,
+  "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedBy" integer REFERENCES agricoop_app.users(id)
+);
+
+CREATE TABLE IF NOT EXISTS agricoop_app."systemOnlinePaymentAccounts" (
+  id serial PRIMARY KEY,
+  label varchar(150) NOT NULL,
+  "accountName" varchar(150) NOT NULL,
+  "accountNumber" varchar(100) NOT NULL,
+  instructions text,
+  "qrImagePath" text,
+  "isActive" boolean NOT NULL DEFAULT false,
+  "archivedAt" timestamptz,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  "createdBy" integer REFERENCES agricoop_app.users(id),
+  "updatedBy" integer REFERENCES agricoop_app.users(id)
+);
+
+CREATE TABLE IF NOT EXISTS agricoop_app."systemPaymentSettingsAudit" (
+  id bigserial PRIMARY KEY,
+  "actorUserId" integer NOT NULL REFERENCES agricoop_app.users(id),
+  "actorRole" text NOT NULL,
+  action text NOT NULL,
+  details jsonb,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+-- Staff RLS (agricoop_app.is_staff()) on all three tables.
+-- Bucket system-payment-qr private, 5 MB, jpeg/png/webp. No client storage policies.
+
+REVOKE SELECT ("onlinePaymentQrPath") ON TABLE agricoop_app.users FROM anon;
+REVOKE SELECT (
+  "onlinePaymentQrPath",
+  "onlinePaymentAccountName",
+  "onlinePaymentAccountNumber",
+  "onlinePaymentLabel"
+) ON TABLE agricoop_app.users FROM authenticated;
+REVOKE UPDATE (
+  "onlinePaymentQrPath",
+  "onlinePaymentAccountName",
+  "onlinePaymentAccountNumber",
+  "onlinePaymentLabel"
+) ON TABLE agricoop_app.users FROM authenticated;
+
+DROP POLICY IF EXISTS seller_payment_qr_owner_insert ON storage.objects;
+DROP POLICY IF EXISTS seller_payment_qr_owner_update ON storage.objects;
+DROP POLICY IF EXISTS seller_payment_qr_owner_select ON storage.objects;
+```
+
+Verification: three `systemPayment*` tables present; bucket `system-payment-qr` private; seller online-payment column grants revoked; seller QR storage policies dropped; columns not dropped.

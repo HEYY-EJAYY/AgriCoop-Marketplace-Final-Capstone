@@ -28,15 +28,11 @@ const Status = ({ value }: { value: string }) => <span className={`status-pill s
 function ListingPaymentFlagFields({
   allowsPickup,
   allowsDelivery,
-  acceptsOnlinePayment,
   onChange,
-  sellerHasQr,
 }: {
   allowsPickup: boolean;
   allowsDelivery: boolean;
-  acceptsOnlinePayment: boolean;
-  sellerHasQr: boolean;
-  onChange: (patch: Partial<{ allowsPickup: boolean; allowsDelivery: boolean; acceptsOnlinePayment: boolean }>) => void;
+  onChange: (patch: Partial<{ allowsPickup: boolean; allowsDelivery: boolean }>) => void;
 }) {
   return (
     <div className="mt-3 space-y-2 rounded-xl bg-white p-3 md:col-span-2">
@@ -49,34 +45,12 @@ function ListingPaymentFlagFields({
         <input type="checkbox" checked={allowsDelivery} onChange={e => onChange({ allowsDelivery: e.target.checked })} />
         Delivery
       </label>
-      <label className="flex items-center gap-2 text-sm text-[#45614e]">
-        <input
-          type="checkbox"
-          checked={acceptsOnlinePayment}
-          disabled={!sellerHasQr}
-          onChange={e => onChange({ acceptsOnlinePayment: e.target.checked })}
-        />
-        Accepts Online Payment
-      </label>
-      {!sellerHasQr && (
-        <p className="text-xs text-[#8c574c]">
-          Upload your payment QR on{" "}
-          <Link href="/profile" className="font-bold text-[#1f5a3c] no-underline">
-            Profile
-          </Link>{" "}
-          before enabling online payment.
-        </p>
-      )}
+      <p className="text-xs text-[#66766b]">Online payment is set by cooperative officers for the whole marketplace.</p>
       {allowsPickup === false && allowsDelivery === false && (
         <p role="alert" className="text-xs text-[#a34838]">Choose at least Pickup or Delivery.</p>
       )}
     </div>
   );
-}
-
-function useSellerHasOnlineQr(enabled: boolean) {
-  const { data } = trpc.sellers.getOnlinePayment.useQuery(undefined, { enabled });
-  return Boolean(data?.qrImageUrl || data?.hasQr);
 }
 
 function readImageAsBase64(file: File) {
@@ -666,8 +640,7 @@ function SellerProductCard({ product }: { product: any }) {
   const [imageUrls, setImageUrls] = useState<string[]>(product.imageUrls?.length ? product.imageUrls : product.primaryImageUrl ? [product.primaryImageUrl] : []);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imageError, setImageError] = useState("");
-  const sellerHasQr = useSellerHasOnlineQr(true);
-  const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), qualityGrade: product.qualityGrade, status: product.status, allowsPickup: product.allowsPickup ?? true, allowsDelivery: product.allowsDelivery ?? true, acceptsOnlinePayment: product.acceptsOnlinePayment ?? false });
+  const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), qualityGrade: product.qualityGrade, status: product.status, allowsPickup: product.allowsPickup ?? true, allowsDelivery: product.allowsDelivery ?? true });
   const update = trpc.products.update.useMutation({ onSuccess: result => { toast.success(result.reviewRequired ? "Listing changes submitted for review and hidden until approval." : "Listing and inventory updated."); setEditing(false); setImageFiles([]); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
   const uploadImage = trpc.products.uploadImage.useMutation();
   const archive = trpc.products.archive.useMutation({ onSuccess: () => { toast.success("Listing archived."); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
@@ -686,22 +659,18 @@ function SellerProductCard({ product }: { product: any }) {
       toast.error("Choose at least Pickup or Delivery.");
       return;
     }
-    if (values.acceptsOnlinePayment && !sellerHasQr) {
-      toast.error("Upload your online payment QR on Profile before enabling Online Payment.");
-      return;
-    }
     try {
       const uploadedUrls = await uploadProductImageFiles(imageFiles, uploadImage.mutateAsync);
       const nextImageUrls = [...imageUrls, ...uploadedUrls];
       update.mutate(
-        { id: product.id, name: values.name, category: values.category, variety: values.variety, description: values.description, unit: values.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(values.price) * 100), stockQty: Number(values.stock), minOrderQty: Number(values.minOrderQty), qualityGrade: values.qualityGrade, status: values.status, allowsPickup: values.allowsPickup, allowsDelivery: values.allowsDelivery, acceptsOnlinePayment: values.acceptsOnlinePayment, imageUrls: nextImageUrls },
+        { id: product.id, name: values.name, category: values.category, variety: values.variety, description: values.description, unit: values.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(values.price) * 100), stockQty: Number(values.stock), minOrderQty: Number(values.minOrderQty), qualityGrade: values.qualityGrade, status: values.status, allowsPickup: values.allowsPickup, allowsDelivery: values.allowsDelivery, imageUrls: nextImageUrls },
         { onSuccess: () => setImageUrls(nextImageUrls) },
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Image upload failed.");
     }
   };
-  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ListingPaymentFlagFields allowsPickup={values.allowsPickup} allowsDelivery={values.allowsDelivery} acceptsOnlinePayment={values.acceptsOnlinePayment} sellerHasQr={sellerHasQr} onChange={patch => setValues({ ...values, ...patch })}/><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button min-h-11 px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
+  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ListingPaymentFlagFields allowsPickup={values.allowsPickup} allowsDelivery={values.allowsDelivery} onChange={patch => setValues({ ...values, ...patch })}/><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button min-h-11 px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
   return <div className="rounded-2xl border border-[#e2e9dd] p-4"><div className="flex justify-between gap-3"><span className="rounded-full bg-[#eef5ea] px-2 py-1 text-xs font-bold text-[#4d784c]">{product.category}</span><Status value={product.verificationStatus || product.status}/></div>{product.cooperativeName && <p className="mt-2 text-xs font-bold text-[#5f7a5f]">{product.cooperativeName}</p>}<h3 className="mt-4 font-display text-xl font-bold text-[#28523a]">{product.name}</h3><p className="mt-1 text-sm text-[#647468]">{product.variety} · {peso(product.priceCents)} per {product.unit}</p><div className="mt-4 flex items-center justify-between border-t border-[#edf0e9] pt-3"><span className="text-xs font-bold text-[#607363]">Stock: {product.stockQty} {product.unit} · Minimum: {product.minOrderQty} {product.unit}</span><span className="text-xs text-[#688068]">{product.qualityGrade}</span></div><div className="mt-4 flex gap-3"><button onClick={() => setEditing(true)} className="agri-ghost px-3 py-2 text-xs">Edit listing</button>{product.verificationStatus !== "pending" && product.verificationStatus !== "approved" && <button onClick={() => submitProduct.mutate({ id: product.id })} className="agri-button px-3 py-2 text-xs">Submit for verification</button>}{product.status === "published" && <button onClick={() => archive.mutate({ id: product.id })} className="text-xs font-bold text-[#a34838]">Archive</button>}</div></div>;
 }
 function QuotationResponse({ row, onRespond }: { row: any; onRespond: (price: number, note: string | undefined, status: "responded" | "declined") => void }) {
@@ -748,13 +717,11 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   const { data: cooperatives = [] } = trpc.cooperatives.list.useQuery();
   const sellerCooperativeName = cooperatives.find(cooperative => cooperative.id === user?.cooperativeId)?.name
     ?? (user?.cooperativeId == null ? "Not assigned — request a cooperative before publishing" : "Assigned cooperative");
-  const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true, acceptsOnlinePayment: false });
-  const sellerHasQr = useSellerHasOnlineQr(true);
+  const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true });
   const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFiles, setImageFiles] = useState<File[]>([]); const [imageError, setImageError] = useState("");
   const uploadImage = trpc.products.uploadImage.useMutation();
   const create = trpc.products.create.useMutation({ onSuccess: () => { toast.success("Product listing submitted for verification."); setOpenForm(false); setForm(emptyForm()); setImageFiles([]); setImageError(""); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
   const updateStatus = trpc.orders.updateStatus.useMutation({ onSuccess: () => { toast.success("Order status updated."); utils.orders.sellerMine.invalidate(); utils.products.mine.invalidate(); }, onError: error => toast.error(error.message) });
-  const recordCashReceipt = trpc.payments.recordCashReceipt.useMutation({ onSuccess: () => { toast.success("Cash receipt recorded."); utils.orders.sellerMine.invalidate(); utils.orders.buyerMine.invalidate(); utils.payments.mine.invalidate(); }, onError: error => toast.error(error.message) });
   const respond = trpc.quotations.respond.useMutation({ onSuccess: () => { toast.success("Quotation response sent."); utils.quotations.sellerMine.invalidate(); }, onError: error => toast.error(error.message) });
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -763,13 +730,9 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
       toast.error("Choose at least Pickup or Delivery.");
       return;
     }
-    if (form.acceptsOnlinePayment && !sellerHasQr) {
-      toast.error("Upload your online payment QR on Profile before enabling Online Payment.");
-      return;
-    }
     try {
       const imageUrls = await uploadProductImageFiles(imageFiles, uploadImage.mutateAsync);
-      create.mutate({ name: form.name, category: form.category, variety: form.variety, description: form.description, unit: form.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(form.price) * 100), stockQty: Number(form.stock), minOrderQty: Number(form.minOrderQty), qualityGrade: form.qualityGrade, allowsPickup: form.allowsPickup, allowsDelivery: form.allowsDelivery, acceptsOnlinePayment: form.acceptsOnlinePayment, imageUrls });
+      create.mutate({ name: form.name, category: form.category, variety: form.variety, description: form.description, unit: form.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(form.price) * 100), stockQty: Number(form.stock), minOrderQty: Number(form.minOrderQty), qualityGrade: form.qualityGrade, allowsPickup: form.allowsPickup, allowsDelivery: form.allowsDelivery, imageUrls });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Image upload failed.");
     }
@@ -795,7 +758,7 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   if (productsQuery.isLoading || (user?.role === "seller" && (ordersQuery.isLoading || quotationsQuery.isLoading))) {
     return <LoadingWorkspace/>;
   }
-  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className={`${shellContainerClass} pt-5`}><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(products.filter(product => product.status === "published").length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p></div><button className="agri-button text-sm" onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{openForm && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Cooperative<input readOnly className="field-control bg-white/70" value={sellerCooperativeName} aria-label="Listing cooperative"/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ListingPaymentFlagFields allowsPickup={form.allowsPickup} allowsDelivery={form.allowsDelivery} acceptsOnlinePayment={form.acceptsOnlinePayment} sellerHasQr={sellerHasQr} onChange={patch => setForm({ ...form, ...patch })}/><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:col-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div className="md:col-span-2 flex justify-center pt-1"><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : products.length ? products.map(product => <SellerProductCard key={product.id} product={product}/>) : <Empty icon={Package} title="No products published" body="Add your first harvest to begin reaching buyers."/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.buyerName || "Buyer"}</Link><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div><div className="mt-3"><button type="button" className="agri-ghost min-h-11 px-3 py-2 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}><MessageCircle size={14}/> Message</button></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}  {row.order.status === "ready" && row.order.paymentStatus !== "paid" && row.payment && (row.order.paymentMethod === "cash_pickup" || row.order.paymentMethod === "cash_delivery") && <button disabled={recordCashReceipt.isPending} onClick={() => recordCashReceipt.mutate({ orderId: row.order.id })} className="agri-ghost px-3 py-2 text-xs">Record cash received</button>}<button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
+  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className={`${shellContainerClass} pt-5`}><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(products.filter(product => product.status === "published").length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p></div><button className="agri-button text-sm" onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{openForm && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Cooperative<input readOnly className="field-control bg-white/70" value={sellerCooperativeName} aria-label="Listing cooperative"/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ListingPaymentFlagFields allowsPickup={form.allowsPickup} allowsDelivery={form.allowsDelivery} onChange={patch => setForm({ ...form, ...patch })}/><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:col-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div className="md:col-span-2 flex justify-center pt-1"><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : products.length ? products.map(product => <SellerProductCard key={product.id} product={product}/>) : <Empty icon={Package} title="No products published" body="Add your first harvest to begin reaching buyers."/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.buyerName || "Buyer"}</Link><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div><div className="mt-3"><button type="button" className="agri-ghost min-h-11 px-3 py-2 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}><MessageCircle size={14}/> Message</button></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}<button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
 }
 
 function SellerVerificationWorkspace() {
@@ -995,7 +958,9 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
 function AdminPaymentReviewQueue() {
   const utils = trpc.useUtils();
   const [reasons, setReasons] = useState<Record<number, string>>({});
-  const { data: queue = [], isLoading, isFetching, error, refetch } = trpc.payments.reviewQueue.useQuery();
+  const { data, isLoading, isFetching, error, refetch } = trpc.payments.reviewQueue.useQuery();
+  const proofs = data?.proofs ?? [];
+  const cashAwaitingReceived = data?.cashAwaitingReceived ?? [];
   const review = trpc.payments.reviewProof.useMutation({
     onSuccess: () => {
       toast.success("Payment review saved.");
@@ -1005,19 +970,177 @@ function AdminPaymentReviewQueue() {
     },
     onError: mutationError => toast.error(mutationError.message),
   });
-  return <section className="mt-8 agri-card p-5 sm:p-6">
-    <h2 className="font-display text-2xl font-bold text-[#264f37]">GCash payment review</h2>
-    <p className="mt-1 text-sm text-[#6a796e]">Review private receipt images before marking a payment verified or rejected.</p>
-    {error ? <div className="mt-4 text-sm text-[#a34838]"><p role="alert">{error.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={isFetching} onClick={() => void refetch()}>Retry</button></div> : isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : queue.length ? <div className="mt-5 space-y-4">{queue.map(row => <article key={row.proof.id} className="rounded-xl border border-[#e3e9de] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-bold text-[#315640]">Order #{row.order.id} · {peso(Number(row.order.totalCents))}</p><p className="mt-1 text-xs text-[#6d7d70]">Proof #{row.proof.id} · {row.proof.originalFileName ?? "Receipt image"}</p></div><Status value={row.proof.verificationStatus}/></div>
-      {row.evidenceUrl ? <a href={row.evidenceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-bold text-[#397549] underline">Open private receipt image</a> : <p className="mt-3 text-sm text-[#a34838]">{row.evidenceUnavailable ? "The private receipt is unavailable. Check Storage configuration; reject this attempt with a reason so the buyer can resubmit." : "No valid private receipt is available for this payment."}</p>}
-      {row.proof.verificationStatus === "pending" && <div className="mt-4 flex flex-wrap items-end gap-3">
-        <label className="field-label min-w-56 flex-1">Review note (required when rejecting)<textarea maxLength={600} className="field-control min-h-16" value={reasons[row.proof.id] ?? ""} onChange={event => setReasons(current => ({ ...current, [row.proof.id]: event.target.value }))}/></label>
-        <button className="agri-button" disabled={review.isPending || !row.evidenceUrl} onClick={() => review.mutate({ proofId: row.proof.id, decision: "verified", reviewNote: reasons[row.proof.id]?.trim() || undefined })}>Verify payment</button>
-        <button className="agri-ghost text-[#a34838]" disabled={review.isPending || !reasons[row.proof.id]?.trim()} onClick={() => review.mutate({ proofId: row.proof.id, decision: "rejected", reviewNote: reasons[row.proof.id]?.trim() })}>Reject proof</button>
-      </div>}
-    </article>)}</div> : <p className="py-6 text-center text-sm text-[#6d7d70]">No GCash payments are waiting for review.</p>}
-  </section>;
+  const recordCash = trpc.payments.recordCashReceipt.useMutation({
+    onSuccess: () => {
+      toast.success("Cash receipt recorded.");
+      void utils.payments.reviewQueue.invalidate();
+      void utils.payments.mine.invalidate();
+      void utils.admin.overview.invalidate();
+    },
+    onError: mutationError => toast.error(mutationError.message),
+  });
+  return <div className="space-y-8">
+    <section className="agri-card p-5 sm:p-6">
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">Online receipt verification</h2>
+      <p className="mt-1 text-sm text-[#6a796e]">Review private receipt images before marking a payment verified or rejected.</p>
+      {error ? <div className="mt-4 text-sm text-[#a34838]"><p role="alert">{error.message}</p><button type="button" className="agri-ghost mt-2 text-xs" disabled={isFetching} onClick={() => void refetch()}>Retry</button></div> : isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : proofs.length ? <div className="mt-5 space-y-4">{proofs.map(row => <article key={row.proof.id} className="rounded-xl border border-[#e3e9de] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-bold text-[#315640]">Order #{row.order.id} · {peso(Number(row.order.totalCents))}</p><p className="mt-1 text-xs text-[#6d7d70]">Proof #{row.proof.id} · {row.proof.originalFileName ?? "Receipt image"}</p></div><Status value={row.proof.verificationStatus}/></div>
+        {row.evidenceUrl ? <a href={row.evidenceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex text-sm font-bold text-[#397549] underline">Open private receipt image</a> : <p className="mt-3 text-sm text-[#a34838]">{row.evidenceUnavailable ? "The private receipt is unavailable. Check Storage configuration; reject this attempt with a reason so the buyer can resubmit." : "No valid private receipt is available for this payment."}</p>}
+        {row.proof.verificationStatus === "pending" && <div className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="field-label min-w-56 flex-1">Review note (required when rejecting)<textarea maxLength={600} className="field-control min-h-16" value={reasons[row.proof.id] ?? ""} onChange={event => setReasons(current => ({ ...current, [row.proof.id]: event.target.value }))}/></label>
+          <button className="agri-button" disabled={review.isPending || !row.evidenceUrl} onClick={() => review.mutate({ proofId: row.proof.id, decision: "verified", reviewNote: reasons[row.proof.id]?.trim() || undefined })}>Verify payment</button>
+          <button className="agri-ghost text-[#a34838]" disabled={review.isPending || !reasons[row.proof.id]?.trim()} onClick={() => review.mutate({ proofId: row.proof.id, decision: "rejected", reviewNote: reasons[row.proof.id]?.trim() })}>Reject proof</button>
+        </div>}
+      </article>)}</div> : <p className="py-6 text-center text-sm text-[#6d7d70]">No online payments are waiting for review.</p>}
+    </section>
+    <section className="agri-card p-5 sm:p-6">
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">Cash awaiting confirmation</h2>
+      <p className="mt-1 text-sm text-[#6a796e]">Mark cash received only after the full amount is in hand for a ready order.</p>
+      {isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : cashAwaitingReceived.length ? <div className="mt-5 space-y-3">{cashAwaitingReceived.map(order => <article key={order.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e3e9de] p-4">
+        <div>
+          <p className="font-bold text-[#315640]">Order #{order.id} · {peso(Number(order.totalCents))}</p>
+          <p className="mt-1 text-xs text-[#6d7d70]">{String(order.paymentMethod).replaceAll("_", " ")} · {order.status}</p>
+        </div>
+        <button type="button" className="agri-button text-sm" disabled={recordCash.isPending} onClick={() => recordCash.mutate({ orderId: order.id })}>Record cash received</button>
+      </article>)}</div> : <p className="py-6 text-center text-sm text-[#6d7d70]">No cash orders are waiting to be marked received.</p>}
+    </section>
+  </div>;
+}
+
+function AdminSystemPaymentsPanel() {
+  const utils = trpc.useUtils();
+  const settingsQuery = trpc.systemPayment.getSettings.useQuery();
+  const accountsQuery = trpc.systemPayment.listAccounts.useQuery();
+  const [draft, setDraft] = useState({ cashPickupEnabled: true, cashDeliveryEnabled: true, onlineEnabled: false });
+  const [accountForm, setAccountForm] = useState({ label: "", accountName: "", accountNumber: "", instructions: "" });
+  const updateSettings = trpc.systemPayment.updateSettings.useMutation({
+    onSuccess: () => {
+      toast.success("Payment settings saved.");
+      void utils.systemPayment.getSettings.invalidate();
+      void utils.systemPayment.getAvailability.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const createAccount = trpc.systemPayment.createAccount.useMutation({
+    onSuccess: () => {
+      toast.success("Online account added.");
+      setAccountForm({ label: "", accountName: "", accountNumber: "", instructions: "" });
+      void utils.systemPayment.listAccounts.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const activateAccount = trpc.systemPayment.activateAccount.useMutation({
+    onSuccess: () => {
+      toast.success("Online account activated.");
+      void utils.systemPayment.listAccounts.invalidate();
+      void utils.systemPayment.getAvailability.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const archiveAccount = trpc.systemPayment.archiveAccount.useMutation({
+    onSuccess: () => {
+      toast.success("Online account archived.");
+      void utils.systemPayment.listAccounts.invalidate();
+      void utils.systemPayment.getAvailability.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const uploadQr = trpc.systemPayment.uploadQr.useMutation({
+    onSuccess: () => {
+      toast.success("QR image saved.");
+      void utils.systemPayment.listAccounts.invalidate();
+      void utils.systemPayment.getAvailability.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  useEffect(() => {
+    if (!settingsQuery.data) return;
+    setDraft({
+      cashPickupEnabled: settingsQuery.data.cashPickupEnabled,
+      cashDeliveryEnabled: settingsQuery.data.cashDeliveryEnabled,
+      onlineEnabled: settingsQuery.data.onlineEnabled,
+    });
+  }, [settingsQuery.data]);
+
+  const onUploadQr = async (accountId: number, file: File | null) => {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > PAYMENT_PROOF_MAX_BYTES) {
+      toast.error("Choose a JPEG, PNG, or WebP QR image that is 5 MB or less.");
+      return;
+    }
+    try {
+      const base64 = await readImageAsBase64(file);
+      uploadQr.mutate({
+        accountId,
+        fileName: file.name,
+        contentType: file.type as "image/jpeg" | "image/png" | "image/webp",
+        base64,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not read the QR image.");
+    }
+  };
+
+  const accounts = accountsQuery.data ?? [];
+  return (
+    <div className="space-y-8" data-testid="admin-payments-content">
+      <section className="agri-card p-5 sm:p-6">
+        <h2 className="font-display text-2xl font-bold text-[#264f37]">Payment settings</h2>
+        <p className="mt-1 text-sm text-[#6a796e]">These toggles apply to every listing. Online checkout also needs one active account with a QR.</p>
+        {settingsQuery.error ? <p role="alert" className="mt-4 text-sm text-[#a34838]">{settingsQuery.error.message}</p>
+          : settingsQuery.isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/>
+            : <form className="mt-5 space-y-3" onSubmit={event => { event.preventDefault(); updateSettings.mutate(draft); }}>
+              <label className="flex items-center gap-2 text-sm text-[#45614e]"><input type="checkbox" checked={draft.cashPickupEnabled} onChange={event => setDraft({ ...draft, cashPickupEnabled: event.target.checked })} /> Cash on pickup</label>
+              <label className="flex items-center gap-2 text-sm text-[#45614e]"><input type="checkbox" checked={draft.cashDeliveryEnabled} onChange={event => setDraft({ ...draft, cashDeliveryEnabled: event.target.checked })} /> Cash on delivery</label>
+              <label className="flex items-center gap-2 text-sm text-[#45614e]"><input type="checkbox" checked={draft.onlineEnabled} onChange={event => setDraft({ ...draft, onlineEnabled: event.target.checked })} /> Online payment</label>
+              <button className="agri-button text-sm" disabled={updateSettings.isPending}>Save settings</button>
+            </form>}
+      </section>
+      <section className="agri-card p-5 sm:p-6">
+        <h2 className="font-display text-2xl font-bold text-[#264f37]">Online account and QR</h2>
+        <p className="mt-1 text-sm text-[#6a796e]">Buyers see only the active account. Archive replaces an account without deleting its history.</p>
+        <form className="mt-5 grid gap-3 md:grid-cols-2" onSubmit={event => {
+          event.preventDefault();
+          createAccount.mutate({
+            label: accountForm.label.trim(),
+            accountName: accountForm.accountName.trim(),
+            accountNumber: accountForm.accountNumber.trim(),
+            instructions: accountForm.instructions.trim() || undefined,
+          });
+        }}>
+          <label className="field-label">Label<input required maxLength={150} className="field-control" value={accountForm.label} onChange={event => setAccountForm({ ...accountForm, label: event.target.value })} /></label>
+          <label className="field-label">Account name<input required maxLength={150} className="field-control" value={accountForm.accountName} onChange={event => setAccountForm({ ...accountForm, accountName: event.target.value })} /></label>
+          <label className="field-label">Account number<input required maxLength={100} className="field-control" value={accountForm.accountNumber} onChange={event => setAccountForm({ ...accountForm, accountNumber: event.target.value })} /></label>
+          <label className="field-label md:col-span-2">Instructions<textarea maxLength={2000} className="field-control min-h-20" value={accountForm.instructions} onChange={event => setAccountForm({ ...accountForm, instructions: event.target.value })} /></label>
+          <div className="md:col-span-2"><button className="agri-button text-sm" disabled={createAccount.isPending}>Add account</button></div>
+        </form>
+        <div className="mt-6 space-y-3">
+          {accountsQuery.isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : accounts.filter(account => !account.archivedAt).map(account => (
+            <article key={account.id} className="rounded-xl border border-[#e3e9de] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-bold text-[#315640]">{account.label}{account.isActive ? " · Active" : ""}</p>
+                  <p className="mt-1 text-sm text-[#5f7264]">{account.accountName} · {account.accountNumber}</p>
+                  {account.instructions && <p className="mt-2 text-xs text-[#6d7d70]">{account.instructions}</p>}
+                </div>
+                {account.qrImageUrl ? <img src={account.qrImageUrl} alt="" className="h-20 w-20 rounded-lg border border-[#e2e9dd] object-contain" /> : <div className="grid h-20 w-20 place-items-center rounded-lg bg-[#edf3e9] text-[#82987a]"><QrCode /></div>}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {!account.isActive && <button type="button" className="agri-button px-3 py-2 text-xs" disabled={activateAccount.isPending} onClick={() => activateAccount.mutate({ id: account.id })}>Set active</button>}
+                <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={archiveAccount.isPending} onClick={() => archiveAccount.mutate({ id: account.id })}>Archive</button>
+                <label className="agri-ghost cursor-pointer px-3 py-2 text-xs">
+                  Upload QR
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={uploadQr.isPending} onChange={event => { void onUploadQr(account.id, event.target.files?.[0] ?? null); event.target.value = ""; }} />
+                </label>
+              </div>
+            </article>
+          ))}
+          {!accountsQuery.isLoading && !accounts.some(account => !account.archivedAt) && <p className="py-4 text-center text-sm text-[#6d7d70]">No online account yet.</p>}
+        </div>
+      </section>
+      <AdminPaymentReviewQueue />
+    </div>
+  );
 }
 
 function AdminProfileVerificationQueue() {
@@ -1173,12 +1296,11 @@ function AdminDashboard() {
         </div>
         <section className="mt-8 flex flex-wrap items-center justify-between gap-4 agri-card p-5 sm:p-6">
           <div>
-            <h2 className="font-display text-2xl font-bold text-[#264f37]">Payment Options</h2>
-            <p className="mt-1 text-sm text-[#6a796e]">Manage QR images, payment instructions, and checkout availability.</p>
+            <h2 className="font-display text-2xl font-bold text-[#264f37]">Payments</h2>
+            <p className="mt-1 text-sm text-[#6a796e]">Enable methods, manage the AgriCoop QR, and verify receipts in the Payments tab.</p>
           </div>
-          <Link href="/admin/payment-options" className="agri-button text-sm no-underline">Manage payment options</Link>
+          <Link href="/dashboard?tab=payments" className="agri-button text-sm no-underline">Open Payments</Link>
         </section>
-        <AdminPaymentReviewQueue />
         <AdminProfileVerificationQueue />
         <AdminRefundManagement />
         <AssociationRequestsManager />
@@ -1223,6 +1345,7 @@ function AdminDashboard() {
                 </div>
               </section>
             ),
+            payments: <AdminSystemPaymentsPanel />,
             orders: (
               <section className="agri-card p-5 sm:p-6" data-testid="admin-orders-content">
                 <h2 className="font-display text-2xl font-bold text-[#264f37]">Order fulfillment</h2>

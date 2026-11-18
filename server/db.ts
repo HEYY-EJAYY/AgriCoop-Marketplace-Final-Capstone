@@ -28,6 +28,7 @@ import {
   users,
 } from "../drizzle/pg-schema";
 import { availableStockAfterReservations } from "./marketplaceRules";
+import { getSystemPaymentAvailability } from "./systemPayment";
 import {
   applicationRoleToPublicRoleName,
   matchesPublicRegistrationIdentity,
@@ -361,7 +362,6 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
       sellerName: users.name,
       cooperativeName: cooperatives.name,
       cooperativeNormalizedName: cooperatives.normalizedName,
-      sellerHasOnlineQr: sql<boolean>`(${users.onlinePaymentQrPath} is not null and length(${users.onlinePaymentQrPath}) > 0)`,
     })
     .from(products)
     .innerJoin(users, eq(products.sellerId, users.id))
@@ -386,20 +386,27 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
     urls.push(row.imageUrl);
     imagesByProduct.set(row.productId, urls);
   }
+  let onlinePaymentAvailable = false;
+  try {
+    const availability = await getSystemPaymentAvailability(db);
+    onlinePaymentAvailable = availability.onlineEnabled && availability.onlineAccountReady;
+  } catch (error) {
+    console.error("[marketplace] system payment availability unavailable", error instanceof Error ? error.name : "UnknownError");
+  }
   return listings.map(listing => {
     const storedImages = imagesByProduct.get(listing.id) ?? [];
     const {
       sellerName,
       cooperativeName,
       cooperativeNormalizedName,
-      sellerHasOnlineQr,
       ...productFields
     } = listing;
     return {
       sellerName,
       cooperativeName,
       cooperativeSlug: cooperativeNormalizedName ?? null,
-      sellerHasOnlineQr: Boolean(sellerHasOnlineQr),
+      onlinePaymentAvailable,
+      sellerHasOnlineQr: onlinePaymentAvailable,
       product: {
         ...productFields,
         allowsPickup: listing.allowsPickup ?? true,

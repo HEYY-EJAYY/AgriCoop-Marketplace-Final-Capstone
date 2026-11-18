@@ -31,8 +31,9 @@ describe("seller online payment secrecy", () => {
       source.indexOf("export async function getMarketplace"),
       source.indexOf("export async function getMarketplaceProduct"),
     );
+    expect(marketplaceSlice).toContain("onlinePaymentAvailable");
     expect(marketplaceSlice).toContain("sellerHasOnlineQr");
-    expect(marketplaceSlice).toContain("onlinePaymentQrPath");
+    expect(marketplaceSlice).not.toContain("onlinePaymentQrPath");
     expect(marketplaceSlice).not.toContain("onlinePaymentAccountName");
     expect(marketplaceSlice).not.toContain("onlinePaymentAccountNumber");
     expect(marketplaceSlice).not.toContain("onlinePaymentLabel");

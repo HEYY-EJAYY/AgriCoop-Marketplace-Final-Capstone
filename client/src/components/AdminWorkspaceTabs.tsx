@@ -4,6 +4,7 @@ import { useLocation, useSearch } from "wouter";
 export const ADMIN_WORKSPACE_TABS = [
   { id: "moderation", label: "Moderation" },
   { id: "orders", label: "Orders" },
+  { id: "payments", label: "Payments" },
   { id: "users", label: "Users" },
 ] as const;
 

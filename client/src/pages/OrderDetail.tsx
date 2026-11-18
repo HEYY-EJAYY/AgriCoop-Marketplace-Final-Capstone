@@ -231,21 +231,22 @@ export default function OrderDetail() {
   const paymentStatus = order.paymentStatus || payment?.status || null;
 
   const role = user?.role;
-  const isSellerOrOfficer = role === "seller" || role === "admin" || role === "superadmin";
+  const isSeller = role === "seller";
   const isOfficer = role === "admin" || role === "superadmin";
   const cashMethod = paymentMethod === "cash_pickup" || paymentMethod === "cash_delivery";
+  const paymentUnpaid = paymentStatus !== "paid" && paymentStatus !== "verified" && paymentStatus !== "refunded";
   const showRecordCash =
     canRecordCash
-    && isSellerOrOfficer
+    && isOfficer
     && cashMethod
     && order.status === "ready"
-    && paymentStatus !== "paid"
-    && paymentStatus !== "verified";
+    && paymentUnpaid;
   const showReviewProof =
     canReviewProof
-    && isSellerOrOfficer
+    && isOfficer
     && proof?.id
     && (proof.verificationStatus === "pending" || paymentStatus === "awaiting_verification");
+  const showWaitingForConfirmation = isSeller && paymentUnpaid;
 
   return (
     <>
@@ -350,6 +351,9 @@ export default function OrderDetail() {
             <div className="rounded-xl bg-[#f2f6ef] p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">Payment status</p>
               <p className="mt-1 font-bold text-[#315640]">{paymentStatusLabel(paymentStatus)}</p>
+              {showWaitingForConfirmation && (
+                <p className="mt-2 text-sm font-bold text-[#315640]">Waiting for payment confirmation</p>
+              )}
             </div>
           </div>
           {receiptUrl ? (
