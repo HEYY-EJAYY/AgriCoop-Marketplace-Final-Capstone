@@ -173,7 +173,7 @@ describe("public registration role policy and verification", () => {
       openId: "new-auth-user",
       role: "seller",
       approvalStatus: "pending",
-      cooperativeId: 12,
+      cooperativeId: null,
       requestedRole: null,
     }), undefined, expect.objectContaining({ intent: "seller" }));
     expect(profileExecute).toHaveBeenCalled();
@@ -201,7 +201,7 @@ describe("public registration role policy and verification", () => {
       openId: "new-auth-user",
       role: "buyer",
       approvalStatus: "approved",
-      cooperativeId: 12,
+      cooperativeId: null,
       requestedRole: null,
     }), undefined, expect.objectContaining({ intent: "buyer" }));
     expect(profileExecute).toHaveBeenCalled();

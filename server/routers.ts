@@ -454,45 +454,23 @@ export const appRouter = router({
                 : identity.applicationRole;
 
               let cooperativeId: number | null = null;
-              const wantsCooperative = Boolean(input.cooperativeId || input.newCooperativeName);
               const assignCoopOnUser = identity.applicationRole === "seller"
                 || identity.registrationChoice === "buyer";
-              // Existing cooperative can be validated before the user row exists.
-              // New cooperatives need the app user first (createdBy / current_app_user_id).
-              let pendingNewCooperative = Boolean(input.newCooperativeName && !input.cooperativeId);
-
-              if (input.cooperativeId) {
-                const resolved = await resolveUserCooperativeSelection(db, {
-                  cooperativeId: input.cooperativeId,
-                  newCooperativeName: null,
-                  newCooperativeLocation: null,
-                  confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
-                  rateLimitEmail: input.email,
-                  consumeRateLimit: () => undefined,
-                });
-                if (resolved.kind === "needs_confirmation") {
-                  const err = new Error("COOP_NEEDS_CONFIRMATION");
-                  (err as Error & { suggestion: typeof resolved.suggestion }).suggestion = resolved.suggestion;
-                  throw err;
-                }
-                cooperativeId = resolved.cooperativeId;
-                pendingNewCooperative = false;
-              }
-
+              // RLS requires cooperativeId IS NULL on INSERT; link afterward via GUC.
               await upsertUser({
                 openId: authUserId!,
                 email: input.email,
                 name: input.name,
                 role: identity.applicationRole,
                 approvalStatus: identity.approvalStatus,
-                cooperativeId: assignCoopOnUser ? cooperativeId : null,
+                cooperativeId: null,
                 requestedRole: identity.registrationChoice === "coop_admin" ? "admin" : null,
                 loginMethod: "supabase",
               }, undefined, { intent: registrationIntent });
 
-              if (pendingNewCooperative || (wantsCooperative && !cooperativeId && input.newCooperativeName)) {
+              if (input.cooperativeId || input.newCooperativeName) {
                 const resolved = await resolveUserCooperativeSelection(db, {
-                  cooperativeId: undefined,
+                  cooperativeId: input.cooperativeId,
                   newCooperativeName: input.newCooperativeName,
                   newCooperativeLocation: input.newCooperativeLocation,
                   confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
@@ -530,8 +508,7 @@ export const appRouter = router({
                 }
               }
 
-              // First-time NULL → cooperativeId only. Guard allows this when the
-              // registration GUC is set (new-coop path and orphan repair retries).
+              // First-time NULL → cooperativeId. Guard allows this only with registration GUC.
               if (cooperativeId && assignCoopOnUser) {
                 await db.execute(sql`
                   select set_config('agricoop.allow_registration_coop_assign', '1', true)

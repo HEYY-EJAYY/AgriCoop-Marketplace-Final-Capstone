@@ -24,16 +24,16 @@ describe("user registration upsert plan", () => {
     });
   });
 
-  it("inserts a Seller with the trusted pending status and optional cooperative", () => {
+  it("inserts a Seller with the trusted pending status and null cooperative", () => {
     const plan = buildUserUpsertPlan(userInput({
       role: "seller",
       approvalStatus: "pending",
-      cooperativeId: 12,
+      cooperativeId: null,
     }), { intent: "seller" });
     expect(plan.values).toMatchObject({
       role: "seller",
       approvalStatus: "pending",
-      cooperativeId: 12,
+      cooperativeId: null,
       requestedRole: null,
     });
   });
@@ -78,21 +78,16 @@ describe("user registration upsert plan", () => {
     }))).toThrow(/verified public registration identity/i);
   });
 
-  it("allows buyer cooperativeId at signup on INSERT", () => {
-    const plan = buildUserUpsertPlan(userInput({
-      role: "buyer",
-      approvalStatus: "approved",
-      cooperativeId: 9,
-    }));
-    expect(plan.values.cooperativeId).toBe(9);
-  });
-
-  it("rejects cooperativeId on Cooperative Admin user upsert", () => {
+  it("rejects cooperativeId on INSERT (RLS requires null; assign via GUC UPDATE)", () => {
     expect(() => buildUserUpsertPlan(userInput({
       role: "buyer",
       approvalStatus: "approved",
-      requestedRole: "admin",
       cooperativeId: 9,
-    }), { intent: "cooperative_admin" })).toThrow(/must not set users\.cooperativeId/i);
+    }))).toThrow(/cooperativeId null/i);
+    expect(() => buildUserUpsertPlan(userInput({
+      role: "seller",
+      approvalStatus: "pending",
+      cooperativeId: 12,
+    }), { intent: "seller" })).toThrow(/cooperativeId null/i);
   });
 });

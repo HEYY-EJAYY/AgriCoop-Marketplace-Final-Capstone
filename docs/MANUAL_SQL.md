@@ -3915,7 +3915,7 @@ COMMIT;
 
 ## BLOCK 23: `20261118140000_registration_cooperative_assign_guard.sql`
 
-**Production blocker (A):** buyer/seller registration linked an existing cooperative via `UPDATE users.cooperativeId` after insert. Trigger `guard_users_protected_columns` rejected self-updates (`P0001` Users cannot change their own role, approval status, or cooperative). App now sets cooperative on INSERT when known; for new-coop / repair paths it sets session GUC `agricoop.allow_registration_coop_assign=1` and only allows NULL → value.
+**Production blocker (A):** buyer/seller registration linked an existing cooperative via `UPDATE users.cooperativeId` after insert. Trigger `guard_users_protected_columns` rejected self-updates (`P0001`). RLS `agricoop_auth_users_self_insert` also requires `cooperativeId IS NULL` on INSERT, so assignment must be a post-insert UPDATE. Registration sets session GUC `agricoop.allow_registration_coop_assign=1` and the guard allows only NULL → value under that GUC.
 
 ```sql
 -- PURPOSE: One-time registration cooperative assignment under GUC.

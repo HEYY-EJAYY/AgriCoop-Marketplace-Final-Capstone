@@ -174,10 +174,10 @@ export function buildUserUpsertPlan(
   ) {
     throw new Error("User upsert requires a verified public registration identity.");
   }
-  // Buyers and sellers may set cooperativeId on INSERT at signup. Coop-admin
-  // applicants stay unassigned on users (cooperative lives on the application row).
-  if (intent === "cooperative_admin" && user.cooperativeId != null) {
-    throw new Error("Cooperative Admin registration must not set users.cooperativeId at signup.");
+  // RLS agricoop_auth_users_self_insert requires cooperativeId IS NULL on INSERT.
+  // Cooperative is linked afterward via GUC-gated UPDATE (BLOCK 23).
+  if (user.cooperativeId != null) {
+    throw new Error("Registration must insert users with cooperativeId null; assign afterward.");
   }
 
   const now = new Date();
@@ -185,7 +185,7 @@ export function buildUserUpsertPlan(
     openId: user.openId,
     role: resolved.applicationRole,
     approvalStatus: resolved.approvalStatus,
-    cooperativeId: intent === "cooperative_admin" ? null : (user.cooperativeId ?? null),
+    cooperativeId: null,
     requestedRole: resolved.requestedRole ?? null,
     lastSignedIn: now,
   };
