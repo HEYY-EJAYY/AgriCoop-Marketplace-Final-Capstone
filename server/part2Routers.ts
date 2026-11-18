@@ -14,7 +14,7 @@ import {
   COOP_ADMIN_APPLICATION_MAX_BYTES,
 } from "../shared/coopAdminApplication";
 import { canCreateManagedAccountRole, requireOperationalRole } from "./authz";
-import { createPublicAuthClient, supabaseAdmin } from "./clients";
+import { supabaseAdmin } from "./clients";
 import {
   coopAdminApplicationExtension,
   createCoopAdminApplicationUploadIntent,
@@ -469,29 +469,6 @@ export const adminAccountsRouter = router({
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to create the account." });
       }
 
-      let inviteLink: string | null = null;
-      let inviteEmailSent = false;
-      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-        type: "recovery",
-        email: input.email,
-        options: { redirectTo },
-      });
-      if (!linkError && linkData?.properties?.action_link) {
-        inviteLink = linkData.properties.action_link;
-        try {
-          // SMTP / Auth rate limits can hang indefinitely; never block account creation on invite mail.
-          const inviteEmailResult = await Promise.race([
-            createPublicAuthClient().auth.resetPasswordForEmail(input.email, { redirectTo }),
-            new Promise<{ error: { message: string } }>((resolve) =>
-              setTimeout(() => resolve({ error: { message: "invite_email_timeout" } }), 4000),
-            ),
-          ]);
-          inviteEmailSent = !inviteEmailResult.error;
-        } catch {
-          inviteEmailSent = false;
-        }
-      }
-
       try {
         await withRequestDatabaseScope(authUser.id, async () => {
           const db = await dbOrThrow();
@@ -542,8 +519,6 @@ export const adminAccountsRouter = router({
 
           const publicRoleName = input.role === "admin" ? "coop_officer"
             : input.role === "seller" ? "seller" : "buyer";
-          const [publicRole] = await db.select({ roleId: users.id }).from(users).limit(0);
-          void publicRole;
           const roleRows = await db.execute(sql`
             select role_id from public.roles where role_name = ${publicRoleName} limit 1
           `);
@@ -552,6 +527,10 @@ export const adminAccountsRouter = router({
           await db.execute(sql`
             insert into public.profiles (user_id, full_name, email, role_id)
             values (${authUser.id}::uuid, ${input.name}, ${input.email}, ${roleId})
+            on conflict (user_id) do update set
+              full_name = excluded.full_name,
+              email = excluded.email,
+              role_id = excluded.role_id
           `);
 
           const [appUser] = await db.select({ id: users.id }).from(users)
@@ -579,10 +558,31 @@ export const adminAccountsRouter = router({
         });
       }
 
-      // Never log inviteLink. Return only when the set-password email did not send.
+      // generateLink can hang when Auth/SMTP is degraded — never block provisioning success on it.
+      let inviteLink: string | null = null;
+      try {
+        const linkResult = await Promise.race([
+          supabaseAdmin.auth.admin.generateLink({
+            type: "recovery",
+            email: input.email,
+            options: { redirectTo },
+          }),
+          new Promise<{ data: null; error: { message: string } }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: { message: "invite_link_timeout" } }), 5000),
+          ),
+        ]);
+        const actionLink = linkResult.data && "properties" in linkResult.data
+          ? linkResult.data.properties?.action_link
+          : null;
+        if (!linkResult.error && actionLink) inviteLink = actionLink;
+      } catch {
+        inviteLink = null;
+      }
+
+      // Never log inviteLink. Return it when available so Add account works without SMTP.
       return {
         success: true,
-        inviteLink: inviteEmailSent ? null : inviteLink,
+        inviteLink,
       };
     }),
 });
