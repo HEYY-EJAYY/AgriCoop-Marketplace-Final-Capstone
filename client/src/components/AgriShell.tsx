@@ -74,6 +74,13 @@ function LoggedOutAuthActions({ source }: { source: string }) {
         href="/auth"
         className="inline-flex min-h-11 items-center rounded-xl px-4 text-sm font-bold text-[#315640] no-underline hover:bg-[#edf3e9]"
         data-testid="nav-login"
+        onClick={event => {
+          // Force a full navigation so /auth?register=1 → /auth always switches mode.
+          if (typeof window !== "undefined" && window.location.pathname === "/auth") {
+            event.preventDefault();
+            goToAuth(source);
+          }
+        }}
       >
         Login
       </Link>
@@ -362,6 +369,13 @@ function HeaderRightActions({
   toggleRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const { user, loading } = useAuth();
+  const [location] = useLocation();
+  const onMarketplace = location === "/marketplace" || location.startsWith("/marketplace?");
+  const cartCountQuery = trpc.cart.count.useQuery(undefined, {
+    enabled: Boolean(user?.role === "buyer"),
+    staleTime: 30_000,
+  });
+  const cartCount = cartCountQuery.data?.count ?? 0;
 
   // While auth resolves, keep logged-out Login/Join visible (same size) so the nav never empties.
   if (loading || !user) {
@@ -376,13 +390,19 @@ function HeaderRightActions({
   return (
     <>
       <div className="hidden shrink-0 items-center gap-1 sm:gap-2 lg:flex">
-        {user.role === "buyer" && (
+        {user.role === "buyer" && !onMarketplace && (
           <Link
             href="/marketplace#order"
             className="relative grid h-11 w-11 place-items-center rounded-xl text-[#315640] hover:bg-[#edf3e9] no-underline"
-            aria-label="Open order basket"
+            aria-label={cartCount ? `Open order basket, ${cartCount} items` : "Open order basket"}
+            data-testid="nav-cart"
           >
             <ShoppingBasket size={18} />
+            {cartCount > 0 && (
+              <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#1f4f36] px-1 text-[10px] font-extrabold text-white">
+                {cartCount > 99 ? "99+" : cartCount}
+              </span>
+            )}
           </Link>
         )}
         <NotificationBell />

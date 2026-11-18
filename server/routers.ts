@@ -82,6 +82,7 @@ import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFIL
 import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
 import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures } from "./part2Routers";
+import { cartRouter } from "./cart";
 import {
   SYSTEM_PAYMENT_QR_BUCKET,
   ensureSystemPaymentSettings,
@@ -344,6 +345,7 @@ async function notifyApprovedOfficers(
 }
 
 export const appRouter = router({
+  cart: cartRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     status: publicProcedure.query(opts => opts.ctx.authResolution),

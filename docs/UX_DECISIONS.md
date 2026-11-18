@@ -174,3 +174,9 @@ This supersedes the earlier assumption that checkout online payment uses the sel
 - One ARIA combobox labeled **Cooperative** (placeholder \"Choose a cooperative\"); no separate search field; no \"(optional)\" in the label. Required for Seller and Cooperative Admin applicants; optional for Buyers.
 - Add-new collects **Address** (street/barangay) and **Location** (municipality/city + province). Server normalizes name+location; exact duplicate blocked; similar name prompts Yes use / No add mine with confirmation flag.
 - Soft delete (deletedAt/deletedBy) for Admin/SuperAdmin only; deleted coops leave pickers but keep historical names on sellers/listings/orders. Sellers with a deleted coop must pick another before publishing.
+
+## Group 1 — cart + auth mode (2026-11-18)
+
+- **Cart persistence:** Marketplace "Your order" was client `useState` only; refresh cleared it. Now `cart.mine` / `setQuantity` / `add` / `merge` / `remove` use `cartItems`. Checkout reads the same server cart. Local leftovers merge once at login via `agricoop-local-cart-leftovers`.
+- **Cart icon:** Buyer basket icon hidden on `/marketplace` (order card present). Mobile marketplace keeps a floating "Your order" button + sheet.
+- **Auth mode:** Login/Join driven by URL (`/auth` vs `/auth?register=1`) so same-route links switch modes; browser Back works.

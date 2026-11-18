@@ -185,6 +185,18 @@ export const productImages = appSchema.table("productImages", {
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
 }, table => [index("productImages_product_order_idx").on(table.productId, table.displayOrder)]);
 
+export const cartItems = appSchema.table("cartItems", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id),
+  productId: integer("productId").notNull().references(() => products.id),
+  quantity: integer("quantity").notNull(),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [
+  uniqueIndex("cart_items_user_product_uidx").on(table.userId, table.productId),
+  index("cart_items_user_id_idx").on(table.userId),
+]);
+
 export const quotations = appSchema.table("quotations", {
   id: serial("id").primaryKey(),
   productId: integer("productId").notNull().references(() => products.id),

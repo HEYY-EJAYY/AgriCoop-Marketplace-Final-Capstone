@@ -609,3 +609,13 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | QA_* signed-in Playwright | Still **MISSING** env vars — authenticated axe/QA create-cleanup deferred |
 | Email for application decisions | **Not implemented** — no app transactional mailer; Auth emails only |
 | DB RLS harness CI | **Green:** https://github.com/HEYY-EJAYY/AgriCoop-Marketplace-Final-Capstone/actions/runs/44239417812 (`7d729cf`) — includes Part 2 applications/archive privilege case. Local vitest **376 passed** / 6 skipped without Docker. |
+
+## Group 1 — cart / nav / auth (2026-11-18)
+
+| Item | Status |
+|------|--------|
+| Server cart (`cartItems` BLOCK 28) | Wired: marketplace + checkout + badge |
+| Typed quantity | CartQuantityInput (blur/Enter, clamp, a11y) |
+| Hide buyer cart on marketplace | Yes; mobile "Your order" FAB |
+| Auth Login/Join URL mode | `/auth` ↔ `/auth?register=1` |
+| Deploy | pending READY this group |

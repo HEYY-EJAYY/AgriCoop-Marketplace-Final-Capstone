@@ -5,8 +5,10 @@ import { trpc } from "@/lib/trpc";
 import { ProductImage } from "@/components/ProductImage";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { ListingOptionBadges } from "@/components/ListingOptionBadges";
-import { CHECKOUT_CART_STORAGE_KEY, hasMinimumOrderStock } from "../../../shared/checkoutCart";
+import { hasMinimumOrderStock } from "../../../shared/checkoutCart";
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
+import { CartQuantityInput } from "@/components/CartQuantityInput";
+import { useBuyerCart } from "@/hooks/useBuyerCart";
 import {
   Check,
   ChevronDown,
@@ -25,25 +27,6 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useSearch } from "wouter";
-
-type CartItem = {
-  productId: number;
-  name: string;
-  unit: string;
-  quantity: number;
-  minOrderQty: number;
-  stockQty: number;
-  priceCents: number;
-  sellerId: number;
-  sellerName: string;
-  cooperativeId: number | null;
-  cooperativeName?: string | null;
-  cooperativeSlug?: string | null;
-  sellerHasOnlineQr?: boolean;
-  allowsPickup: boolean;
-  allowsDelivery: boolean;
-  acceptsOnlinePayment: boolean;
-};
 
 type SortOption = "price_asc" | "price_desc" | "stock_desc" | "cooperative" | "category";
 
@@ -271,7 +254,14 @@ export default function Marketplace() {
   const [, setLocation] = useLocation();
   const params = useMemo(() => parseMarketplaceParams(searchString), [searchString]);
 
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const {
+    items: cart,
+    isCartLoading,
+    add: addCartItem,
+    setQuantity: setCartQuantity,
+    remove: removeCartItem,
+    busy: cartBusy,
+  } = useBuyerCart();
   const [quoteProduct, setQuoteProduct] = useState<{
     id: number;
     name: string;
@@ -283,6 +273,7 @@ export default function Marketplace() {
   const [quoteQty, setQuoteQty] = useState(1);
   const [quoteNote, setQuoteNote] = useState("");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileOrderOpen, setMobileOrderOpen] = useState(false);
 
   const marketplaceInput = useMemo(
     () => ({
@@ -369,38 +360,9 @@ export default function Marketplace() {
     if (!hasMinimumOrderStock(product.stockQty, product.minOrderQty)) {
       return toast.error("This listing does not currently have enough stock to meet its minimum order.");
     }
-    setCart(current => {
-      const existing = current.find(item => item.productId === product.id);
-      if (existing) {
-        return current.map(item =>
-          item.productId === product.id
-            ? { ...item, quantity: Math.min(item.quantity + product.minOrderQty, product.stockQty) }
-            : item,
-        );
-      }
-      return [
-        ...current,
-        {
-          productId: product.id,
-          name: product.name,
-          unit: product.unit,
-          quantity: product.minOrderQty,
-          minOrderQty: product.minOrderQty,
-          stockQty: product.stockQty,
-          priceCents: product.priceCents,
-          sellerId: product.sellerId,
-          sellerName: listing.sellerName || "Verified seller",
-          cooperativeId: product.cooperativeId,
-          cooperativeName: listing.cooperativeName,
-          cooperativeSlug: listing.cooperativeSlug ?? null,
-          sellerHasOnlineQr: listing.sellerHasOnlineQr ?? false,
-          allowsPickup: product.allowsPickup ?? true,
-          allowsDelivery: product.allowsDelivery ?? true,
-          acceptsOnlinePayment: product.acceptsOnlinePayment ?? false,
-        },
-      ];
+    void addCartItem(product.id).then(() => {
+      toast.success(`${product.name} added to your order.`);
     });
-    toast.success(`${product.name} added to your order.`);
   };
 
   const requestQuote = (product: ListingRow["product"]) => {
@@ -439,17 +401,16 @@ export default function Marketplace() {
           : "Only approved Buyer or Farmer accounts can check out.",
       );
     }
-    try {
-      sessionStorage.setItem(
-        CHECKOUT_CART_STORAGE_KEY,
-        JSON.stringify({
-          items: cart,
-        }),
-      );
-      window.location.assign("/checkout");
-    } catch {
-      toast.error("Checkout could not be opened. Please try again.");
+    window.location.assign("/checkout");
+  };
+
+  const commitQuantity = (productId: number, quantity: number, stockQty: number, name: string) => {
+    if (quantity > stockQty) {
+      toast.message(`Only ${stockQty} available`);
     }
+    void setCartQuantity(productId, Math.min(quantity, stockQty)).catch(() => {
+      toast.error(`Could not update ${name}.`);
+    });
   };
 
   useEffect(() => {
@@ -779,10 +740,15 @@ export default function Marketplace() {
             <div className="flex items-center justify-between">
               <h2 className="font-display text-xl font-bold text-[#264f37]">Your order</h2>
               <span className="grid h-7 min-w-7 place-items-center rounded-full bg-[#e5f0df] px-1 text-xs font-extrabold text-[#387047]">
-                {cart.length}
+                {isCartLoading ? "…" : cart.length}
               </span>
             </div>
-            {cart.length ? (
+            {isCartLoading ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-sm text-[#66806b]" role="status">
+                <Loader2 className="animate-spin" size={18} aria-hidden />
+                Loading your order…
+              </div>
+            ) : cart.length ? (
               <>
                 <div className="mt-4 space-y-3">
                   {cart.map(item => (
@@ -791,49 +757,24 @@ export default function Marketplace() {
                         <p className="font-bold text-[#315640]">{item.name}</p>
                         <button
                           type="button"
-                          onClick={() => setCart(cart.filter(x => x.productId !== item.productId))}
+                          onClick={() => void removeCartItem(item.productId)}
                           className="text-[#8c574c]"
                           aria-label={`Remove ${item.name}`}
+                          disabled={cartBusy}
                         >
                           <X size={16} />
                         </button>
                       </div>
-                      <div className="mt-2 flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="grid h-6 w-6 place-items-center rounded bg-white font-bold"
-                            onClick={() =>
-                              setCart(
-                                cart.map(x =>
-                                  x.productId === item.productId
-                                    ? { ...x, quantity: Math.max(x.minOrderQty, x.quantity - x.minOrderQty) }
-                                    : x,
-                                ),
-                              )
-                            }
-                          >
-                            −
-                          </button>
-                          <span className="font-bold">
-                            {item.quantity} {item.unit}
-                          </span>
-                          <button
-                            type="button"
-                            className="grid h-6 w-6 place-items-center rounded bg-white font-bold"
-                            onClick={() =>
-                              setCart(
-                                cart.map(x =>
-                                  x.productId === item.productId
-                                    ? { ...x, quantity: Math.min(x.stockQty, x.quantity + x.minOrderQty) }
-                                    : x,
-                                ),
-                              )
-                            }
-                          >
-                            +
-                          </button>
-                        </div>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                        <CartQuantityInput
+                          productName={item.name}
+                          quantity={item.quantity}
+                          min={item.minOrderQty}
+                          max={item.stockQty}
+                          unit={item.unit}
+                          disabled={cartBusy}
+                          onCommit={next => commitQuantity(item.productId, next, item.stockQty, item.name)}
+                        />
                         <span className="font-bold text-[#315640]">
                           {peso(item.priceCents)} per {item.unit} · {peso(item.priceCents * item.quantity)}
                         </span>
@@ -864,6 +805,81 @@ export default function Marketplace() {
             )}
           </aside>
         </section>
+
+        {canTrade && (
+          <button
+            type="button"
+            className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full bg-[#1f4f36] px-4 py-3 text-sm font-bold text-white shadow-lg xl:hidden"
+            onClick={() => {
+              setMobileOrderOpen(true);
+              document.getElementById("order")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            aria-label={`Open your order${cart.length ? `, ${cart.length} items` : ""}`}
+          >
+            <ShoppingBasket size={18} aria-hidden />
+            Your order{cart.length ? ` (${cart.length})` : ""}
+          </button>
+        )}
+        {mobileOrderOpen && (
+          <div className="fixed inset-0 z-50 xl:hidden">
+            <button
+              type="button"
+              className="absolute inset-0 bg-[#102c1e]/45"
+              aria-label="Close your order"
+              onClick={() => setMobileOrderOpen(false)}
+            />
+            <div className="absolute bottom-0 left-0 right-0 max-h-[80vh] overflow-y-auto rounded-t-[1.5rem] bg-[#fffdf8] p-5 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-xl font-bold text-[#214b35]">Your order</h2>
+                <button
+                  type="button"
+                  className="rounded-lg p-1 text-[#66806b] hover:bg-[#edf3e9]"
+                  onClick={() => setMobileOrderOpen(false)}
+                  aria-label="Close"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              {isCartLoading ? (
+                <p className="mt-6 text-sm text-[#66806b]" role="status">Loading your order…</p>
+              ) : cart.length ? (
+                <div className="mt-4 space-y-3">
+                  {cart.map(item => (
+                    <div key={`mobile-${item.productId}`} className="rounded-xl bg-[#f2f6ef] p-3">
+                      <div className="flex justify-between gap-2">
+                        <p className="font-bold text-[#315640]">{item.name}</p>
+                        <button
+                          type="button"
+                          onClick={() => void removeCartItem(item.productId)}
+                          className="text-[#8c574c]"
+                          aria-label={`Remove ${item.name}`}
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <div className="mt-2">
+                        <CartQuantityInput
+                          productName={item.name}
+                          quantity={item.quantity}
+                          min={item.minOrderQty}
+                          max={item.stockQty}
+                          unit={item.unit}
+                          disabled={cartBusy}
+                          onCommit={next => commitQuantity(item.productId, next, item.stockQty, item.name)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <button type="button" className="agri-button mt-2 w-full text-sm" onClick={submitCart}>
+                    Continue to checkout
+                  </button>
+                </div>
+              ) : (
+                <p className="mt-6 text-sm text-[#718074]">Your order is empty. Add listings from the marketplace.</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {mobileFiltersOpen && (
           <div className="fixed inset-0 z-50 lg:hidden">

@@ -1,6 +1,6 @@
 import type { Session } from "@supabase/supabase-js";
-import { useCallback, useEffect, useState } from "react";
-import { useLocation } from "wouter";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { CooperativeDuplicateNotice } from "@/components/CooperativeDuplicateNotice";
@@ -23,14 +23,21 @@ function isEmailConfirmationError(error: { code?: string; message?: string }) {
   return error.code === "email_not_confirmed" || /email not confirmed/i.test(error.message ?? "");
 }
 
+function registerModeFromSearch(search: string) {
+  const raw = search.startsWith("?") ? search.slice(1) : search;
+  const params = new URLSearchParams(raw);
+  return params.get("register") === "1" || params.get("mode") === "register";
+}
+
 export default function Auth() {
   const [, navigate] = useLocation();
+  const search = useSearch();
   const utils = trpc.useUtils();
-  const [register, setRegister] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const params = new URLSearchParams(window.location.search);
-    return params.get("register") === "1" || params.get("mode") === "register";
-  });
+  const register = useMemo(() => registerModeFromSearch(search), [search]);
+  const setRegister = useCallback((next: boolean) => {
+    // Push history so browser Back switches login ↔ register correctly.
+    navigate(next ? "/auth?register=1" : "/auth");
+  }, [navigate]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");

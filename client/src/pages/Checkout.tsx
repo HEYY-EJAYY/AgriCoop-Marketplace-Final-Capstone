@@ -4,12 +4,11 @@ import { goToAuth } from "@/const";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import {
-  CHECKOUT_CART_STORAGE_KEY,
-  checkoutCartSchema,
   groupCartItemsBySeller,
   type CheckoutCartItem,
 } from "../../../shared/checkoutCart";
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
+import { useBuyerCart } from "@/hooks/useBuyerCart";
 import {
   defaultFulfillmentForPayment,
   fulfillmentOptionsForListings,
@@ -51,21 +50,6 @@ const checkoutAvailabilityFallback: SystemPaymentAvailability = {
   onlineEnabled: false,
   onlineAccountReady: false,
 };
-
-function readCheckoutCart() {
-  try {
-    const raw = sessionStorage.getItem(CHECKOUT_CART_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = checkoutCartSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success) {
-      sessionStorage.removeItem(CHECKOUT_CART_STORAGE_KEY);
-      return null;
-    }
-    return parsed.data;
-  } catch {
-    return null;
-  }
-}
 
 const peso = (cents: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
@@ -395,7 +379,10 @@ function FulfillmentPicker({
 export default function Checkout() {
   const { user, loading } = useAuth();
   const [, setLocation] = useLocation();
-  const [cart] = useState(readCheckoutCart);
+  const { items: cartItems, isCartLoading, remove: removeCartItem } = useBuyerCart();
+  const cart = cartItems.length
+    ? { items: cartItems as CheckoutCartItem[] }
+    : null;
   const sellerMap = useMemo(() => (cart ? groupCartItemsBySeller(cart.items) : new Map()), [cart]);
 
   const availabilityQuery = trpc.systemPayment.getAvailability.useQuery(undefined, {
@@ -444,7 +431,7 @@ export default function Checkout() {
     );
   }, [choices]);
 
-  const canSubmit = Boolean(cart && choices.size === sellerMap.size && allOnlineHaveReceipt && !submitting);
+  const canSubmit = Boolean(cart && choices.size === sellerMap.size && allOnlineHaveReceipt && !submitting && !isCartLoading);
 
   const updateChoice = useCallback((sellerId: number, next: SellerGroupChoice) => {
     setChoices(current => {
@@ -479,7 +466,9 @@ export default function Checkout() {
         });
         createdIds.push(result.orderId);
       }
-      sessionStorage.removeItem(CHECKOUT_CART_STORAGE_KEY);
+      await Promise.all(cart.items.map(item => removeCartItem(item.productId).catch(() => undefined)));
+      void utils.cart.mine.invalidate();
+      void utils.cart.count.invalidate();
       toast.success(
         createdIds.length === 1
           ? "Order submitted. The seller will confirm availability."
@@ -515,7 +504,7 @@ export default function Checkout() {
       <PageFrame>
         <main className={`${shellContainerClass} py-16 text-center`}>
           <h1 className="font-display text-3xl font-bold text-[#244e36]">Sign in to continue checkout</h1>
-          <p className="mt-3 text-[#5c6c60]">Your basket is kept for this browser session.</p>
+          <p className="mt-3 text-[#5c6c60]">Your saved order stays on your account after you sign in.</p>
           <button className="agri-button mt-6" type="button" onClick={() => goToAuth("Checkout")}>
             Sign in
           </button>
@@ -542,12 +531,22 @@ export default function Checkout() {
       </PageFrame>
     );
   }
+  if (isCartLoading) {
+    return (
+      <PageFrame>
+        <main className={`${shellContainerClass} py-16 text-center`} role="status">
+          <Loader2 className="mx-auto animate-spin text-[#4e8257]" size={28} aria-hidden />
+          <h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">Loading your order…</h1>
+        </main>
+      </PageFrame>
+    );
+  }
   if (!cart) {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-16 text-center`}>
-          <h1 className="font-display text-3xl font-bold text-[#244e36]">Your checkout basket is unavailable</h1>
-          <p className="mt-3 text-[#5c6c60]">Return to the marketplace and rebuild your basket. No order was placed.</p>
+          <h1 className="font-display text-3xl font-bold text-[#244e36]">Your checkout basket is empty</h1>
+          <p className="mt-3 text-[#5c6c60]">Return to the marketplace and add items to your order.</p>
           <Link href="/marketplace" className="agri-button mt-6 inline-flex no-underline">
             Browse marketplace
           </Link>

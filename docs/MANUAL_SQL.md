@@ -4083,3 +4083,9 @@ Anon has no UPDATE privilege on `deletedAt` / `deletedBy`.
 **Purpose:** BEFORE UPDATE OF `deletedBy` trigger `trg_guard_products_deleted_by` — `deletedBy` must be NULL or equal `current_app_user_id()` (prevents forging another user's id).
 
 **Applied:** Supabase MCP `product_soft_delete_deleted_by_guard` (2026-11-18).
+
+## BLOCK 28: `20261118180000_buyer_server_cart_items.sql`
+
+**Purpose:** Persistent buyer/seller cart rows in `agricoop_app."cartItems"` (userId, productId, quantity) with owner-only RLS and column-scoped GRANTs. Marketplace "Your order", nav badge, and checkout share this table.
+
+**Applied:** Supabase MCP (2026-11-18).
