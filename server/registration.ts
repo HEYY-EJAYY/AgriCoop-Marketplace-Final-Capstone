@@ -121,12 +121,18 @@ export async function provisionAuthAccount<T>(
 ): Promise<T> {
   try {
     return await provision();
-  } catch {
+  } catch (cause) {
     try {
       await removeAuthUser(authUserId);
     } catch {
       throw new RegistrationCleanupError();
     }
-    throw new RegistrationProvisioningError();
+    const error = new RegistrationProvisioningError();
+    Object.assign(error, {
+      cause,
+      postgresErrorCode: typeof cause === "object" && cause && "code" in cause ? String((cause as { code: unknown }).code) : undefined,
+      causeMessage: cause instanceof Error ? cause.message : String(cause),
+    });
+    throw error;
   }
 }

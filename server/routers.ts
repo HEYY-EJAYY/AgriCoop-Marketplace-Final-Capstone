@@ -392,12 +392,26 @@ export const appRouter = router({
           );
         } catch (error) {
           const cleanupFailed = error instanceof RegistrationCleanupError;
+          const cause = error instanceof Error ? error.cause : undefined;
           console.error("[registration] provisioning_failed", {
             correlationId,
             cleanupFailed,
             errorType: error instanceof Error ? error.name : "UnknownError",
             message: error instanceof Error ? error.message : "unknown",
-            postgresErrorCode: typeof error === "object" && error && "code" in error ? String((error as { code: unknown }).code) : undefined,
+            causeType: cause instanceof Error ? cause.name : typeof cause,
+            causeMessage: cause instanceof Error
+              ? cause.message
+              : typeof error === "object" && error && "causeMessage" in error
+                ? String((error as { causeMessage: unknown }).causeMessage)
+                : undefined,
+            postgresErrorCode: typeof error === "object" && error && "postgresErrorCode" in error
+              ? String((error as { postgresErrorCode: unknown }).postgresErrorCode)
+              : typeof cause === "object" && cause && "code" in cause
+                ? String((cause as { code: unknown }).code)
+                : undefined,
+            databasePhase: typeof cause === "object" && cause && "databasePhase" in cause
+              ? String((cause as { databasePhase: unknown }).databasePhase)
+              : undefined,
           });
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
