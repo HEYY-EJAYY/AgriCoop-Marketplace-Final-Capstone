@@ -6,6 +6,49 @@ Updated: 2026-11-18
 
 ---
 
+## Production hotfix — login / signup / cooperatives (2026-11-18)
+
+### Issue 1 — Login denied after Supabase Auth (BLOCKER)
+
+| | |
+|--|--|
+| **Symptom** | “Supabase sign-in succeeded, but the application database denied access…” for every role |
+| **Root cause** | BLOCK 17 revoked `authenticated`/`anon` SELECT on `users.onlinePayment*`. Login lookup `loadAuthIdentityRecords` still selected `onlinePaymentQrPath` under `set_config(role=authenticated)` → Postgres `42501` → `application_database_access_denied` |
+| **Privilege proof** | `has_column_privilege(authenticated, users.onlinePaymentQrPath, SELECT)=false`; login columns (`openId`,`role`,`profileImageUrl`) remain `true` |
+| **Fix** | Code-only: omit seller payment columns from login SELECT. **Do not** re-GRANT payment columns |
+| **Statements** | Migration `20261118041000_login_lookup_no_payment_columns.sql` (notice guard only). See `docs/MANUAL_SQL.md` BLOCK 18 |
+
+### Issue 2 — Create account fails (BLOCKER)
+
+| | |
+|--|--|
+| **Symptom** | “Unable to start registration. Please try again later.” |
+| **Root cause** | (1) `auth.signUp` blocked on SMTP / hit Vercel 30s timeout; (2) Auth `429 over_email_send_rate_limit`; (3) earlier production hostname briefly served a preview deploy missing `DATABASE_URL` so provisioning hung after Auth succeeded |
+| **Fix** | `admin.createUser({ email_confirm: false })` → provision app user + `profiles` → best-effort `auth.resend` for confirmation. Correlation ID `(ref: reg_…)` on all failure paths; rate-limited confirmation is deferred (not a hard fail) |
+| **Dashboard** | If confirmation emails stay deferred: Supabase Auth → Rate Limits / custom SMTP. Env names only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
+
+### Issue 3 — Cooperative missing on marketplace
+
+| | |
+|--|--|
+| **Symptom** | Cooperative name / filter missing on cards |
+| **Root cause** | (1) broken preview alias made API fail; (2) filter was derived only from current listing page, so coops with zero published products (e.g. SUTAFACO) never appeared |
+| **DB proof** | `anon` has table/column SELECT on `cooperatives.name` / `normalizedName` |
+| **Fix** | Keep marketplace join `cooperativeName`; filter uses `cooperatives.listActive` catalog (fallback to listing-derived names) |
+
+### Tests / gates
+
+| Gate | Result |
+|------|--------|
+| `pnpm lint` / `pnpm test` / `pnpm build` | **pass** (355 passed, 4 skipped locally without Docker) |
+| Login SELECT contract | `server/authLoginLookup.test.ts` |
+| Registration correlation + admin createUser | `server/registration.test.ts` |
+| CI Postgres RLS | `.github/workflows/db-rls-harness.yml` + `scripts/db-test/*` (Docker not installed on this agent host; CI runs throwaway Postgres) |
+| Harness asserts | login columns granted; payment columns denied; anon coop name/slug readable; profile INSERT for authenticated |
+| Production deploy | *(filled after production-target READY)* |
+
+---
+
 ## UI consistency — boxed marketing + public nav (2026-11-18)
 
 ### Visual changes (DESIGN FREEZE inventory)

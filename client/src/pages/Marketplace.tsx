@@ -296,6 +296,8 @@ export default function Marketplace() {
   const { data: listings = [], isLoading } = listingsQuery;
   const categoriesQuery = trpc.marketplace.categories.useQuery(undefined, { staleTime: 5 * 60_000 });
   const { data: categories = [] } = categoriesQuery;
+  const cooperativesQuery = trpc.cooperatives.listActive.useQuery(undefined, { staleTime: 5 * 60_000 });
+  const { data: cooperativeCatalog = [] } = cooperativesQuery;
 
   const quoteMutation = trpc.quotations.request.useMutation({
     onSuccess: () => {
@@ -308,6 +310,13 @@ export default function Marketplace() {
   });
 
   const cooperatives = useMemo(() => {
+    // Prefer the full active cooperative catalog so filters stay complete even when
+    // a coop temporarily has no published listings (cards still use listing.cooperativeName).
+    if (cooperativeCatalog.length) {
+      return cooperativeCatalog
+        .map(coop => ({ id: coop.id, name: coop.name }))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    }
     const map = new Map<number, string>();
     for (const listing of listings) {
       const id = listing.product.cooperativeId;
@@ -317,7 +326,7 @@ export default function Marketplace() {
     return Array.from(map.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  }, [listings]);
+  }, [cooperativeCatalog, listings]);
 
   const processedListings = useMemo(() => {
     const filtered = filterListings(listings as ListingRow[], params);

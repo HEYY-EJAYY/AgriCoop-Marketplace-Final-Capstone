@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  signUp: vi.fn(),
+  createUser: vi.fn(),
   resend: vi.fn(),
   deleteUser: vi.fn(),
   getDb: vi.fn(),
@@ -10,8 +10,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./clients", () => ({
-  createPublicAuthClient: () => ({ auth: { signUp: mocks.signUp, resend: mocks.resend } }),
-  supabaseAdmin: { auth: { admin: { deleteUser: mocks.deleteUser } } },
+  createPublicAuthClient: () => ({ auth: { resend: mocks.resend } }),
+  supabaseAdmin: { auth: { admin: { createUser: mocks.createUser, deleteUser: mocks.deleteUser } } },
 }));
 
 vi.mock("./db", async importOriginal => {
@@ -64,7 +64,6 @@ function newAuthSignup() {
         identities: [{ id: "identity-1" }],
         email_confirmed_at: null,
       },
-      session: null,
     },
     error: null,
   };
@@ -83,8 +82,8 @@ function registrationDb(roleRows: Array<{ roleId: number; roleName: string }>, p
 describe("public registration role policy and verification", () => {
   beforeEach(() => {
     vi.stubEnv("APP_URL", "https://market.example.test");
-    mocks.signUp.mockReset();
-    mocks.resend.mockReset();
+    mocks.createUser.mockReset();
+    mocks.resend.mockReset().mockResolvedValue({ error: null });
     mocks.deleteUser.mockReset().mockResolvedValue({ error: null });
     mocks.upsertUser.mockReset().mockResolvedValue(undefined);
     mocks.withRequestDatabaseScope.mockReset().mockImplementation((_authUserId, callback) => callback());
@@ -122,7 +121,7 @@ describe("public registration role policy and verification", () => {
   });
 
   it("starts Supabase email confirmation without auto-confirming or returning auth tokens", async () => {
-    mocks.signUp.mockResolvedValue(newAuthSignup());
+    mocks.createUser.mockResolvedValue(newAuthSignup());
     const profileValues = vi.fn().mockResolvedValue(undefined);
     mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 48, roleName: "seller" }], profileValues));
     const caller = appRouter.createCaller(publicContext());
@@ -134,13 +133,16 @@ describe("public registration role policy and verification", () => {
       role: "seller",
     });
 
-    expect(mocks.signUp).toHaveBeenCalledWith({
+    expect(mocks.createUser).toHaveBeenCalledWith({
       email: "seller@example.test",
       password: "example-password",
-      options: {
-        data: { name: "Example Seller" },
-        emailRedirectTo: "https://market.example.test/auth?verification=success",
-      },
+      email_confirm: false,
+      user_metadata: { name: "Example Seller" },
+    });
+    expect(mocks.resend).toHaveBeenCalledWith({
+      type: "signup",
+      email: "seller@example.test",
+      options: { emailRedirectTo: "https://market.example.test/auth?verification=success" },
     });
     expect(mocks.upsertUser).toHaveBeenCalledWith(expect.objectContaining({
       openId: "new-auth-user",
@@ -161,7 +163,7 @@ describe("public registration role policy and verification", () => {
   it("provisions a Buyer with the server-selected approved role and canonical role ID", async () => {
     const signup = newAuthSignup();
     signup.data.user.email = "buyer@example.test";
-    mocks.signUp.mockResolvedValue(signup);
+    mocks.createUser.mockResolvedValue(signup);
     const profileValues = vi.fn().mockResolvedValue(undefined);
     mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 47, roleName: "buyer" }], profileValues));
 
@@ -188,7 +190,7 @@ describe("public registration role policy and verification", () => {
   });
 
   it("fails closed and removes the Auth identity when a public registration role is ambiguous", async () => {
-    mocks.signUp.mockResolvedValue(newAuthSignup());
+    mocks.createUser.mockResolvedValue(newAuthSignup());
     mocks.getDb.mockResolvedValue(registrationDb([
       { roleId: 47, roleName: "seller" },
       { roleId: 48, roleName: "seller" },
@@ -205,7 +207,7 @@ describe("public registration role policy and verification", () => {
   });
 
   it("rejects a requested role that conflicts with the canonical public role", async () => {
-    mocks.signUp.mockResolvedValue(newAuthSignup());
+    mocks.createUser.mockResolvedValue(newAuthSignup());
     mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 47, roleName: "buyer" }]));
 
     await expect(appRouter.createCaller(publicContext("192.0.2.12")).auth.register({
@@ -220,12 +222,9 @@ describe("public registration role policy and verification", () => {
   });
 
   it("does not provision an application profile for an existing Auth identity", async () => {
-    mocks.signUp.mockResolvedValue({
-      data: {
-        user: { id: "existing-auth-user", email: "buyer@example.test", identities: [], email_confirmed_at: null },
-        session: null,
-      },
-      error: null,
+    mocks.createUser.mockResolvedValue({
+      data: { user: null },
+      error: { code: "email_exists", message: "User already registered", name: "AuthApiError" },
     });
 
     const result = await appRouter.createCaller(publicContext()).auth.register({
@@ -240,10 +239,9 @@ describe("public registration role policy and verification", () => {
   });
 
   it("fails closed and removes a new Auth user if email confirmation is disabled", async () => {
-    mocks.signUp.mockResolvedValue({
+    mocks.createUser.mockResolvedValue({
       data: {
         user: { id: "auto-confirmed-user", email: "buyer@example.test", identities: [{ id: "identity-1" }], email_confirmed_at: "2026-01-01T00:00:00Z" },
-        session: {},
       },
       error: null,
     });
@@ -257,6 +255,25 @@ describe("public registration role policy and verification", () => {
 
     expect(mocks.deleteUser).toHaveBeenCalledWith("auto-confirmed-user");
     expect(mocks.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("keeps registration successful when confirmation email is deferred by rate limits", async () => {
+    mocks.createUser.mockResolvedValue(newAuthSignup());
+    mocks.resend.mockResolvedValue({
+      error: { code: "over_email_send_rate_limit", message: "email rate limit exceeded", name: "AuthApiError" },
+    });
+    const profileValues = vi.fn().mockResolvedValue(undefined);
+    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 48, roleName: "seller" }], profileValues));
+
+    const result = await appRouter.createCaller(publicContext("192.0.2.77")).auth.register({
+      email: "seller-rate-limit@example.test",
+      password: "example-password",
+      name: "Example Seller",
+      role: "seller",
+    });
+
+    expect(result).toEqual({ success: true, verificationRequired: true });
+    expect(mocks.upsertUser).toHaveBeenCalled();
   });
 
   it("denies operational tRPC procedures to an unverified request context", async () => {

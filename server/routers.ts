@@ -287,30 +287,64 @@ export const appRouter = router({
           throw error;
         }
 
-        const authClient = createPublicAuthClient();
-        const { data, error } = await authClient.auth.signUp({
+        const correlationId = `reg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        let emailRedirectTo: string;
+        try {
+          emailRedirectTo = getEmailVerificationRedirectUrl(process.env.APP_URL);
+        } catch (configError) {
+          console.error("[registration] redirect_config_invalid", {
+            correlationId,
+            errorType: configError instanceof Error ? configError.name : "UnknownError",
+            message: configError instanceof Error ? configError.message : "unknown",
+          });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Unable to start registration. Please try again later. (ref: ${correlationId})`,
+          });
+        }
+        // Prefer admin.createUser (email_confirm:false) so Auth account creation does not block on
+        // SMTP delivery. Public signUp previously hung past the Vercel 30s limit under email
+        // rate-limit / slow SMTP, surfacing only as "Unable to start registration".
+        const { data, error } = await supabaseAdmin.auth.admin.createUser({
           email: input.email,
           password: input.password,
-          options: {
-            data: { name: input.name },
-            emailRedirectTo: getEmailVerificationRedirectUrl(process.env.APP_URL),
-          },
+          email_confirm: false,
+          user_metadata: { name: input.name },
         });
         if (error) {
           if (isDuplicateSignupError(error)) return { success: true, verificationRequired: true };
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to start registration. Please try again later." });
+          const errorCode = "code" in error ? String(error.code) : "unknown";
+          const isEmailRateLimited = errorCode === "over_email_send_rate_limit"
+            || /rate limit|only request this after/i.test(error.message);
+          console.error("[registration] signup_failed", {
+            correlationId,
+            errorType: error.name ?? "AuthError",
+            errorCode,
+            status: "status" in error ? Number(error.status) : undefined,
+            message: error.message,
+          });
+          throw new TRPCError({
+            code: isEmailRateLimited ? "TOO_MANY_REQUESTS" : "INTERNAL_SERVER_ERROR",
+            message: isEmailRateLimited
+              ? `Too many verification emails were requested. Wait a few minutes, then try again or use Resend verification. (ref: ${correlationId})`
+              : `Unable to start registration. Please try again later. (ref: ${correlationId})`,
+          });
         }
         const createdAuthUser = data.user;
         if (!createdAuthUser) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unable to start registration. Please try again later." });
+          console.error("[registration] signup_missing_user", { correlationId });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Unable to start registration. Please try again later. (ref: ${correlationId})`,
+          });
         }
-        if (createdAuthUser.identities?.length === 0) return { success: true, verificationRequired: true };
-        if (data.session || isVerifiedSupabaseEmail(createdAuthUser)) {
+        if (isVerifiedSupabaseEmail(createdAuthUser)) {
           try {
             const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(createdAuthUser.id);
             if (deleteError) throw deleteError;
           } catch (deleteError) {
             console.error("[registration] Could not remove an account created without email confirmation", {
+              correlationId,
               errorType: deleteError instanceof Error ? deleteError.name : "UnknownError",
             });
           }
@@ -358,16 +392,33 @@ export const appRouter = router({
           );
         } catch (error) {
           const cleanupFailed = error instanceof RegistrationCleanupError;
-          if (cleanupFailed) {
-            console.error("[registration] Auth cleanup failed after profile provisioning error", {
-              errorType: error.name,
-            });
-          }
+          console.error("[registration] provisioning_failed", {
+            correlationId,
+            cleanupFailed,
+            errorType: error instanceof Error ? error.name : "UnknownError",
+            message: error instanceof Error ? error.message : "unknown",
+            postgresErrorCode: typeof error === "object" && error && "code" in error ? String((error as { code: unknown }).code) : undefined,
+          });
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: cleanupFailed
-              ? "Registration could not be completed. Contact support before trying again."
-              : "Registration setup failed and the incomplete account was removed. Please try again.",
+              ? `Registration could not be completed. Contact support before trying again. (ref: ${correlationId})`
+              : `Registration setup failed and the incomplete account was removed. Please try again. (ref: ${correlationId})`,
+          });
+        }
+        // Send confirmation after provisioning so a slow/rate-limited SMTP path cannot
+        // leave an orphan Auth user without an application profile.
+        const { error: confirmEmailError } = await createPublicAuthClient().auth.resend({
+          type: "signup",
+          email: input.email,
+          options: { emailRedirectTo },
+        });
+        if (confirmEmailError) {
+          const errorCode = "code" in confirmEmailError ? String(confirmEmailError.code) : "unknown";
+          console.warn("[registration] confirmation_email_deferred", {
+            correlationId,
+            errorCode,
+            message: confirmEmailError.message,
           });
         }
         return { success: true, verificationRequired: true };

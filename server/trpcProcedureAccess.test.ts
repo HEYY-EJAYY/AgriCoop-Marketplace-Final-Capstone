@@ -57,7 +57,6 @@ function caller(role: "buyer" | "seller" | "admin" | "superadmin" | null, id = 5
           phone: null,
           address: null,
           profileImageUrl: null,
-          onlinePaymentQrPath: role === "seller" ? "50/qr.png" : null,
           name: role,
           email: `${role}@example.test`,
         }

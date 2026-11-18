@@ -252,7 +252,9 @@ async function loadAuthIdentityRecords(authUserId: string) {
       phone: users.phone,
       address: users.address,
       profileImageUrl: users.profileImageUrl,
-      onlinePaymentQrPath: users.onlinePaymentQrPath,
+      // Intentionally omit seller onlinePayment* columns — BLOCK 17 revoked
+      // authenticated/anon SELECT on those fields; selecting them returns 42501
+      // and blocks every login after Supabase Auth succeeds.
     }).from(users)
       .where(eq(users.openId, authUserId))
       .limit(2));

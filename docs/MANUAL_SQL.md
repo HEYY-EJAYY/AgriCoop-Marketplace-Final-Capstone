@@ -3429,3 +3429,41 @@ DROP POLICY IF EXISTS seller_payment_qr_owner_select ON storage.objects;
 ```
 
 Verification: three `systemPayment*` tables present; bucket `system-payment-qr` private; seller online-payment column grants revoked; seller QR storage policies dropped; columns not dropped.
+
+## BLOCK 18 — Login lookup must not select revoked seller payment columns
+
+**Root cause (production login outage):** After BLOCK 17 revoked `authenticated`/`anon` SELECT on
+`agricoop_app.users.onlinePaymentQrPath` (and related seller payment columns), the post-sign-in
+application lookup (`getUserByVerifiedAuthId` → `loadAuthIdentityRecords`) still selected
+`onlinePaymentQrPath` under `set_config('role','authenticated')`. Postgres raised `42501`, which
+the app mapped to `application_database_access_denied` for every role.
+
+**Fix:** Code-only — omit seller `onlinePayment*` columns from the login SELECT. Do **not** re-GRANT
+those columns (sellers must still be unable to read seller payment data via the app DB role).
+
+**Migration:** `supabase/migrations/20261118041000_login_lookup_no_payment_columns.sql` (notice-only guard; no privilege restore).
+
+```sql
+-- Informational guard only (no GRANT restore of payment columns)
+DO $$
+BEGIN
+  IF has_column_privilege('authenticated', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT')
+     OR has_column_privilege('anon', 'agricoop_app.users', 'onlinePaymentQrPath', 'SELECT') THEN
+    RAISE NOTICE 'BLOCK 18 note: onlinePaymentQrPath is still SELECT-able by authenticated/anon; keep seller payment data closed.';
+  ELSE
+    RAISE NOTICE 'BLOCK 18 ok: onlinePaymentQrPath remains revoked for authenticated/anon.';
+  END IF;
+END $$;
+```
+
+**Verification:** `has_column_privilege` remains false for payment columns; login SELECT columns (`openId`, `role`, `profileImageUrl`, …) remain true for `authenticated`; real login succeeds for Buyer/Seller/Admin/SuperAdmin.
+
+## BLOCK 18b — Registration: create Auth user without blocking on SMTP
+
+**Root cause (create-account failures):** Production/runtime logs showed `auth.register` hitting the Vercel 30s timeout while Supabase Auth `/signup` either:
+1. completed slowly then left provisioning stranded on a broken preview alias without `DATABASE_URL`, or
+2. returned `429 over_email_send_rate_limit` (email rate limit), which the app previously mapped to a generic “Unable to start registration” with no correlation ID.
+
+**Fix (code):** `auth.register` now uses `supabaseAdmin.auth.admin.createUser({ email_confirm: false })`, provisions the application user + `public.profiles` row, then best-effort `auth.resend({ type: "signup" })` for the confirmation email. Rate-limited confirmation emails are logged with a correlation ID and do not roll back a completed provision; users can use Resend verification. Friendly errors include `(ref: <correlationId>)`.
+
+**Dashboard (if emails stay deferred):** Supabase Auth → Rate Limits / SMTP — raise email send rate or configure custom SMTP. Env vars involved by name only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
