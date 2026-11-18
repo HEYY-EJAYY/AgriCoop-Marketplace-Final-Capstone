@@ -343,6 +343,10 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
       const [row] = await sql`
         select
           has_column_privilege('authenticated', 'agricoop_app.products', 'status', 'UPDATE') as status_upd,
+          has_column_privilege('authenticated', 'agricoop_app.products', 'visibility', 'UPDATE') as visibility_upd,
+          has_column_privilege('authenticated', 'agricoop_app.products', 'deletedAt', 'UPDATE') as deleted_at_upd,
+          has_column_privilege('authenticated', 'agricoop_app.products', 'deletedBy', 'UPDATE') as deleted_by_upd,
+          has_column_privilege('anon', 'agricoop_app.products', 'deletedAt', 'UPDATE') as anon_deleted_at_upd,
           exists(
             select 1 from information_schema.columns
             where table_schema = 'agricoop_app'
@@ -351,8 +355,12 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
           ) as products_deleted_at
       `;
       expect(row.status_upd).toBe(true);
-      // Archive is modeled via products.status, not a deletedAt tombstone column.
-      expect(row.products_deleted_at).toBe(false);
+      expect(row.visibility_upd).toBe(true);
+      // BLOCK 26: soft Delete uses deletedAt/deletedBy tombstones (+ status/visibility).
+      expect(row.products_deleted_at).toBe(true);
+      expect(row.deleted_at_upd).toBe(true);
+      expect(row.deleted_by_upd).toBe(true);
+      expect(row.anon_deleted_at_upd).toBe(false);
     } finally {
       await sql.end({ timeout: 5 });
     }
