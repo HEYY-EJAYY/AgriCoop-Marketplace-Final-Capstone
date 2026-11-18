@@ -58,15 +58,22 @@ test.describe("home hero layout and width", () => {
     });
     expect(Math.abs(padding.left - padding.right)).toBeLessThanOrEqual(1);
 
-    // Full-bleed sections match layout viewport (clientWidth accounts for scrollbar-gutter)
+    // Full-bleed sections span the visual viewport (innerWidth); clientWidth may exclude scrollbar-gutter.
     if (testInfo.project.name.startsWith("desktop")) {
-      const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
-      expect(Math.abs(heroBox.width - clientWidth)).toBeLessThanOrEqual(2);
+      const widths = await page.evaluate(() => ({
+        clientWidth: document.documentElement.clientWidth,
+        innerWidth: window.innerWidth,
+      }));
+      const heroMatches =
+        Math.abs(heroBox.width - widths.clientWidth) <= 2 || Math.abs(heroBox.width - widths.innerWidth) <= 2;
+      expect(heroMatches).toBe(true);
       const bands = page.locator("[data-full-bleed]");
       const count = await bands.count();
       for (let i = 0; i < count; i += 1) {
         const width = await bands.nth(i).evaluate(el => el.getBoundingClientRect().width);
-        expect(Math.abs(width - clientWidth)).toBeLessThanOrEqual(2);
+        const matches =
+          Math.abs(width - widths.clientWidth) <= 2 || Math.abs(width - widths.innerWidth) <= 2;
+        expect(matches).toBe(true);
       }
 
       // Two-column: image must not intersect text column
