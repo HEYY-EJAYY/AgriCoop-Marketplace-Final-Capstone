@@ -13,7 +13,7 @@ Updated: 2026-11-18 (Phase 1–3 credit-limited finish)
 | Seller Active/Archived + Archive / Unarchive / soft Delete | PASS (UI tabs + `products.unarchive` / `products.softDelete`; BLOCK 26 `deletedAt`) |
 | Admin/SuperAdmin delete any listing | PASS (`admin.deleteListing` + Moderation “All listings”) |
 | Buyer My Orders archive | PASS (`/activity` Active/Archived) |
-| Add account (no passwords shown) | PASS after invite SMTP timeout guard (was 504) |
+| Add account (no passwords shown) | PASS — was 504 pool deadlock (nested `withRequestDatabaseScope`); excluded like `auth.register`; live 200 in ~1.2s with inviteLink |
 | Cooperative Admin apply + SA approve | PASS (prior ship; soft-delete authz still enforced) |
 | Persistent cart | PASS (unchanged client cart) |
 | Seed Cassava #10 | Restored to `published` after smoke archive |
