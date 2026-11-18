@@ -329,7 +329,8 @@ function MobileBottomNav() {
   const { user } = useAuth();
   const [location] = useLocation();
   const loggedIn = !!user;
-  const items = mobileBottomNav(user?.role, loggedIn);
+  const onMarketplace = location === "/marketplace" || location.startsWith("/marketplace?");
+  const items = mobileBottomNav(user?.role, loggedIn).filter(item => !(onMarketplace && item.key === "cart"));
 
   return (
     <nav
@@ -359,6 +360,32 @@ function MobileBottomNav() {
   );
 }
 
+function BuyerCartLink() {
+  const [location] = useLocation();
+  const onMarketplace = location === "/marketplace" || location.startsWith("/marketplace?");
+  const cartCountQuery = trpc.cart.count.useQuery(undefined, {
+    enabled: true,
+    staleTime: 30_000,
+  });
+  const cartCount = cartCountQuery.data?.count ?? 0;
+  if (onMarketplace) return null;
+  return (
+    <Link
+      href="/marketplace#order"
+      className="relative grid h-11 w-11 place-items-center rounded-xl text-[#315640] hover:bg-[#edf3e9] no-underline"
+      aria-label={cartCount ? `Open order basket, ${cartCount} items` : "Open order basket"}
+      data-testid="nav-cart"
+    >
+      <ShoppingBasket size={18} />
+      {cartCount > 0 && (
+        <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#1f4f36] px-1 text-[10px] font-extrabold text-white">
+          {cartCount > 99 ? "99+" : cartCount}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 function HeaderRightActions({
   menuOpen,
   onToggleMenu,
@@ -369,13 +396,6 @@ function HeaderRightActions({
   toggleRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const { user, loading } = useAuth();
-  const [location] = useLocation();
-  const onMarketplace = location === "/marketplace" || location.startsWith("/marketplace?");
-  const cartCountQuery = trpc.cart.count.useQuery(undefined, {
-    enabled: Boolean(user?.role === "buyer"),
-    staleTime: 30_000,
-  });
-  const cartCount = cartCountQuery.data?.count ?? 0;
 
   // While auth resolves, keep logged-out Login/Join visible (same size) so the nav never empties.
   if (loading || !user) {
@@ -390,21 +410,7 @@ function HeaderRightActions({
   return (
     <>
       <div className="hidden shrink-0 items-center gap-1 sm:gap-2 lg:flex">
-        {user.role === "buyer" && !onMarketplace && (
-          <Link
-            href="/marketplace#order"
-            className="relative grid h-11 w-11 place-items-center rounded-xl text-[#315640] hover:bg-[#edf3e9] no-underline"
-            aria-label={cartCount ? `Open order basket, ${cartCount} items` : "Open order basket"}
-            data-testid="nav-cart"
-          >
-            <ShoppingBasket size={18} />
-            {cartCount > 0 && (
-              <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#1f4f36] px-1 text-[10px] font-extrabold text-white">
-                {cartCount > 99 ? "99+" : cartCount}
-              </span>
-            )}
-          </Link>
-        )}
+        {user.role === "buyer" && <BuyerCartLink />}
         <NotificationBell />
         <ProfileMenu />
       </div>
@@ -519,6 +525,7 @@ export function WorkspaceHeader({ title, description, children }: { title: strin
             <LoggedOutAuthActions source="WorkspaceHeader" />
           ) : (
             <>
+              {user.role === "buyer" && <BuyerCartLink />}
               <NotificationBell />
               <ProfileMenu />
               {children}
