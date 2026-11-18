@@ -135,6 +135,7 @@ describe("public registration role policy and verification", () => {
       role: "coop_admin",
       newCooperativeName: "New Farm Coop",
       newCooperativeLocation: "Butuan City",
+      newCooperativeAddress: "Purok 1, Brgy. Sample",
     }).success).toBe(true);
     expect(publicRegistrationInputSchema.safeParse({ ...sellerRegistration, role: "admin" }).success).toBe(false);
     expect(publicRegistrationInputSchema.safeParse({
