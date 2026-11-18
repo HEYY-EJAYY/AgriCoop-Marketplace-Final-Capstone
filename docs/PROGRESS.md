@@ -110,4 +110,13 @@
 - **Not verified:** Documentation does not represent live database, production, browser, or assistive-technology validation.
 - **Manual action:** Review the read-only previews and follow the local CI/browser checks listed in the final report before applying SQL or pushing.
 
-Stage 8 remains pending: the defense guide has not been authored.
+## Stage 8 — Defense guide
+
+**Status:** DONE
+
+- **Files changed:** `docs/DEFENSE_GUIDE.md`, `docs/FINAL_REPORT.md`, `docs/PROGRESS.md`.
+- **Deliverables:** Added a code-referenced architecture and Mermaid diagram, feature-to-code trace, schema overview, role matrix, security caveats, incident/defect history, test counts and gaps, limitations, 65 short panel Q&As (including the Philippine Data Privacy Act of 2012 and ID-image handling), and 15 "show me in the code" challenges.
+- **Accuracy boundary:** The guide distinguishes source-level intent from live database/deployment proof. It documents the unrun RLS/browser checks, manual payment model, unverified provider quotas, and lack of a WCAG or DPA compliance claim.
+- **Verified:** Source references point to current code and repository docs; question/challenge counts match the requested minimum; final report remains under 40 lines.
+- **Not verified:** Production data, effective database role/RLS, Storage policies, Auth/Vercel configuration, payment processing, accessibility conformance, and real-user outcomes.
+- **Manual action:** Use the guide for discussion, but describe the listed verification gaps honestly and complete release gates in an approved test environment.

@@ -12,7 +12,7 @@
 | 5 | PARTIAL | RLS harness and guards added; 14 Postgres tests skipped without `TEST_DATABASE_URL`. Security review found no issues. |
 | 6 | PARTIAL | Local-only Playwright cases added and discovered; browser execution not performed. |
 | 7 | DONE | Manual SQL, progress, UX assumptions, and accessibility gaps documented. |
-| 8 | PARTIAL | Defense guide not yet completed. |
+| 8 | DONE | Code-referenced defense guide, 65 panel questions, and 15 code challenges added. |
 
 ## SQL to review and run manually
 Apply only after each block's read-only preview matches the live catalog; run in this order from [MANUAL_SQL.md](./MANUAL_SQL.md):
