@@ -473,6 +473,7 @@ export const adminAccountsRouter = router({
         await withRequestDatabaseScope(authUser.id, async () => {
           const db = await dbOrThrow();
           let cooperativeId: number | null = null;
+          // Must use the request-scoped tx — a second pool checkout deadlocks under max=1.
           await upsertUser({
             openId: authUser.id,
             email: input.email,
@@ -481,7 +482,7 @@ export const adminAccountsRouter = router({
             approvalStatus: input.role === "seller" ? "pending" : "approved",
             cooperativeId: null,
             loginMethod: "supabase",
-          } as any, undefined, input.role === "admin" ? undefined : { intent: input.role });
+          } as any, db, input.role === "admin" ? undefined : { intent: input.role });
 
           // Admin role upsert bypasses public registration plan — write explicitly.
           if (input.role === "admin") {
