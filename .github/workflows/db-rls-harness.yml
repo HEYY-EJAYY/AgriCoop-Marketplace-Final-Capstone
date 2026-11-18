@@ -74,9 +74,11 @@ jobs:
             server/paymentGrantContract.test.ts \
             server/registrationScope.test.ts \
             | tee harness-output.txt
-          summary="$(grep -E 'Tests[[:space:]]+[0-9]+' harness-output.txt | tail -n 1 || true)"
+          # Strip ANSI so grep matches Vitest summary lines reliably.
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' harness-output.txt > harness-plain.txt
+          summary="$(grep -E 'Tests[[:space:]]+[0-9]+' harness-plain.txt | tail -n 1 || true)"
           echo "HARNESS_VITEST_SUMMARY=$summary"
-          executed="$(grep -E '✓|PASS' harness-output.txt | grep -cE '✓' || true)"
+          executed="$(grep -cE '^ ✓ ' harness-plain.txt || true)"
           echo "HARNESS_EXECUTED_PASS_LINES=$executed"
           # Require DB-backed assertions to have executed (not skipped).
           if ! grep -q "keeps login columns readable and seller payment columns denied" harness-output.txt; then
