@@ -1423,7 +1423,8 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
         const db = await dbOrThrow();
-        await db.update(products).set({ status: "archived" }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id)));
+        const archived = await db.update(products).set({ status: "archived" }).where(and(eq(products.id, input.id), eq(products.sellerId, seller.id))).returning({ id: products.id });
+        if (!archived.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
         return { success: true };
       }),
   }),

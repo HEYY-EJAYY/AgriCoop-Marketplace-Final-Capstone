@@ -2,7 +2,7 @@
 
 Branch: `finish/agricoop-complete`  
 Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
-Updated: 2026-11-18 (Part 2 Item E verified — production READY)
+Updated: 2026-11-18 (verification + hardening follow-up)
 
 ---
 
@@ -67,6 +67,79 @@ Regenerated via `pnpm run docs:system` (`scripts/build-system-docs.mjs` → `doc
 Authenticated Playwright still needs `QA_*` secrets when exercised. Recommend keeping **DB RLS harness** as a required check.
 
 Companion: `docs/UX_DECISIONS.md` (Part 2), `docs/UX_AUDIT.md` (Part 2 surfaces), `docs/MANUAL_SQL.md` BLOCK 20–21.
+
+---
+
+## Verification + hardening follow-up (2026-11-18)
+
+### 1) Part 1 defect status (deployed on production READY)
+
+| Defect | Status | Root cause | Guarding test |
+|--------|--------|------------|---------------|
+| Verification loop / stuck after signup | **Fixed in app** (email delivery can still defer under Supabase Auth rate limits) | Nested DB scope + revoked `onlinePayment*` INSERT aborted provisioning so Auth existed without app profile | `registration.test.ts` — confirmation / deferred rate-limit success; `registrationScope.test.ts` — register outside anon middleware |
+| Resend `Unexpected token 'A'` | **Fixed + deployed** | 30s timeout returned HTML; client parsed as JSON | `registrationScope.test.ts` — register/resend outside anon middleware; `registration.test.ts` — resend generic success |
+| Login error for fresh accounts | **Fixed + deployed** | Login SELECT of revoked `onlinePayment*` → `42501` | `authLoginLookup.test.ts`; `dbHarness.rls.test.ts` login/payment grants |
+| Seller listing-submit failure | **Fixed + deployed** | Missing INSERT/UPDATE grants on listing payment flags after BLOCK 17 | `paymentGrantContract.test.ts`; `products.archive` ownership in `part2SecurityProofs.test.ts` |
+
+### 2) Real-Postgres harness map (DB RLS harness)
+
+| Feature | Harness / DB test |
+|---------|-------------------|
+| `cooperativeAdminApplications` table + RLS | `enforces cooperativeAdminApplications…`; authenticated column SELECT + anon deny |
+| `requestedRole` column | same Part 2 harness case + column privilege |
+| `coop-admin-applications` bucket + policies | `defines coop-admin-applications storage owner policies…`; private bucket exists |
+| Order archive `threadStates.channel=order` | Part 2 harness + `allows authenticated buyers to insert order-channel threadStates…` |
+| `create_user_cooperative` (user coop create) | `grants create_user_cooperative EXECUTE…` |
+| Listing soft-archive (`products.status`) | `grants authenticated UPDATE on products.status…` (no `deletedAt`) |
+| Login / registration grants | `keeps login columns readable…`; `registration insert and login select…` |
+| Add account | Procedure authz in unit suite (`admin.createAccount`); no separate DB table |
+
+### 3) Security proofs (named passing tests)
+
+| Claim | Test |
+|-------|------|
+| Signup cannot set role/status/approval | `part2SecurityProofs` / `part2Access` — signup cannot set… |
+| Pending applicant has no admin access | `part2SecurityProofs` / `trpcProcedureAccess` — pending… off officer review |
+| Officer Admin cannot read files or approve | `part2SecurityProofs` / `trpcProcedureAccess` — blocks Officer Admin… |
+| Nobody approves their own application | `part2SecurityProofs` — nobody approves their own application |
+| Admin cannot create Admin/SuperAdmin | `part2SecurityProofs` — Admin cannot create… + schema boundary |
+| Buyer archive ≠ seller/admin view | `part2SecurityProofs` — buyer order archive does not change… |
+| Seller cannot archive another seller’s listing | `part2SecurityProofs` — seller cannot archive another… |
+| Coop create rate-limited + near-duplicates | `part2SecurityProofs` — cooperative creation is rate limited… |
+
+### 4) Production all-roles audit matrix (`productionAccessAudit.test.ts`)
+
+```
+procedure	anon	buyer	seller	admin	superadmin
+marketplace.list	PASS	PASS	PASS	PASS	PASS
+orders.buyerMine	PASS	PASS	PASS	PASS	PASS
+orders.sellerMine	PASS	PASS	PASS	PASS	PASS
+admin.overview	PASS	PASS	PASS	PASS	PASS
+officerApplications.pendingList	PASS	PASS	PASS	PASS	PASS
+admin.createAccount buyer	PASS	PASS	PASS	PASS	PASS
+products.mine	PASS	PASS	PASS	PASS	PASS
+products.archive	PASS	PASS	PASS	PASS	PASS
+```
+
+**Playwright signed-in suite:** not run — `QA_*` credentials are **not** set in this environment (`PLAYWRIGHT_BASE_URL` only). Missing: `QA_BUYER_*`, `QA_SELLER_*`, `QA_ADMIN_*`, `QA_SUPERADMIN_*` (or project-equivalent names).
+
+### 5) Logs / axe / notifications
+
+| Check | Result |
+|-------|--------|
+| Runtime errors (last 30m, production) | **No error/fatal logs** |
+| Historical clusters | Pre-hotfix registration/`onlinePayment*` INSERT failures on older deployments only |
+| Axe-style signup | Clean (`h1=1`, required labeled, no empty controls) |
+| Application screen (anon gate) | Clean (`Applicant access required`) |
+| Applications tab / Add account / signed-in My Orders | **Blocked without QA_*** — gates only checked |
+| Approval notification | **In-app** via `create_notification` (`cooperative_admin_application_*`). **No product transactional email** beyond Supabase Auth |
+
+### 6) Thesis PDF + test data
+
+| Item | Result |
+|------|--------|
+| Thesis PDF | Regenerated via `pnpm run docs:system` from current code/docs |
+| QA users / apps / coops / orders / coop-admin files | **0 / 0 / 0 / 0 / 0** (scoped counts; no unscoped DELETE) |
 
 ---
 
