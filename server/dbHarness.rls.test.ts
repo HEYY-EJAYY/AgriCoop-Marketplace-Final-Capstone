@@ -352,7 +352,16 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
             where table_schema = 'agricoop_app'
               and table_name = 'products'
               and column_name = 'deletedAt'
-          ) as products_deleted_at
+          ) as products_deleted_at,
+          exists(
+            select 1 from pg_trigger t
+            join pg_class c on c.oid = t.tgrelid
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'agricoop_app'
+              and c.relname = 'products'
+              and t.tgname = 'trg_guard_products_deleted_by'
+              and not t.tgisinternal
+          ) as deleted_by_guard
       `;
       expect(row.status_upd).toBe(true);
       expect(row.visibility_upd).toBe(true);
@@ -361,6 +370,210 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
       expect(row.deleted_at_upd).toBe(true);
       expect(row.deleted_by_upd).toBe(true);
       expect(row.anon_deleted_at_upd).toBe(false);
+      expect(row.deleted_by_guard).toBe(true);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it("enforces product soft-delete ownership, forged deletedBy, and role denies (rollback)", async () => {
+    assertLocalTestDatabaseUrl(testDatabaseUrl);
+    const postgres = (await import("postgres")).default;
+    const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
+    const sellerAAuth = "33333333-3333-4333-8333-333333333333";
+    const sellerBAuth = "44444444-4444-4444-8444-444444444444";
+    const buyerAuth = "55555555-5555-4555-8555-555555555555";
+    const adminAuth = "77777777-7777-4777-8777-777777777777";
+    const saAuth = "66666666-6666-4666-8666-666666666666";
+    try {
+      await sql.begin(async tx => {
+        await tx`insert into auth.users (id, email) values
+          (${sellerAAuth}::uuid, 'harness-seller-a@example.test'),
+          (${sellerBAuth}::uuid, 'harness-seller-b@example.test'),
+          (${buyerAuth}::uuid, 'harness-buyer-sd@example.test'),
+          (${adminAuth}::uuid, 'harness-admin-sd@example.test'),
+          (${saAuth}::uuid, 'harness-sa-sd@example.test')
+          on conflict (id) do nothing`;
+
+        let [coop] = await tx`
+          select id from agricoop_app.cooperatives where "normalizedName" = 'harnesssoftdeletcoop' limit 1
+        `;
+        if (!coop?.id) {
+          [coop] = await tx`
+            insert into agricoop_app.cooperatives (name, "normalizedName", location, address, "normalizedLocation", status, source)
+            values ('Harness SoftDelete Coop', 'harnesssoftdeletcoop', 'Test City', 'Barangay 1', 'testcity', 'active', 'seed')
+            returning id
+          `;
+        }
+        expect(coop?.id).toBeTruthy();
+
+        const upsertUser = async (
+          openId: string,
+          email: string,
+          role: "buyer" | "seller" | "admin" | "superadmin",
+          cooperativeId: number | null,
+        ) => {
+          await tx`
+            insert into agricoop_app.users (
+              "openId", name, email, "loginMethod", role, "approvalStatus", "cooperativeId", "lastSignedIn"
+            ) values (
+              ${openId}, ${email}, ${email}, 'supabase', ${role}::agricoop_app.user_role,
+              'approved'::agricoop_app.user_approval_status, ${cooperativeId}, now()
+            )
+            on conflict ("openId") do update set
+              role = excluded.role,
+              "approvalStatus" = excluded."approvalStatus",
+              "cooperativeId" = excluded."cooperativeId",
+              "lastSignedIn" = excluded."lastSignedIn"
+          `;
+          const [row] = await tx`select id from agricoop_app.users where "openId" = ${openId} limit 1`;
+          return row.id as number;
+        };
+
+        const sellerAId = await upsertUser(sellerAAuth, "harness-seller-a@example.test", "seller", coop.id);
+        const sellerBId = await upsertUser(sellerBAuth, "harness-seller-b@example.test", "seller", coop.id);
+        const buyerId = await upsertUser(buyerAuth, "harness-buyer-sd@example.test", "buyer", null);
+        const adminId = await upsertUser(adminAuth, "harness-admin-sd@example.test", "admin", coop.id);
+        const saId = await upsertUser(saAuth, "harness-sa-sd@example.test", "superadmin", null);
+        expect(buyerId).toBeTruthy();
+        expect(adminId).toBeTruthy();
+
+        const [productA] = await tx`
+          insert into agricoop_app.products (
+            "sellerId", "cooperativeId", name, category, variety, description, unit,
+            "priceCents", "stockQty", "minOrderQty", "qualityGrade", status, "verificationStatus", visibility
+          ) values (
+            ${sellerAId}, ${coop.id}, 'Harness SoftDelete A', 'Crop', 'Standard', 'test', 'kg',
+            100, 10, 1, 'standard', 'published', 'approved', 'visible'
+          ) returning id
+        `;
+        const [productB] = await tx`
+          insert into agricoop_app.products (
+            "sellerId", "cooperativeId", name, category, variety, description, unit,
+            "priceCents", "stockQty", "minOrderQty", "qualityGrade", status, "verificationStatus", visibility
+          ) values (
+            ${sellerBId}, ${coop.id}, 'Harness SoftDelete B', 'Crop', 'Standard', 'test', 'kg',
+            100, 10, 1, 'standard', 'published', 'approved', 'visible'
+          ) returning id
+        `;
+
+        const asAuth = async (openId: string, fn: () => Promise<void>) => {
+          await tx`select set_config('role', 'authenticated', true)`;
+          await tx.unsafe("set local role authenticated");
+          await tx`select set_config('search_path', 'public, agricoop_app', true)`;
+          await tx`select set_config('request.jwt.claim.sub', ${openId}, true)`;
+          await tx`select set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ aud: "authenticated", role: "authenticated", sub: openId })},
+            true
+          )`;
+          await fn();
+        };
+
+        // Seller A soft-deletes own listing.
+        await asAuth(sellerAAuth, async () => {
+          const updated = await tx`
+            update agricoop_app.products
+            set status = 'archived', visibility = 'hidden', "deletedAt" = now(), "deletedBy" = ${sellerAId}
+            where id = ${productA.id} and "sellerId" = ${sellerAId}
+            returning id, "deletedBy"
+          `;
+          expect(updated).toHaveLength(1);
+          expect(updated[0].deletedBy).toBe(sellerAId);
+        });
+
+        // Seller A cannot forge deletedBy to seller B on own row (BLOCK 27 guard).
+        await asAuth(sellerAAuth, async () => {
+          await tx`savepoint forge_deleted_by`;
+          let forged = false;
+          try {
+            await tx`
+              update agricoop_app.products
+              set "deletedBy" = ${sellerBId}
+              where id = ${productA.id}
+            `;
+          } catch (error) {
+            forged = /deletedBy must equal|P0001|42501/i.test(String(error));
+          }
+          await tx`rollback to savepoint forge_deleted_by`;
+          expect(forged).toBe(true);
+        });
+
+        // Seller A cannot soft-delete seller B's product (RLS).
+        await asAuth(sellerAAuth, async () => {
+          const touched = await tx`
+            update agricoop_app.products
+            set status = 'archived', visibility = 'hidden', "deletedAt" = now(), "deletedBy" = ${sellerAId}
+            where id = ${productB.id}
+            returning id
+          `;
+          expect(touched).toHaveLength(0);
+        });
+
+        // Buyer cannot soft-delete.
+        await asAuth(buyerAuth, async () => {
+          const touched = await tx`
+            update agricoop_app.products
+            set status = 'archived', visibility = 'hidden', "deletedAt" = now(), "deletedBy" = ${buyerId}
+            where id = ${productB.id}
+            returning id
+          `;
+          expect(touched).toHaveLength(0);
+        });
+
+        // Anon cannot UPDATE deletedAt (privilege).
+        await tx`select set_config('role', 'anon', true)`;
+        await tx.unsafe("set local role anon");
+        await tx`select set_config('search_path', 'public, agricoop_app', true)`;
+        await tx`select set_config('request.jwt.claim.sub', '', true)`;
+        await tx`select set_config('request.jwt.claims', '{"role":"anon"}', true)`;
+        await tx`savepoint anon_soft_delete`;
+        let anonDenied = false;
+        try {
+          await tx`
+            update agricoop_app.products
+            set "deletedAt" = now()
+            where id = ${productB.id}
+          `;
+        } catch (error) {
+          anonDenied = /permission denied|42501/i.test(String(error));
+        }
+        await tx`rollback to savepoint anon_soft_delete`;
+        expect(anonDenied).toBe(true);
+
+        // Admin sharing cooperative can soft-delete seller B's listing.
+        await asAuth(adminAuth, async () => {
+          const updated = await tx`
+            update agricoop_app.products
+            set status = 'archived', visibility = 'hidden', "deletedAt" = now(), "deletedBy" = ${adminId}
+            where id = ${productB.id}
+            returning id, "deletedBy"
+          `;
+          expect(updated).toHaveLength(1);
+          expect(updated[0].deletedBy).toBe(adminId);
+        });
+
+        // SuperAdmin can soft-delete any listing (restore then delete as SA for proof).
+        await asAuth(saAuth, async () => {
+          await tx`
+            update agricoop_app.products
+            set status = 'published', visibility = 'visible', "deletedAt" = null, "deletedBy" = null
+            where id = ${productB.id}
+          `;
+          const updated = await tx`
+            update agricoop_app.products
+            set status = 'archived', visibility = 'hidden', "deletedAt" = now(), "deletedBy" = ${saId}
+            where id = ${productB.id}
+            returning id, "deletedBy"
+          `;
+          expect(updated).toHaveLength(1);
+          expect(updated[0].deletedBy).toBe(saId);
+        });
+
+        throw new Error("harness_rollback");
+      }).catch((error: unknown) => {
+        if (!(error instanceof Error) || error.message !== "harness_rollback") throw error;
+      });
     } finally {
       await sql.end({ timeout: 5 });
     }

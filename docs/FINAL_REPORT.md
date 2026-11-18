@@ -20,6 +20,19 @@ Updated: 2026-11-18 (Phase 1–3 credit-limited finish)
 | Test data cleanup | `ph3_*` Auth/app rows removed; leftovers 0; SuperAdmin count unchanged |
 | Production | READY `dpl_8AE3pftHGDTnUUkNi6BUHrrPKisK` @ `286f751` |
 
+### Soft-delete grants / RLS / nested-scope verification (2026-11-18)
+
+| Item | Result |
+|------|--------|
+| GRANT | `UPDATE (deletedAt, deletedBy)` → `authenticated` only (anon=0) |
+| RLS write | `agricoop_mkt_products_seller_update`: own seller **or** `shares_cooperative` **or** `is_superadmin` |
+| `deletedBy` forge guard | BLOCK 27 trigger `trg_guard_products_deleted_by` |
+| Real-Postgres proof | Production DO-block `VERIFY_SOFT_DELETE_PASS` (seller own OK; forge blocked; other seller/buyer/anon denied; admin+SA OK); leftovers 0 |
+| Nested DB scope | Excluded: `auth.register`, `auth.resendVerification`, `admin.createAccount`; Express stream/proxy = single scope; inventory test `nestedDatabaseScope.test.ts` |
+| Access audit matrix | Now prints `procedure/role/expected/actual/result` |
+| Coop Admin registration coop | Insert lists `"cooperativeId"`; contract test asserts `${cooperativeId}` persisted on application |
+| Phase 3 verify method | **API/tRPC scripts only** (no browser) for all Phase 3 PASS rows |
+
 ## Phase 1 A–E (production blockers) — root cause / fix / verify
 
 | ID | Root cause | Fix | Live verify |

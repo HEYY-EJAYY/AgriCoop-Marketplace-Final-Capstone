@@ -131,17 +131,27 @@ function chain(rows: unknown[]) {
 }
 
 function formatMatrix(rows: AuditRow[], outcomes: Array<{ ok: boolean; code?: string }>) {
-  const header = ["procedure", "anon", "buyer", "seller", "admin", "superadmin"].join("\t");
-  const procedures = [...new Set(rows.map(row => row.procedure))];
+  const header = ["procedure", "role", "expected", "actual", "result"].join("\t");
   const lines = [header];
-  for (const procedure of procedures) {
-    const cells = [procedure];
-    for (const role of ["anon", "buyer", "seller", "admin", "superadmin"] as const) {
-      const index = rows.findIndex(row => row.procedure === procedure && row.role === role);
-      const outcome = outcomes[index];
-      cells.push(outcome?.ok ? "PASS" : `FAIL(${outcome?.code ?? "error"})`);
-    }
-    lines.push(cells.join("\t"));
+  for (const [index, row] of rows.entries()) {
+    const outcome = outcomes[index];
+    const actual = outcome?.ok && row.expect === "allow"
+      ? "allow"
+      : outcome?.code === "UNAUTHORIZED"
+        ? "deny(unauthorized)"
+        : outcome?.code === "FORBIDDEN"
+          ? "deny(forbidden)"
+          : outcome?.ok
+            ? "allow"
+            : `error(${outcome?.code ?? "unknown"})`;
+    const expected = row.expect === "allow" ? "allow" : `deny(${row.expect})`;
+    lines.push([
+      row.procedure,
+      row.role,
+      expected,
+      actual,
+      outcome?.ok ? "PASS" : "FAIL",
+    ].join("\t"));
   }
   return lines.join("\n");
 }

@@ -5,14 +5,15 @@ import { describe, expect, it } from "vitest";
 describe("registration and listing INSERT contracts", () => {
   it("uses explicit SQL for cooperativeAdminApplications registration inserts", () => {
     const routers = readFileSync(join(process.cwd(), "server/routers.ts"), "utf8");
-    expect(routers).toMatch(
-      /insert into agricoop_app\."cooperativeAdminApplications"\s+\("userId", "fullName", "cooperativeId", "positionTitle", status\)/s,
-    );
-    const coopAdminSection = routers.slice(
-      routers.indexOf('identity.registrationChoice === "coop_admin"'),
-      routers.indexOf('identity.registrationChoice === "coop_admin"') + 1200,
-    );
-    expect(coopAdminSection).not.toMatch(/insert\(cooperativeAdminApplications\)/);
+    // Cooperative chosen at Cooperative Admin registration is stored on the application row.
+    const insertMarker = 'insert into agricoop_app."cooperativeAdminApplications"';
+    const insertAt = routers.indexOf(insertMarker);
+    expect(insertAt).toBeGreaterThan(-1);
+    const insertBlock = routers.slice(insertAt, insertAt + 450);
+    expect(insertBlock).toMatch(/"cooperativeId"/);
+    expect(insertBlock).toMatch(/\$\{cooperativeId\}/);
+    expect(insertBlock).toMatch(/\$\{appUser\.id\}/);
+    expect(routers).not.toMatch(/insert\(cooperativeAdminApplications\)/);
   });
 
   it("uses explicit SQL insert for products.create", () => {

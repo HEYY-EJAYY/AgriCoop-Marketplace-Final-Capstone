@@ -4064,3 +4064,22 @@ Apply via ordered migrations or Supabase MCP. Existing cooperatives keep locatio
 **Purpose:** Additive `deletedAt` / `deletedBy` on `products`; column UPDATE grants for `authenticated`; partial index. Soft-delete removes listings from marketplace and seller Active/Archived without hard DELETE.
 
 **Applied:** Supabase MCP `product_listing_soft_delete` (2026-11-18).
+
+## BLOCK 26 (exact GRANT + RLS for products soft-delete)
+
+`GRANT UPDATE ("deletedAt", "deletedBy") ON TABLE agricoop_app.products TO authenticated;`
+
+RLS (unchanged write policy; soft-delete uses UPDATE):
+
+- `agricoop_mkt_products_seller_update` (cmd=w, roles=authenticated)
+  - USING: `("sellerId" = agricoop_app.current_app_user_id()) OR agricoop_app.shares_cooperative("cooperativeId") OR agricoop_app.is_superadmin()`
+  - WITH CHECK: same
+- Public read still requires published+approved+visible (soft-deleted rows drop out of marketplace via app filters + status/visibility).
+
+Anon has no UPDATE privilege on `deletedAt` / `deletedBy`.
+
+## BLOCK 27: `20261118170000_product_soft_delete_deleted_by_guard.sql`
+
+**Purpose:** BEFORE UPDATE OF `deletedBy` trigger `trg_guard_products_deleted_by` — `deletedBy` must be NULL or equal `current_app_user_id()` (prevents forging another user's id).
+
+**Applied:** Supabase MCP `product_soft_delete_deleted_by_guard` (2026-11-18).
