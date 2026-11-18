@@ -192,7 +192,9 @@ export async function upsertUser(user: InsertUser, executor?: RootDb | RootTrans
       ${plan.values.role}::agricoop_app.user_role,
       ${plan.values.approvalStatus}::agricoop_app.user_approval_status,
       ${plan.values.cooperativeId ?? null},
-      ${plan.values.lastSignedIn}
+      ${(plan.values.lastSignedIn instanceof Date
+        ? plan.values.lastSignedIn
+        : new Date(plan.values.lastSignedIn ?? Date.now())).toISOString()}::timestamp
     )
     on conflict ("openId") do update set
       name = coalesce(excluded.name, agricoop_app.users.name),
