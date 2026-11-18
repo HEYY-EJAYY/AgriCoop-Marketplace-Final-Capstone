@@ -200,10 +200,21 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
     const postgres = (await import("postgres")).default;
     const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
     try {
+      // Column-scoped GRANTs (not table-level SELECT) — match other harness privilege checks.
       const [grants] = await sql`
         select
-          has_table_privilege('authenticated', 'agricoop_app."cooperativeAdminApplications"', 'SELECT') as apps_sel,
-          has_table_privilege('anon', 'agricoop_app."cooperativeAdminApplications"', 'SELECT') as anon_apps_sel,
+          has_column_privilege(
+            'authenticated',
+            to_regclass('agricoop_app."cooperativeAdminApplications"'),
+            'id',
+            'SELECT'
+          ) as apps_sel,
+          has_column_privilege(
+            'anon',
+            to_regclass('agricoop_app."cooperativeAdminApplications"'),
+            'id',
+            'SELECT'
+          ) as anon_apps_sel,
           has_column_privilege('authenticated', 'agricoop_app.users', 'requestedRole', 'SELECT') as requested_role_sel,
           has_column_privilege('authenticated', 'agricoop_app.cooperatives', 'source', 'SELECT') as coop_source_sel,
           exists(
