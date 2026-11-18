@@ -1,3 +1,5 @@
+import { formatEnumLabel } from "./enumLabels";
+
 /** Canonical payment methods for new orders. Legacy values are display-mapped only. */
 export const PAYMENT_METHODS = ["cash_pickup", "cash_delivery", "online"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -43,9 +45,9 @@ export function paymentMethodLabel(value: string | null | undefined): string {
     case "gcash":
       return "Online Payment";
     case "f2f":
-      return "Face-to-face (legacy)";
+      return "Face-to-Face (Legacy)";
     default:
-      return value ? value.replaceAll("_", " ") : "Payment";
+      return value ? formatEnumLabel(value) : "Payment";
   }
 }
 
@@ -53,9 +55,9 @@ export function paymentStatusLabel(value: string | null | undefined): string {
   switch (value) {
     case "pending":
     case "F2F-pending-confirmation":
-      return "Awaiting payment";
+      return "Awaiting Payment";
     case "awaiting_verification":
-      return "Awaiting verification";
+      return "Awaiting Verification";
     case "paid":
     case "verified":
       return "Paid";
@@ -68,14 +70,14 @@ export function paymentStatusLabel(value: string | null | undefined): string {
     case "expired":
       return "Expired";
     default:
-      return value ? value.replaceAll("_", " ") : "Unknown";
+      return value ? formatEnumLabel(value) : "Unknown";
   }
 }
 
 export function fulfillmentLabel(value: string | null | undefined): string {
   if (value === "pickup") return "Pickup";
   if (value === "delivery") return "Delivery";
-  return value ? value.replaceAll("_", " ") : "Fulfillment";
+  return value ? formatEnumLabel(value) : "Fulfillment";
 }
 
 /** Infer fulfillment from a cash payment method when fulfillmentMethod is null (legacy). */

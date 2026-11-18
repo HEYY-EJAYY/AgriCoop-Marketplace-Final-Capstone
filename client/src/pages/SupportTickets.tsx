@@ -3,6 +3,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
 import { SupportTicketStatusSelect } from "@/components/SupportTicketStatusSelect";
+import { formatEnumLabel } from "@shared/enumLabels";
 import { Loader2, MessageSquareText, Pin, Send } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -182,7 +183,7 @@ export default function SupportTickets() {
                 />
                 <button type="button" className="min-w-0 flex-1 text-left hover:bg-[#f1f6ee]" onClick={() => setSelectedId(ticket.id)}>
                   <p className="flex items-center gap-1 font-bold text-[#315640]">{pinned && <Pin size={12} />}{ticket.subject}</p>
-                  <p className="mt-1 text-xs text-[#718074]">{isStaff ? ticket.userName || "Member" : ticket.category} · {ticket.status}</p>
+                  <p className="mt-1 text-xs text-[#718074]">{isStaff ? ticket.userName || "Member" : ticket.category} · {formatEnumLabel(ticket.status)}</p>
                   <p className="mt-1 text-xs text-[#718074]">{formatDateTimeManila(ticket.updatedAt)}</p>
                 </button>
               </div>
@@ -193,7 +194,7 @@ export default function SupportTickets() {
       <section className="agri-card flex min-h-[560px] flex-col p-5 sm:p-6">
         {activeTicket ? <>
           <header className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e3e9de] pb-4">
-            <div><p className="text-xs font-extrabold uppercase tracking-[.13em] text-[#6d9147]">Ticket #{activeTicket.id}</p><h1 className="mt-1 font-display text-2xl font-bold text-[#264f37]">{activeTicket.subject}</h1><p className="mt-1 text-sm text-[#65766b]">{activeTicket.category} · {activeTicket.priority}</p></div>
+            <div><p className="text-xs font-extrabold uppercase tracking-[.13em] text-[#6d9147]">Ticket #{activeTicket.id}</p><h1 className="mt-1 font-display text-2xl font-bold text-[#264f37]">{activeTicket.subject}</h1><p className="mt-1 text-sm text-[#65766b]">{activeTicket.category} · {formatEnumLabel(activeTicket.priority)}</p></div>
             {isStaff && <div className="flex flex-wrap gap-3">
               <label className="field-label mt-0">Status<SupportTicketStatusSelect
                 status={activeTicket.status}
@@ -203,7 +204,7 @@ export default function SupportTickets() {
               <label className="field-label mt-0">Assigned support officer<select className="field-control" value={activeTicket.assignedToUserId ?? ""} onChange={event => assignTicket.mutate({ ticketId: activeTicket.id, assignedToUserId: event.target.value ? Number(event.target.value) : null })} disabled={assignTicket.isPending || assignableUsers.isLoading}>
                 <option value="">Unassigned</option>
                 {activeTicket.assignedToUserId && !assignableUsers.data?.some(candidate => candidate.id === activeTicket.assignedToUserId) && <option value={activeTicket.assignedToUserId}>{activeTicket.assignedToName || "Current assignee"}</option>}
-                {(assignableUsers.data ?? []).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.role}</option>)}
+                {(assignableUsers.data ?? []).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {formatEnumLabel(candidate.role)}</option>)}
               </select>
                 {assignableUsers.error && <span className="mt-1 block text-xs text-[#a34838]"><span role="alert">{assignableUsers.error.message}</span> <button type="button" className="agri-ghost px-2 py-1" disabled={assignableUsers.isFetching} onClick={() => void assignableUsers.refetch()}>Retry</button></span>}
               </label>

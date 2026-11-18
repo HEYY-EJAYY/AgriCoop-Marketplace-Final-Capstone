@@ -3,6 +3,8 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { completedRefundAmountCents, reservedRefundAmountCents } from "../../../shared/paymentRefunds";
+import { formatEnumLabel } from "@shared/enumLabels";
+import { paymentMethodLabel } from "@shared/paymentMethods";
 
 function peso(cents: number) {
   return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
@@ -76,16 +78,16 @@ export default function AdminRefundManagement() {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <p className="font-bold text-[#315640]">Order #{payment.orderId} · Payment #{payment.id}</p>
-              <p className="mt-1 text-xs text-[#6d7d70]">{payment.paymentMethod} · Verified amount {peso(Number(payment.amountCents))}</p>
+              <p className="mt-1 text-xs text-[#6d7d70]">{paymentMethodLabel(payment.paymentMethod)} · Verified amount {peso(Number(payment.amountCents))}</p>
               <p className="mt-1 text-xs text-[#6d7d70]">Refunded {peso(completed)} · Remaining refundable {peso(refundable)}</p>
             </div>
-            <span className="rounded-full bg-[#edf3e9] px-3 py-1 text-xs font-bold text-[#315640]">{payment.status}</span>
+            <span className="rounded-full bg-[#edf3e9] px-3 py-1 text-xs font-bold text-[#315640]">{formatEnumLabel(payment.status)}</span>
           </div>
           {refunds.length > 0 && <div className="mt-4 space-y-3">
             {refunds.map(refund => <div key={refund.refundId} className="rounded-lg bg-[#f7faf4] p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-bold text-[#315640]">{peso(refund.amountCents)} · {refund.status}</p>
+                  <p className="text-sm font-bold text-[#315640]">{peso(refund.amountCents)} · {formatEnumLabel(refund.status)}</p>
                   <p className="mt-1 text-xs text-[#6d7d70]">{refund.reason}</p>
                   {refund.confirmationReference && <p className="mt-1 text-xs text-[#6d7d70]">Confirmation: {refund.confirmationReference}</p>}
                 </div>

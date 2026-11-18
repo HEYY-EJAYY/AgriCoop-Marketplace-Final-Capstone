@@ -9,6 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import AdminRefundManagement from "@/components/AdminRefundManagement";
 import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
+import { StatusPill } from "@/components/StatusPill";
 import { AdminWorkspaceTabs, type AdminWorkspaceTabId } from "@/components/AdminWorkspaceTabs";
 import { OfficerApplicationsPanel } from "@/components/OfficerApplicationsPanel";
 import { AddAccountDialog } from "@/components/AddAccountDialog";
@@ -20,6 +21,8 @@ import {
   type CooperativeConflictUi,
 } from "@/lib/cooperativeConflict";
 import { getProductImageUrl } from "@/lib/productImages";
+import { formatCombinedEnumLabels, formatEnumLabel } from "@shared/enumLabels";
+import { paymentMethodLabel } from "@shared/paymentMethods";
 import { toUserFacingErrorMessage, USER_FACING_LOAD_ERROR, USER_FACING_SAVE_ERROR } from "@shared/userFacingErrors";
 import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
 import { PAYMENT_PROOF_BUCKET, PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../../../shared/paymentProofs";
@@ -32,7 +35,7 @@ import { Link, useLocation } from "wouter";
 
 const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
 const when = (value: Date | string | null) => formatDateManila(value);
-const Status = ({ value }: { value: string }) => <span className={`status-pill status-${value}`}>{value.replaceAll("_", " ")}</span>;
+const Status = StatusPill;
 
 function ListingPaymentFlagFields({
   allowsPickup,
@@ -290,7 +293,7 @@ function SellerAssociationRequestPanel() {
     {(cooperativesError || requestsError) && <p role="alert" className="mt-3 text-sm text-[#a34838]">{cooperativesError?.message || requestsError?.message}</p>}
     {(cooperativesLoading || requestsLoading) && <p className="mt-3 text-sm text-[#65766b]">Loading cooperative options…</p>}
     {requests.map(({ request: row, cooperativeName }) => <div key={row.id} className="mt-3 rounded-lg bg-white p-3 text-sm">
-      <p className="font-bold text-[#315640]">{cooperativeName} · {row.status}</p>
+      <p className="font-bold text-[#315640]">{cooperativeName} · {formatEnumLabel(row.status)}</p>
       {row.message && <p className="mt-1 text-[#65766b]">{row.message}</p>}
       {row.reviewNote && <p className="mt-1 text-[#65766b]">Admin note: {row.reviewNote}</p>}
     </div>)}
@@ -657,7 +660,7 @@ function BuyerDashboard() {
           <div className="flex items-center justify-between"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your orders</h2><p className="mt-1 text-sm text-[#6a796e]">Seller confirmations and fulfillment updates appear here.</p></div><Link href="/marketplace" className="agri-ghost text-sm no-underline">Browse listings</Link></div>
           <div className="mt-5 space-y-3">
             {isLoading ? <Loader2 className="mx-auto my-10 animate-spin text-[#5d8a5e]"/> : orders.length ? orders.map(row => <div className="rounded-2xl border border-[#e3e9de] p-4" key={row.order.id}>
-              <div className="flex flex-wrap items-start justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#30573e] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.sellerName || "Farm seller"}</Link><p className="mt-1 text-xs text-[#6d7d70]">{row.order.orderType} order · {when(row.order.createdAt)}</p></div><Status value={row.order.status}/></div>
+              <div className="flex flex-wrap items-start justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#30573e] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.sellerName || "Farm seller"}</Link><p className="mt-1 text-xs text-[#6d7d70]">{formatEnumLabel(row.order.orderType)} Order · {when(row.order.createdAt)}</p></div><Status value={row.order.status}/></div>
               <div className="mt-3 flex flex-wrap gap-2">{row.items.map(item => <span key={item.item.id} className="rounded-lg bg-[#f0f5ed] px-2.5 py-1.5 text-xs text-[#45614e]">{item.productName} × {item.item.quantity} {item.unit}</span>)}</div>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#edf0e9] pt-3"><p className="font-display font-bold text-[#27573a]">{peso(row.order.totalCents)}</p><button type="button" className="agri-ghost min-h-11 px-3 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}>{openOrderChat.isPending ? <Loader2 className="animate-spin" size={14}/> : <MessageCircle size={14}/>} Message</button></div>
             </div>) : <Empty icon={ClipboardList} title="No orders yet" body="Explore local cooperative listings and submit your first order when ready."/>}
@@ -851,7 +854,7 @@ function OfficerDashboard() {
   if (isLoading) return <LoadingWorkspace/>;
   if (error) return <><WorkspaceHeader title="Cooperative officer workspace" description="Monitor members and marketplace coordination for your assigned cooperative."/><main className={`${shellContainerClass} py-8`}><div className="flex gap-3 rounded-2xl border border-[#e9dba9] bg-[#fff8e2] p-4 text-sm leading-6 text-[#76551b]"><AlertCircle className="mt-0.5 shrink-0" size={18}/><div><strong>Officer setup required</strong><p>{error.message}</p></div></div></main></>;
   const totalSales = overview?.transactions.reduce((sum, row) => sum + row.transactions.amountCents, 0) || 0;
-  const downloadReport = () => { const rows = [["Report type", "Name / ID", "Detail", "Value (PHP)"], ...(overview?.products || []).map(product => ["Inventory", product.name, `${product.category} · ${product.variety} · ${product.stockQty} ${product.unit} available · minimum ${product.minOrderQty} ${product.unit}`, `${peso(product.priceCents)} per ${product.unit}`]), ...(overview?.quotations || []).map(row => ["Quotation", row.productName, `${row.buyerName || "Buyer"} · ${row.quotation.requestedQty} ${row.unit} requested · ${row.quotation.status}`, row.quotation.quotedPriceCents ? `${peso(row.quotation.quotedPriceCents)} per ${row.unit}` : "Pending"]), ...(overview?.transactions || []).map(row => ["Transaction", `Order #${row.transactions.orderId}`, row.transactions.paymentReferenceNote || "F2F coordination noted", peso(row.transactions.amountCents)])]; const url = URL.createObjectURL(new Blob([buildCsv(rows)], { type: "text/csv;charset=utf-8" })); const link = document.createElement("a"); link.href = url; link.download = "agricoop-cooperative-report.csv"; link.click(); URL.revokeObjectURL(url); };
+  const downloadReport = () => { const rows = [["Report type", "Name / ID", "Detail", "Value (PHP)"], ...(overview?.products || []).map(product => ["Inventory", product.name, `${product.category} · ${product.variety} · ${product.stockQty} ${product.unit} available · minimum ${product.minOrderQty} ${product.unit}`, `${peso(product.priceCents)} per ${product.unit}`]), ...(overview?.quotations || []).map(row => ["Quotation", row.productName, `${row.buyerName || "Buyer"} · ${row.quotation.requestedQty} ${row.unit} requested · ${formatEnumLabel(row.quotation.status)}`, row.quotation.quotedPriceCents ? `${peso(row.quotation.quotedPriceCents)} per ${row.unit}` : "Pending"]), ...(overview?.transactions || []).map(row => ["Transaction", `Order #${row.transactions.orderId}`, row.transactions.paymentReferenceNote || "F2F coordination noted", peso(row.transactions.amountCents)])]; const url = URL.createObjectURL(new Blob([buildCsv(rows)], { type: "text/csv;charset=utf-8" })); const link = document.createElement("a"); link.href = url; link.download = "agricoop-cooperative-report.csv"; link.click(); URL.revokeObjectURL(url); };
   return <><WorkspaceHeader title="Cooperative officer workspace" description="Validate members, oversee listings and transactions, and keep cooperative trade accountable."/><main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-5"><Metric label="Cooperative members" value={String(overview?.members.length || 0)} icon={Users}/><Metric label="Listings monitored" value={String(overview?.products.length || 0)} icon={Package}/><Metric label="Quotations monitored" value={String(overview?.quotations.length || 0)} icon={FileText}/><Metric label="Orders recorded" value={String(overview?.orders.length || 0)} icon={ClipboardList}/><Metric label="Recorded sales" value={peso(totalSales)} icon={BarChart3}/></div><section className="mt-8 grid gap-8 xl:grid-cols-[1.15fr_.85fr]"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Member validation</h2><p className="mt-1 text-sm text-[#6a796e]">Approve or suspend cooperative member roles within your assigned organization.</p><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><thead className="border-b border-[#e2e9dd] text-xs uppercase tracking-wide text-[#718174]"><tr><th className="pb-3">Member</th><th className="pb-3">Role</th><th className="pb-3">Status</th><th className="pb-3"></th></tr></thead><tbody>{overview?.members.map(member => <tr key={member.id} className="border-b border-[#edf0e9]"><td className="py-3 font-bold text-[#315640]">{member.name || "Unnamed member"}</td><td className="py-3 capitalize text-[#647568]">{member.role}</td><td className="py-3"><Status value={member.approvalStatus}/></td><td className="py-3 text-right">{member.role !== "admin" && member.role !== "superadmin" && (member.approvalStatus !== "approved" ? <button className="agri-ghost px-2.5 py-1.5 text-xs" onClick={() => updateMember.mutate({ userId: member.id, approvalStatus: "approved" })}>Approve</button> : <button className="text-xs font-bold text-[#a34838]" onClick={() => updateMember.mutate({ userId: member.id, approvalStatus: "suspended" })}>Suspend</button>)}</td></tr>)}</tbody></table>{!overview?.members.length && <p className="py-8 text-center text-sm text-[#6d7d70]">No members are associated with this cooperative yet.</p>}</div></div><div className="space-y-8"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Inventory pulse</h2><div className="mt-4 space-y-3">{overview?.products.length ? overview.products.map(product => <div key={product.id} className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3"><div><p className="font-bold text-[#315640]">{product.name}</p><p className="text-xs text-[#6c7c70]">{product.category} · {product.unit}</p></div><span className={`text-sm font-bold ${product.stockQty < 10 ? "text-[#a35538]" : "text-[#2c6b43]"}`}>{product.stockQty} left</span></div>) : <p className="text-sm text-[#6d7d70]">No cooperative listings to monitor yet.</p>}</div></div><div className="agri-card p-5 sm:p-6"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Report snapshot</h2><p className="mt-2 text-sm leading-6 text-[#65766b]">Live sales, inventory, quotation, and completed-transaction reporting for your cooperative.</p></div><button onClick={downloadReport} className="agri-ghost shrink-0 px-3 py-2 text-xs"><Download size={15}/> Export CSV</button></div><div className="mt-4 rounded-xl bg-[#edf3e9] p-4"><p className="text-xs font-extrabold uppercase tracking-[.12em] text-[#638947]">Payment coordination / status</p><p className="mt-1 text-sm text-[#41634c]">{overview?.transactions.length || 0} completed transactions documented with payment reference notes where provided.</p></div></div></div></section></main></>;
 }
 
@@ -1145,7 +1148,7 @@ function AdminPaymentReviewQueue() {
       {isLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : cashAwaitingReceived.length ? <div className="mt-5 space-y-3">{cashAwaitingReceived.map(order => <article key={order.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e3e9de] p-4">
         <div>
           <p className="font-bold text-[#315640]">Order #{order.id} · {peso(Number(order.totalCents))}</p>
-          <p className="mt-1 text-xs text-[#6d7d70]">{String(order.paymentMethod).replaceAll("_", " ")} · {order.status}</p>
+          <p className="mt-1 text-xs text-[#6d7d70]">{paymentMethodLabel(order.paymentMethod)} · {formatEnumLabel(order.status)}</p>
         </div>
         <button type="button" className="agri-button text-sm" disabled={recordCash.isPending} onClick={() => recordCash.mutate({ orderId: order.id })}>Record cash received</button>
       </article>)}</div> : <p className="py-6 text-center text-sm text-[#6d7d70]">No cash orders are waiting to be marked received.</p>}
@@ -1725,7 +1728,7 @@ function AdminDashboard() {
                       <div key={`manage-${product.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-[#e2e9dd] p-4">
                         <div>
                           <p className="font-bold text-[#315640]">{product.name}</p>
-                          <p className="text-xs text-[#6d7d70]">{product.status} · {product.verificationStatus} · {product.deletedAt ? "deleted" : product.visibility}</p>
+                          <p className="text-xs text-[#6d7d70]">{formatCombinedEnumLabels(product.status, product.verificationStatus)} · {product.deletedAt ? "Deleted" : formatEnumLabel(product.visibility)}</p>
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
                           {!product.deletedAt && product.visibility !== "hidden" && (

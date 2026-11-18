@@ -1,5 +1,6 @@
 import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { ProductImage } from "@/components/ProductImage";
+import { StatusPill } from "@/components/StatusPill";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { resolveProductImageSrc } from "@/lib/productImages";
@@ -11,6 +12,7 @@ import {
   paymentStatusLabel,
 } from "@shared/paymentMethods";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { formatEnumLabel } from "@shared/enumLabels";
 import { ArrowLeft, ClipboardList, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -117,9 +119,9 @@ function historyLabel(row: HistoryRow) {
   const eventType = row.eventType || row.action || row.event?.action || "Update";
   const from = row.fromValue ?? row.fromStatus ?? row.event?.fromStatus;
   const to = row.toValue ?? row.toStatus ?? row.event?.toStatus;
-  if (from && to) return `${String(eventType).replaceAll("_", " ")}: ${from} → ${to}`;
-  if (to) return `${String(eventType).replaceAll("_", " ")} → ${to}`;
-  return String(eventType).replaceAll("_", " ");
+  if (from && to) return `${formatEnumLabel(eventType)}: ${formatEnumLabel(from)} → ${formatEnumLabel(to)}`;
+  if (to) return `${formatEnumLabel(eventType)} → ${formatEnumLabel(to)}`;
+  return formatEnumLabel(eventType);
 }
 
 function historyWhen(row: HistoryRow) {
@@ -265,7 +267,7 @@ export default function OrderDetail() {
           <p className="text-sm text-[#6a796e]">
             Placed {formatDateTimeManila(order.createdAt)} · {peso(order.totalCents)}
           </p>
-          <span className={`status-pill status-${order.status}`}>{order.status.replaceAll("_", " ")}</span>
+          <StatusPill value={order.status} />
         </div>
 
         <section className="agri-card p-5 sm:p-6">
@@ -372,7 +374,7 @@ export default function OrderDetail() {
           <ol className="mt-4 space-y-3">
             {history.length ? history.map((row, index) => (
               <li key={row.id ?? `${historyLabel(row)}-${index}`} className="rounded-xl border border-[#e2e9dd] p-3">
-                <p className="font-bold capitalize text-[#315640]">{historyLabel(row)}</p>
+                <p className="font-bold text-[#315640]">{historyLabel(row)}</p>
                 <p className="mt-1 text-xs text-[#708074]">
                   {row.actorName || "System"} · {formatDateTimeManila(historyWhen(row))}
                 </p>

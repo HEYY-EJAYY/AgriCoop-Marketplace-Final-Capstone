@@ -63,4 +63,16 @@
 - **Not verified:** No live database/RLS, Postgres migration execution, Admin browser interaction, or visual alignment was tested. The 11 Postgres harness tests remain skipped outside CI. Do not infer the deployed product UPDATE policy or migration state from local files.
 - **Manual action:** First run BLOCK 31's read-only preview and, if it matches, apply the thread-channel migration. Then run BLOCK 32's preview and apply its migration. Stop if trigger/policy/table details differ. In CI, run the real-Postgres harness before considering cross-cooperative approval verified.
 
-Stages 4–8 have not been implemented or verified yet.
+## Stage 4 — B9/B10 and mobile order access
+
+**Status:** PARTIAL (implementation and local checks done; browser coverage is in Stage 6)
+
+- **Files changed:** `shared/enumLabels.ts`, `shared/paymentMethods.ts`, `client/src/components/PasswordVisibilityInput.tsx`, `client/src/components/PasswordVisibilityInput.test.tsx`, `client/src/components/StatusPill.tsx`, `client/src/components/StatusPill.test.tsx`, `client/src/pages/Auth.tsx`, `client/src/pages/Profile.tsx`, `client/src/pages/ComponentShowcase.tsx`, `client/src/pages/Activity.tsx`, `client/src/pages/Dashboard.tsx`, `client/src/pages/OrderDetail.tsx`, `client/src/pages/Reports.tsx`, `client/src/pages/SupportTickets.tsx`, `client/src/pages/AuditLogs.tsx`, `client/src/components/AdminRefundManagement.tsx`, `client/src/components/SupportTicketStatusSelect.tsx`, `server/routers.ts`, `server/checkoutCart.test.ts`, `server/paymentSecurity.test.ts`, `docs/PROGRESS.md`
+- **B9:** Replaced login/register and new/confirm password inputs with a shared control. Its in-field button has the required changing `aria-label`, `aria-pressed`, and native keyboard support; absolute positioning preserves field layout. The password component showcase was updated as well.
+- **B10:** Added shared enum and combined-state formatters and applied them to status pills, order history, buyer/seller/admin status displays, payment labels, support status options, audit actions, reports, and status-bearing notifications/errors. Combined listing state displays as “Published - Approved”; order types display as “Regular Order”. Added regression tests that assert rendered labels rather than raw lowercase/snake_case values. Updated two payment-label expectations because the legacy F2F label is now title-cased.
+- **Mobile:** `Marketplace.tsx` already has a visible-on-mobile “Your order” button and drawer while the navigation cart link is hidden. No duplicate control was added; Playwright verification is deferred to Stage 6.
+- **Verified:** Node 22.23.5; focused Stage 4 tests (24 passed); `pnpm check`; `pnpm test` (429 passed, 11 skipped); `pnpm build` (passed; existing >500 KB chunk warning); `git diff --check`.
+- **Not verified:** No browser interaction/visual check, live notification or email delivery, or real-database test was run. No application email templates interpolate these operational statuses; authentication email content remains externally configured.
+- **Manual action:** None for implementation. Stage 6 will provide browser commands and QA variable names for the user to run.
+
+Stages 5–8 remain.

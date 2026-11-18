@@ -4,6 +4,7 @@ import {
   isSupportTicketStatus,
   type SupportTicketStatus,
 } from "../../../shared/supportTicketStatus";
+import { formatEnumLabel } from "@shared/enumLabels";
 
 export function SupportTicketStatusSelect({
   status,
@@ -35,7 +36,7 @@ export function SupportTicketStatusSelect({
     }}
   >
     {getSupportTicketStatusOptions(status).map(option => (
-      <option key={option} value={option}>{option.replace("_", " ")}</option>
+      <option key={option} value={option}>{formatEnumLabel(option)}</option>
     ))}
   </select>;
 }

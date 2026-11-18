@@ -1,6 +1,9 @@
 import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { StatusPill } from "@/components/StatusPill";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { formatEnumLabel } from "@shared/enumLabels";
+import { paymentMethodLabel } from "@shared/paymentMethods";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ClipboardList, FileText, Leaf, Loader2, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
@@ -9,7 +12,7 @@ import { toast } from "sonner";
 import { Link, useLocation, useSearch } from "wouter";
 
 const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
-const Status = ({ value }: { value: string }) => <span className={`status-pill status-${value}`}>{value.replaceAll("_", " ")}</span>;
+const Status = StatusPill;
 
 type OrderStatusTab = "all" | "to_pay" | "to_ship" | "to_receive" | "completed" | "cancelled";
 type OrderInboxTab = "active" | "archived" | "deleted";
@@ -351,7 +354,7 @@ export default function Activity() {
                               <Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">
                                 Order #{row.order.id} · {row.sellerName || "Farm seller"}
                               </Link>
-                              <p className="mt-1 text-xs text-[#708074]">{row.order.orderType} order</p>
+                              <p className="mt-1 text-xs text-[#708074]">{formatEnumLabel(row.order.orderType)} Order</p>
                             </div>
                             <Status value={row.order.status} />
                           </div>
@@ -365,7 +368,7 @@ export default function Activity() {
                           <div className="mt-3 flex flex-wrap justify-between gap-2 border-t border-[#edf0e9] pt-3">
                             <strong className="font-display text-[#27573a]">{peso(row.order.totalCents)}</strong>
                             <span className="text-xs text-[#6d7d70]">
-                              {row.order.paymentMethod || "f2f"} · <Status value={row.order.paymentStatus} />
+                              {paymentMethodLabel(row.order.paymentMethod || "f2f")} · <Status value={row.order.paymentStatus} />
                             </span>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">

@@ -1,5 +1,6 @@
 import { PageFrame, shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { CooperativeSelect, emptyCooperativeSelectValue, type CooperativeSelectValue } from "@/components/CooperativeSelect";
+import { PasswordVisibilityInput } from "@/components/PasswordVisibilityInput";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { blobToBase64, prepareProfileImage } from "@/lib/profileImage";
 import { roleDisplayLabel } from "@/lib/roleLabels";
@@ -272,8 +273,8 @@ export default function Profile() {
               <h2 className="font-display text-xl font-bold text-[#264f37]">Change password</h2>
               <p className="mt-1 text-sm text-[#6a796e]">Leave blank to keep your current password.</p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <label className="field-label">New password<input type="password" minLength={8} className="field-control" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" /></label>
-                <label className="field-label">Confirm new password<input type="password" minLength={8} className="field-control" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" /></label>
+                <label className="field-label">New password<PasswordVisibilityInput minLength={8} value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" /></label>
+                <label className="field-label">Confirm new password<PasswordVisibilityInput minLength={8} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" /></label>
               </div>
             </section>
           </div>

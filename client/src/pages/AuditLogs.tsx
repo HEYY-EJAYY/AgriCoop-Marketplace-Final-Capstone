@@ -2,6 +2,7 @@ import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
+import { formatEnumLabel } from "@shared/enumLabels";
 import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Redirect } from "wouter";
@@ -72,7 +73,7 @@ export default function AuditLogs() {
                 <tr key={row.id} className="border-t border-[#e3e9de]">
                   <td className="p-3 whitespace-nowrap">{formatDateTimeManila(row.createdAt)}</td>
                   <td className="p-3">{row.actorName || `User #${row.actorUserId}`}</td>
-                  <td className="p-3 font-medium text-[#315640]">{row.action}</td>
+                  <td className="p-3 font-medium text-[#315640]">{formatEnumLabel(row.action)}</td>
                   <td className="p-3">{row.entityType}{row.entityId != null ? ` #${row.entityId}` : ""}</td>
                   <td className="p-3">{row.cooperativeId ?? "—"}</td>
                 </tr>

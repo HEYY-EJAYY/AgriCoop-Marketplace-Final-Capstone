@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, ilike, inArray, isNull, ne, or, sql } from "dr
 // isNull used by conversation inbox filters
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
+import { formatEnumLabel } from "../shared/enumLabels";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCashReceipt, canManageCooperativeResource, canManageRefundRecord, canRecordCashReceipt, canReviewPaymentProof, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, canVerifyPaymentRecord, isPaymentOrderConsistent, isPaymentTransactionConsistent, isSellerApproved, requireOperationalRole } from "./authz";
@@ -1993,7 +1994,7 @@ export const appRouter = router({
           if (!allowedMethods.includes(paymentMethod)) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `This order cannot use ${paymentMethod.replaceAll("_", " ")}. Check pickup, delivery, and the cooperative payment settings.`,
+              message: `This order cannot use ${formatEnumLabel(paymentMethod)}. Check pickup, delivery, and the cooperative payment settings.`,
             });
           }
 
@@ -2487,8 +2488,8 @@ export const appRouter = router({
             await createNotification(tx, {
               userId: orderRow.buyerId,
               type: "order_status_updated",
-              title: `Order #${input.orderId} is now ${input.status}`,
-              content: `Your order status changed from ${previousStatus} to ${input.status}.`,
+              title: `Order #${input.orderId} is now ${formatEnumLabel(input.status)}`,
+              content: `Your order status changed from ${formatEnumLabel(previousStatus)} to ${formatEnumLabel(input.status)}.`,
               link: `/orders/${input.orderId}`,
               relatedEntityId: input.orderId,
               relatedEntityType: "order",
@@ -3909,7 +3910,7 @@ export const appRouter = router({
             userId: target.id,
             type: "account_approval_status",
             title: "Account status updated",
-            content: `Your account has been ${input.approvalStatus}.`,
+            content: `Your account has been ${formatEnumLabel(input.approvalStatus)}.`,
             link: "/dashboard",
           });
           return { success: true };
@@ -5083,7 +5084,7 @@ export const appRouter = router({
           const currentStatus = supportTicketStatusSchema.safeParse(ticket.status);
           if (!currentStatus.success) throw new TRPCError({ code: "CONFLICT", message: "This ticket has an unsupported status and cannot be changed." });
           if (!canTransitionSupportTicketStatus(currentStatus.data, input.status)) {
-            throw new TRPCError({ code: "CONFLICT", message: `Cannot change a ${currentStatus.data} ticket to ${input.status}.` });
+            throw new TRPCError({ code: "CONFLICT", message: `Cannot change a ${formatEnumLabel(currentStatus.data)} ticket to ${formatEnumLabel(input.status)}.` });
           }
           const updated = await tx.update(supportTickets)
             .set({ status: input.status, updatedAt: new Date() })
@@ -5104,7 +5105,7 @@ export const appRouter = router({
             userId: ticket.userId,
             type: "support_ticket_status",
             title: "Support ticket updated",
-            content: `Your support ticket is now ${input.status.replace("_", " ")}.`,
+            content: `Your support ticket is now ${formatEnumLabel(input.status)}.`,
             link: "/support-tickets",
             relatedEntityId: ticket.id,
             relatedEntityType: "support_ticket",
