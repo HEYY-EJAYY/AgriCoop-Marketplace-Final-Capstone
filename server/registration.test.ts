@@ -44,7 +44,9 @@ import {
   RegistrationRateLimitError,
 } from "./registration";
 
-function publicContext(ip = "192.0.2.10"): TrpcContext {
+let nextTestIp = 10;
+
+function publicContext(ip = `192.0.2.${nextTestIp++}`): TrpcContext {
   return {
     req: {
       ip,
@@ -92,7 +94,7 @@ function registrationDb(
               } catch {
                 sqlText = "";
               }
-              if (sqlText.includes("deletedAt")) {
+              if (/"deletedAt"\s+is not null/i.test(sqlText)) {
                 return options.softDeleted ? [{ id: 99 }] : [];
               }
               return [{ id: 99 }];
@@ -285,6 +287,34 @@ describe("public registration role policy and verification", () => {
     });
 
     expect(result).toEqual({ success: true, verificationRequired: true });
+    expect(mocks.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("returns generic success for a duplicate signup matching an active account", async () => {
+    mocks.createUser.mockResolvedValue({
+      data: { user: null },
+      error: { code: "email_exists", message: "User already registered", name: "AuthApiError" },
+    });
+    mocks.listUsers.mockResolvedValue({
+      data: {
+        users: [{
+          id: "active-auth-user",
+          email: "active@example.test",
+          email_confirmed_at: "2026-11-18T08:00:00.000Z",
+        }],
+      },
+      error: null,
+    });
+
+    const result = await appRouter.createCaller(publicContext()).auth.register({
+      email: "active@example.test",
+      password: "example-password",
+      name: "Existing Buyer",
+      role: "buyer",
+    });
+
+    expect(result).toEqual({ success: true, verificationRequired: true });
+    expect(JSON.stringify(result)).not.toContain("This account is no longer active");
     expect(mocks.upsertUser).not.toHaveBeenCalled();
   });
 
