@@ -5,6 +5,7 @@ import {
   cooperativeAdminApplications,
   cooperatives,
   orders,
+  roles,
   threadStates,
   users,
 } from "../drizzle/pg-schema";
@@ -520,18 +521,20 @@ export const adminAccountsRouter = router({
 
           const publicRoleName = input.role === "admin" ? "coop_officer"
             : input.role === "seller" ? "seller" : "buyer";
-          const roleRows = await db.execute(sql`
-            select role_id from public.roles where role_name = ${publicRoleName} limit 1
-          `);
-          const roleId = Number((roleRows as any)?.[0]?.role_id ?? (roleRows as any)?.rows?.[0]?.role_id);
-          if (!Number.isFinite(roleId)) throw new Error("Canonical role missing.");
+          const publicRoles = await db.select({ roleId: roles.roleId, roleName: roles.roleName })
+            .from(roles)
+            .where(eq(roles.roleName, publicRoleName))
+            .limit(2);
+          if (publicRoles.length !== 1) throw new Error("Canonical role missing or ambiguous.");
+          // Match auth.register: explicit columns only (no ON CONFLICT UPDATE grants needed).
           await db.execute(sql`
             insert into public.profiles (user_id, full_name, email, role_id)
-            values (${authUser.id}::uuid, ${input.name}, ${input.email}, ${roleId})
-            on conflict (user_id) do update set
-              full_name = excluded.full_name,
-              email = excluded.email,
-              role_id = excluded.role_id
+            values (
+              ${authUser.id}::uuid,
+              ${input.name},
+              ${input.email},
+              ${publicRoles[0].roleId}
+            )
           `);
 
           const [appUser] = await db.select({ id: users.id }).from(users)
