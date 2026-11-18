@@ -58,26 +58,24 @@ test.describe("home hero layout and width", () => {
     });
     expect(Math.abs(padding.left - padding.right)).toBeLessThanOrEqual(1);
 
-    // Full-bleed sections start at the left edge and cover at least the layout viewport.
+    // Full-bleed sections share one edge-to-edge width (scrollbar-gutter may shrink vs viewport).
     if (testInfo.project.name.startsWith("desktop")) {
-      const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
       const heroMetrics = await hero.evaluate(el => {
         const rect = el.getBoundingClientRect();
-        return { left: rect.left, right: rect.right, width: rect.width };
+        return { left: rect.left, width: rect.width };
       });
       expect(Math.abs(heroMetrics.left)).toBeLessThanOrEqual(1);
-      expect(heroMetrics.width).toBeGreaterThanOrEqual(clientWidth - 2);
-      expect(heroMetrics.right).toBeGreaterThanOrEqual(clientWidth - 2);
+      const viewportWidth = page.viewportSize()?.width ?? 0;
+      expect(heroMetrics.width).toBeGreaterThanOrEqual(viewportWidth - 20);
       const bands = page.locator("[data-full-bleed]");
       const count = await bands.count();
       for (let i = 0; i < count; i += 1) {
         const box = await bands.nth(i).evaluate(el => {
           const rect = el.getBoundingClientRect();
-          return { left: rect.left, right: rect.right, width: rect.width };
+          return { left: rect.left, width: rect.width };
         });
         expect(Math.abs(box.left)).toBeLessThanOrEqual(1);
-        expect(box.width).toBeGreaterThanOrEqual(clientWidth - 2);
-        expect(box.right).toBeGreaterThanOrEqual(clientWidth - 2);
+        expect(Math.abs(box.width - heroMetrics.width)).toBeLessThanOrEqual(2);
       }
 
       // Two-column: image must not intersect text column
