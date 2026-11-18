@@ -98,10 +98,18 @@ function contextFor(role: Role): TrpcContext {
 }
 
 function chain(rows: unknown[]) {
+  const defaultProduct = {
+    id: 1,
+    cooperativeId: 2,
+    status: "published",
+    visibility: "visible",
+    sellerId: 20,
+    verificationStatus: "pending",
+  };
   const result: Record<string, unknown> = {
     from: () => result,
     where: () => result,
-    limit: async () => rows,
+    limit: async () => (rows.length ? rows : [defaultProduct]),
     orderBy: () => result,
     leftJoin: () => result,
     innerJoin: () => result,
@@ -188,6 +196,9 @@ describe("production access audit matrix", () => {
         () => caller.products.mine(),
       );
       add("products.archive", role, role === "seller" || role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.products.archive({ id: 1 }));
+      add("products.unarchive", role, role === "seller" || role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.products.unarchive({ id: 1 }));
+      add("products.softDelete", role, role === "seller" || role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.products.softDelete({ id: 1 }));
+      add("admin.deleteListing", role, role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.admin.deleteListing({ productId: 1 }));
     }
 
     const outcomes: Array<{ ok: boolean; code?: string; detail?: string }> = [];

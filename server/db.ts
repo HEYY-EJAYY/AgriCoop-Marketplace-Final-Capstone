@@ -478,7 +478,7 @@ export async function getOpenOrderReservationQuantities(db: RootTransaction, pro
 export async function getMarketplace(category?: string, sort: "asc" | "desc" = "asc") {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), eq(users.approvalStatus, "approved")];
+  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), isNull(products.deletedAt), eq(users.approvalStatus, "approved")];
   if (category && category !== "all") conditions.push(eq(products.category, category));
   const listings = await db
     .select({
@@ -579,6 +579,7 @@ export async function getMarketplaceProduct(productId: number) {
       eq(products.status, "published"),
       eq(products.verificationStatus, "approved"),
       eq(products.visibility, "visible"),
+      isNull(products.deletedAt),
       eq(users.approvalStatus, "approved"),
     ))
     .limit(1);
@@ -614,6 +615,7 @@ export async function getCategories() {
       eq(products.status, "published"),
       eq(products.verificationStatus, "approved"),
       eq(products.visibility, "visible"),
+      isNull(products.deletedAt),
       eq(users.approvalStatus, "approved"),
     ))
     .orderBy(asc(products.category));
@@ -629,7 +631,7 @@ export async function getSellerProducts(sellerId: number) {
     })
     .from(products)
     .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
-    .where(eq(products.sellerId, sellerId))
+    .where(and(eq(products.sellerId, sellerId), isNull(products.deletedAt)))
     .orderBy(desc(products.createdAt));
   if (!rows.length) return [];
   const imageRows = await db.select().from(productImages)
@@ -895,7 +897,11 @@ export async function getAdminOverview(cooperativeId?: number | null) {
   if (!db) return { users: [], cooperatives: [], products: [], orders: [], quotations: [], transactions: [] };
   const scoped = cooperativeId !== undefined;
   const userScope = !scoped ? undefined : cooperativeId === null ? eq(users.id, -1) : eq(users.cooperativeId, cooperativeId);
-  const productScope = !scoped ? undefined : cooperativeId === null ? eq(products.id, -1) : eq(products.cooperativeId, cooperativeId);
+  const productScope = !scoped
+    ? isNull(products.deletedAt)
+    : cooperativeId === null
+      ? eq(products.id, -1)
+      : and(eq(products.cooperativeId, cooperativeId), isNull(products.deletedAt));
   const orderScope = !scoped ? undefined : cooperativeId === null ? eq(orders.id, -1) : eq(orders.cooperativeId, cooperativeId);
   const memberRows = await db
     .select({

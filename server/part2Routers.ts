@@ -479,11 +479,14 @@ export const adminAccountsRouter = router({
       if (!linkError && linkData?.properties?.action_link) {
         inviteLink = linkData.properties.action_link;
         try {
-          const { error: inviteEmailError } = await createPublicAuthClient().auth.resetPasswordForEmail(
-            input.email,
-            { redirectTo },
-          );
-          inviteEmailSent = !inviteEmailError;
+          // SMTP / Auth rate limits can hang indefinitely; never block account creation on invite mail.
+          const inviteEmailResult = await Promise.race([
+            createPublicAuthClient().auth.resetPasswordForEmail(input.email, { redirectTo }),
+            new Promise<{ error: { message: string } }>((resolve) =>
+              setTimeout(() => resolve({ error: { message: "invite_email_timeout" } }), 4000),
+            ),
+          ]);
+          inviteEmailSent = !inviteEmailResult.error;
         } catch {
           inviteEmailSent = false;
         }

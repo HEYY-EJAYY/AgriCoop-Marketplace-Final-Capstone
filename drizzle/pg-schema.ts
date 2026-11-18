@@ -173,6 +173,8 @@ export const products = appSchema.table("products", {
   allowsPickup: boolean("allowsPickup").notNull().default(true),
   allowsDelivery: boolean("allowsDelivery").notNull().default(true),
   acceptsOnlinePayment: boolean("acceptsOnlinePayment").notNull().default(false),
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
+  deletedBy: integer("deletedBy").references(() => users.id),
 }, table => [index("products_seller_id_idx").on(table.sellerId)]);
 
 export const productImages = appSchema.table("productImages", {

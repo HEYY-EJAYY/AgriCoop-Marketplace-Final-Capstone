@@ -1727,6 +1727,38 @@ export const appRouter = router({
         if (!archived.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
         return { success: true };
       }),
+    unarchive: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const restored = await db.update(products).set({ status: "published" }).where(and(
+          eq(products.id, input.id),
+          eq(products.sellerId, seller.id),
+          eq(products.status, "archived"),
+          isNull(products.deletedAt),
+        )).returning({ id: products.id });
+        if (!restored.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable, soft-deleted, or belongs to another seller." });
+        return { success: true };
+      }),
+    softDelete: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const removed = await db.update(products).set({
+          status: "archived",
+          visibility: "hidden",
+          deletedAt: new Date(),
+          deletedBy: seller.id,
+        }).where(and(
+          eq(products.id, input.id),
+          eq(products.sellerId, seller.id),
+          isNull(products.deletedAt),
+        )).returning({ id: products.id });
+        if (!removed.length) throw new TRPCError({ code: "NOT_FOUND", message: "This listing is unavailable or belongs to another seller." });
+        return { success: true };
+      }),
   }),
 
   quotations: router({
@@ -3895,6 +3927,38 @@ export const appRouter = router({
         return { success: true };
       });
     }),
+    deleteListing: protectedProcedure
+      .input(z.object({ productId: z.number().int().positive() }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [target] = await db.select({
+          id: products.id,
+          cooperativeId: products.cooperativeId,
+          deletedAt: products.deletedAt,
+        }).from(products).where(eq(products.id, input.productId)).limit(1);
+        if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+        if (!canManageCooperativeResource(actor, target.cooperativeId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot delete a listing outside your cooperative." });
+        }
+        if (target.deletedAt) {
+          return { success: true, alreadyDeleted: true };
+        }
+        const scope = actor.role === "superadmin"
+          ? and(eq(products.id, input.productId), isNull(products.deletedAt))
+          : and(eq(products.id, input.productId), eq(products.cooperativeId, actor.cooperativeId!), isNull(products.deletedAt));
+        const result = await db.update(products)
+          .set({
+            status: "archived",
+            visibility: "hidden",
+            deletedAt: new Date(),
+            deletedBy: actor.id,
+          })
+          .where(scope)
+          .returning({ id: products.id });
+        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+        return { success: true, alreadyDeleted: false };
+      }),
     updateUser: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), role: z.enum(APP_ROLES), approvalStatus: z.enum(["approved", "pending", "suspended"]), cooperativeId: z.number().int().positive().nullable() }))
       .mutation(async ({ ctx, input }) => {

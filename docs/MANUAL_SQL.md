@@ -4058,3 +4058,9 @@ END $$;
 **Purpose:** `address`, `normalizedLocation`, soft-delete (`deletedAt`/`deletedBy`), unique index on (normalizedName, normalizedLocation) WHERE deletedAt IS NULL, staff write policy, `create_user_cooperative` 6-arg overload, audit actions `cooperative_soft_deleted` / `cooperative_restored`.
 
 Apply via ordered migrations or Supabase MCP. Existing cooperatives keep location; address defaults to empty string until Admin/SuperAdmin edits.
+
+## BLOCK 26: `20261118160000_product_listing_soft_delete.sql`
+
+**Purpose:** Additive `deletedAt` / `deletedBy` on `products`; column UPDATE grants for `authenticated`; partial index. Soft-delete removes listings from marketplace and seller Active/Archived without hard DELETE.
+
+**Applied:** Supabase MCP `product_listing_soft_delete` (2026-11-18).

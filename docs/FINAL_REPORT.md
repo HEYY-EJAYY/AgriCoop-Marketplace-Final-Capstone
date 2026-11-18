@@ -2,10 +2,32 @@
 
 Branch: `finish/agricoop-complete`  
 Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
-Updated: 2026-11-18 (verification + hardening follow-up)
+Updated: 2026-11-18 (Phase 1–3 credit-limited finish)
 
 ---
 
+## Phase 3 quick live check — 2026-11-18
+
+| Check | Result |
+|-------|--------|
+| Seller Active/Archived + Archive / Unarchive / soft Delete | PASS (UI tabs + `products.unarchive` / `products.softDelete`; BLOCK 26 `deletedAt`) |
+| Admin/SuperAdmin delete any listing | PASS (`admin.deleteListing` + Moderation “All listings”) |
+| Buyer My Orders archive | PASS (`/activity` Active/Archived) |
+| Add account (no passwords shown) | PASS after invite SMTP timeout guard (was 504) |
+| Cooperative Admin apply + SA approve | PASS (prior ship; soft-delete authz still enforced) |
+| Persistent cart | PASS (unchanged client cart) |
+| Seed Cassava #10 | Restored to `published` after smoke archive |
+| Test data cleanup | `ph3_tmp_*` Auth orphan deleted; listing QA rows previously removed |
+
+## Phase 1 A–E (production blockers) — root cause / fix / verify
+
+| ID | Root cause | Fix | Live verify |
+|----|------------|-----|-------------|
+| **A** | `42501`/guard fallthrough on reg inserts | Atomic register + GUC + grants; orphan Auth repair | `auth.register` 200 |
+| **B** | Verified Auth with no app row | Login self-heal Buyer+profile; orphans 0 | SA + seed logins 200 |
+| **C** | SMTP / invalid test emails | Resend cooldown + JSON; dashboard SMTP | Cooldown JSON |
+| **D** | Non-JSON crash + verify loop | `email_confirmed_at` SoT + client non-JSON wrapper | No parse error |
+| **E** | `products.create` grant/`qualityGrade` | Explicit INSERT + grants | create 200; mine then delete |
 
 ## Cooperative UX (picker, duplicates, soft delete) — 2026-11-18
 
