@@ -21,6 +21,7 @@ Updated: 2026-11-18
 | 404 uses AgriCoop `PageFrame` chrome | `/404` |
 | Product / cooperative / guest Messages & Profile use `PageFrame` | Public routes listed above |
 | Darker stage/eyebrow labels on How It Works + Support for AA contrast | `/about`, `/support` |
+| Lazy route Suspense fallback uses `PageFrame` (header stays up) | All lazy public/app routes |
 | **Unchanged:** marketplace / cart / checkout / auth form / dashboards content width | As designed |
 
 ### Root causes
@@ -34,8 +35,13 @@ Updated: 2026-11-18
 
 | Gate | Result |
 |------|--------|
-| `e2e/public-nav-layout.spec.ts` | Logged-out nav identity across public routes; marketing pad symmetry; axe on Home/About/Support; role Support checks when `QA_*` present |
-| `pnpm check` / `test` / `build` | Recorded below after this pass |
+| `pnpm check` / `lint` | **pass** |
+| `pnpm test` | **353 passed**, 2 skipped |
+| `pnpm build` | **pass** |
+| Playwright `public-nav-layout` + `hero-layout` | **28 passed**, 16 skipped (role Support needs `QA_*`) on 375/768/1280/1920 |
+| Production deploy | `dpl_4wpmKroHXM8tXL678xhSCrb4xDPS` **READY** → https://agricoop-marketplace-final-capstone.vercel.app (`c5022f7`) |
+| Smoke | Support logged-out shows Login + Join in page + mobile menu (Marketplace / How It Works / Support / Login / Join AgriCoop) |
+| Runtime logs (30m) | No new errors on current deploy; older timeouts on prior `dpl_GLY7…` only |
 
 Companion docs: `docs/UX_DECISIONS.md`, `docs/UX_AUDIT.md`, `docs/MANUAL_SQL.md`, `docs/AgriCoop_System_Documentation.pdf`
 
