@@ -45,7 +45,11 @@ Updated: 2026-11-18
 | Registration correlation + admin createUser | `server/registration.test.ts` |
 | CI Postgres RLS | `.github/workflows/db-rls-harness.yml` + `scripts/db-test/*` (Docker not installed on this agent host; CI runs throwaway Postgres) |
 | Harness asserts | login columns granted; payment columns denied; anon coop name/slug readable; profile INSERT for authenticated |
-| Production deploy | *(filled after production-target READY)* |
+| Production deploy | `dpl_FoPvPFCv8vMuAxUrL7RKo9SBD2Ne` **READY** on https://agricoop-marketplace-final-capstone.vercel.app (`00aba5d`) |
+| Login privilege proof | Payment cols SELECT false; login cols true; SuperAdmin login SELECT under authenticated succeeded (QA_* passwords unset — password E2E not run) |
+| Signup verify | Throwaway `hotfix_qa_signup_20261118_*@example.test` → Buyer + approved + profiles.role_id=1; confirmation deferred (email rate limit); test rows deleted |
+| Marketplace | `cooperativeName` present on listings; `cooperatives.listActive` includes SUTAFACO; filter catalog complete |
+| Access audit | `trpcProcedureAccess` + payment grant contract unit suites pass; Docker RLS harness via GHA (local Docker unavailable on agent host) |
 
 ---
 
