@@ -17,7 +17,8 @@ Updated: 2026-11-18 (Phase 1–3 credit-limited finish)
 | Cooperative Admin apply + SA approve | PASS (prior ship; soft-delete authz still enforced) |
 | Persistent cart | PASS (unchanged client cart) |
 | Seed Cassava #10 | Restored to `published` after smoke archive |
-| Test data cleanup | `ph3_tmp_*` Auth orphan deleted; listing QA rows previously removed |
+| Test data cleanup | `ph3_*` Auth/app rows removed; leftovers 0; SuperAdmin count unchanged |
+| Production | READY `dpl_8AE3pftHGDTnUUkNi6BUHrrPKisK` @ `286f751` |
 
 ## Phase 1 A–E (production blockers) — root cause / fix / verify
 
