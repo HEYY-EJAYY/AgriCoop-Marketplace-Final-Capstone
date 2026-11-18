@@ -9,12 +9,34 @@ import {
   isSellerPaymentQrKey,
   SELLER_PAYMENT_QR_BUCKET,
 } from "./paymentProofs";
-import { canViewOrder } from "./orderAccess";
+import { canReviewOrderPaymentProof, canViewOrder } from "./orderAccess";
+import { canManageCashReceipt } from "./authz";
 import { paymentMethodLabel } from "../shared/paymentMethods";
+import { SYSTEM_PAYMENT_QR_BUCKET, isSystemPaymentQrKey } from "./systemPayment";
 
 describe("seller online payment secrecy", () => {
-  it("uses the private seller-payment-qr bucket", () => {
+  it("uses the private seller-payment-qr bucket (legacy; no longer written by app)", () => {
     expect(SELLER_PAYMENT_QR_BUCKET).toBe("seller-payment-qr");
+  });
+
+  it("uses the private system-payment-qr bucket for officer-managed Online payment", () => {
+    expect(SYSTEM_PAYMENT_QR_BUCKET).toBe("system-payment-qr");
+    expect(isSystemPaymentQrKey("system/1/qr.png")).toBe(true);
+    expect(isSystemPaymentQrKey("22/qr.png")).toBe(false);
+  });
+
+  it("denies sellers payment review and cash-received management", () => {
+    const order = { sellerId: 22, cooperativeId: 4 };
+    expect(canReviewOrderPaymentProof({ id: 22, role: "seller" }, order, null)).toBe(false);
+    expect(canReviewOrderPaymentProof({ id: 40, role: "admin" }, order, 4)).toBe(true);
+    expect(canManageCashReceipt(
+      { id: 22, role: "seller", cooperativeId: 4 },
+      { buyerId: 10, sellerId: 22, cooperativeId: 4 },
+    )).toBe(false);
+    expect(canManageCashReceipt(
+      { id: 40, role: "admin", cooperativeId: 4 },
+      { buyerId: 10, sellerId: 22, cooperativeId: 4 },
+    )).toBe(true);
   });
 
   it("limits QR/account visibility to buyer, owning seller, and officers", () => {

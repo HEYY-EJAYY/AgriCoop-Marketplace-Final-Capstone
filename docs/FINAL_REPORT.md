@@ -263,5 +263,16 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | Production deploy | `dpl_GLY7s7rEDaPLc3Nkwsxgf7DF9md8` **READY** on https://agricoop-marketplace-final-capstone.vercel.app |
 | Playwright `payment-coop-orders` 360+1280 | **8/8** |
 | Live privilege recheck | anon QR SELECT false; auth account SELECT/UPDATE false; system-payment-qr private; seller QR storage policies 0 |
-| Authenticated QA E2E (`qa-test-` accounts) | Not run this session (no QA credentials in environment); CI unit/matrix cover authz. Officer should configure Payments tab QR before Online checkout is offered. |
+| Authenticated QA E2E | **Blocked:** all of `QA_BUYER_EMAIL`, `QA_BUYER_PASSWORD`, `QA_SELLER_EMAIL`, `QA_SELLER_PASSWORD`, `QA_ADMIN_EMAIL`, `QA_ADMIN_PASSWORD` are **MISSING** in process/user/machine env, `.env.local`, and Vercel project envs. Suite `e2e/auth-payment-system.spec.ts` skips auth flows and asserts the missing **names** only. |
 | Thesis PDF | Regenerated via `scripts/build-system-docs.mjs` |
+
+### Authenticated verification attempt (2026-11-18)
+
+| Step | Result |
+|------|--------|
+| 1–6 Admin/Seller/Buyer/order authz E2E | **Not run** — QA env vars missing (names above). No passwords created or printed. |
+| 7a Orders awaiting seller verification before cutover | Live now: `awaiting_verification` = **0**; `paymentProofs` pending = **0**; `orderHistory` to `awaiting_verification` = **0**. Cash awaiting officer confirm = **4** (`pending`/`F2F-pending-confirmation`). Those 4 appear in Admin **Payments → Cash awaiting confirmation** (not a seller queue). |
+| 7b `paymentSecurity` / `trpcProcedureAccess` real DB vs mocks | **Mocks / static analysis.** `trpcProcedureAccess.test.ts` mocks `./db` + storage and uses `createCaller`. `paymentSecurity.test.ts` is pure unit + source-scan (no DB). Real RLS: `server/dbHarness.rls.test.ts` against `TEST_DATABASE_URL` (localhost only). |
+| 7c Two skipped tests | With `TEST_DATABASE_URL` unset: (1) `connects only after localhost guard`, (2) `prevents buyer from reading another buyer's orders under authenticated role` — both under `describe.skipIf(!testDatabaseUrl)`. |
+| 8 Removed cash sentence | Exact sentence appears **only** in `Checkout.cashCopy.test.tsx` (asserting absence). Live checkout e2e asserts UI absence. No production UI source contains it. |
+| 9 Access audit + logs + axe | Vitest procedure/grant/security suites pass. Vercel runtime logs window: no new entries. Unauthenticated checkout/order axe: **pass** (payment-coop-orders 8/8). Payments-tab axe: needs Admin login (skipped). |
