@@ -9,18 +9,30 @@ Updated: 2026-11-18 (verification + hardening follow-up)
 ## Part 2 — registration, applications, add account, order archive (2026-11-18)
 
 **Branch:** `finish/agricoop-complete`  
-**Production:** READY — https://agricoop-marketplace-final-capstone.vercel.app (`275dfe7`, `dpl_HwEghTtkP5s6eo2vL7gqTVz2SUUm`)  
+**Production:** READY — https://agricoop-marketplace-final-capstone.vercel.app (`ad53a3a` + follow-up coop-assign guard)  
 **Design freeze:** No new marketing/shell layout changes in Part 2; additive DB and targeted surfaces only (Auth coop select, Cooperative Admin application, SuperAdmin Applications tab, buyer Activity Active/Archived, Add account). Officer Admin (`admin` role) remains **global** — not scoped to a single cooperative.
 
 ### Production blockers (2026-11-18 follow-up, design freeze)
 
 | ID | Root cause | Fix |
 |----|------------|-----|
-| **A** | `cooperativeAdminApplications` Drizzle insert listed ungranted DEFAULT columns → `42501` on Cooperative Admin signup | Explicit-column SQL insert; orphan Auth repair on duplicate unconfirmed email; coop-create audit uses allowlisted `user_access_updated` |
-| **B** | Verified Auth without app user after partial registration | Self-heal in `getUserByVerifiedAuthId` (buyer + profiles), rate-limited, context passes email/name metadata |
-| **C** | Resend UX | 60s client cooldown; JSON-only tRPC fetch guard |
-| **D** | Non-JSON / stack traces in client errors | `httpBatchLink` fetch wrapper; softened `ErrorBoundary` |
-| **E** | `products.create` `updatedAt` INSERT + listing errors | Explicit product INSERT SQL; `42501` mapping; migration `20261118130000_part2_insert_grants_apps_and_products.sql` |
+| **A** | (1) `reg_mwlns2ze_x2u1gp`: `42501` on `cooperativeAdminApplications` Drizzle DEFAULT columns. (2) `reg_mwloorqb_6gzy7k`: buyer/seller `UPDATE users.cooperativeId` blocked by `guard_users_protected_columns` (`P0001`) | Explicit-column app INSERT; set coop on user INSERT; GUC-gated NULL→coop UPDATE (BLOCK 23); orphan Auth repair |
+| **B** | 5 verified Auth orphans after partial registration; login showed “no application account linked” | Buyer+profile repair (0 orphans); self-heal in `getUserByVerifiedAuthId` (buyer only; rate-limited) |
+| **C** | Resend against `*.example.test` → Auth `email_address_invalid`; built-in sender rate limits on real domains | 60s UI cooldown; JSON-safe client; dashboard SMTP / Auth rate limits (see report below) |
+| **D** | Verification loop from failed provision; client raw `Unexpected token 'A'…` on HTML/non-JSON | Self-heal + email_confirmed_at source of truth; `httpBatchLink` non-JSON wrapper; ErrorBoundary |
+| **E** | `products.create` Drizzle listed `updatedAt` without INSERT grant → `42501`; Zod `qualityGrade` invalid values | Explicit product INSERT; BLOCK 22 grant; specific load vs save messages |
+
+### Live verification evidence (same tRPC paths as forms)
+
+| Check | Result |
+|-------|--------|
+| `auth.register` buyer + existing coop | Fixed after BLOCK 23 + INSERT coop assign (re-verified post-deploy) |
+| `auth.register` coop_admin | HTTP 200 after app INSERT grants (`ad53a3a`) |
+| Orphans | Before: auth_without_app=5 (all verified); after repair: 0 / 0; SuperAdmin rows untouched (count=2) |
+| SuperAdmin `auth.me` | HTTP 200, role `superadmin` (SEED_SUPERADMIN_1_*) |
+| `products.create` as seed seller | HTTP 200 after `qualityGrade=standard`; QA listing deleted |
+| Access audit matrix | All PASS (anon/buyer/seller/admin/superadmin × key procedures) |
+| QA cleanup | Removed `prod_qa_*` Auth+app rows (2), coop-admin app (1), product id 23; re-check orphans 0 |
 
 ### Deliverables (A–E)
 

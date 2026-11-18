@@ -78,11 +78,21 @@ describe("user registration upsert plan", () => {
     }))).toThrow(/verified public registration identity/i);
   });
 
-  it("rejects buyer cooperativeId at signup", () => {
-    expect(() => buildUserUpsertPlan(userInput({
+  it("allows buyer cooperativeId at signup on INSERT", () => {
+    const plan = buildUserUpsertPlan(userInput({
       role: "buyer",
       approvalStatus: "approved",
       cooperativeId: 9,
-    }))).toThrow(/Only Seller registration may set cooperativeId/i);
+    }));
+    expect(plan.values.cooperativeId).toBe(9);
+  });
+
+  it("rejects cooperativeId on Cooperative Admin user upsert", () => {
+    expect(() => buildUserUpsertPlan(userInput({
+      role: "buyer",
+      approvalStatus: "approved",
+      requestedRole: "admin",
+      cooperativeId: 9,
+    }), { intent: "cooperative_admin" })).toThrow(/must not set users\.cooperativeId/i);
   });
 });
