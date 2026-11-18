@@ -619,3 +619,8 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | Hide buyer cart on marketplace | Yes; mobile "Your order" FAB |
 | Auth Login/Join URL mode | `/auth` ↔ `/auth?register=1` |
 | Deploy | pending READY this group |
+
+### Group 1 deploy READY
+- Commits: `21d1f8d`, `6182ba2`
+- Production: `dpl_9beD2VFKKJRzzTdyCqchRP1nDf9W` READY
+- Playwright (throwaway buyer): auth mode, cart persist/refresh, typed qty, cart icon hide/show, mobile FAB — all PASS; leftovers deleted

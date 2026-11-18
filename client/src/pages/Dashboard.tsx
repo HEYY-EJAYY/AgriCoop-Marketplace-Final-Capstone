@@ -1363,7 +1363,7 @@ function CooperativesAdminPanel() {
               <th className="pb-2">Location</th>
               <th className="pb-2">Sellers</th>
               <th className="pb-2">Listings</th>
-              <th className="pb-2" />
+              <th className="pb-2" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
