@@ -445,4 +445,4 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | Production deploy | `dpl_7TTfdbDiss3Wu73UzPAPT4sWTj8v` **READY** on https://agricoop-marketplace-final-capstone.vercel.app — smoke `/`, `/auth`, `/activity`, `/api/health` = 200 |
 | QA_* signed-in Playwright | Still **MISSING** env vars — authenticated axe/QA create-cleanup deferred |
 | Email for application decisions | **Not implemented** — no app transactional mailer; Auth emails only |
-| DB RLS harness CI | Re-run after Part 2 privilege harness hardening; prior green reference https://github.com/HEYY-EJAYY/AgriCoop-Marketplace-Final-Capstone/actions/runs/44234745224 (`f326caf`, 361 passed) |
+| DB RLS harness CI | **Green:** https://github.com/HEYY-EJAYY/AgriCoop-Marketplace-Final-Capstone/actions/runs/44239417812 (`7d729cf`) — includes Part 2 applications/archive privilege case. Local vitest **376 passed** / 6 skipped without Docker. |
