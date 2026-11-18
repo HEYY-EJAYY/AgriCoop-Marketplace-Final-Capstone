@@ -9,14 +9,14 @@ Updated: 2026-11-18 (verification + hardening follow-up)
 ## Part 2 — registration, applications, add account, order archive (2026-11-18)
 
 **Branch:** `finish/agricoop-complete`  
-**Production:** READY — https://agricoop-marketplace-final-capstone.vercel.app (`ad53a3a` + follow-up coop-assign guard)  
+**Production:** READY — https://agricoop-marketplace-final-capstone.vercel.app (`69c7977`, `dpl_DJZfgqd3aizN4sDNZHs4wZcCdDzt` + BLOCK 23/24 applied)  
 **Design freeze:** No new marketing/shell layout changes in Part 2; additive DB and targeted surfaces only (Auth coop select, Cooperative Admin application, SuperAdmin Applications tab, buyer Activity Active/Archived, Add account). Officer Admin (`admin` role) remains **global** — not scoped to a single cooperative.
 
 ### Production blockers (2026-11-18 follow-up, design freeze)
 
 | ID | Root cause | Fix |
 |----|------------|-----|
-| **A** | (1) `reg_mwlns2ze_x2u1gp`: `42501` on `cooperativeAdminApplications` Drizzle DEFAULT columns. (2) `reg_mwloorqb_6gzy7k`: buyer/seller `UPDATE users.cooperativeId` blocked by guard (`P0001`). (3) `reg_mwlox6iu_75byxk`: INSERT with coop denied by RLS (`cooperativeId IS NULL`) | Explicit-column app INSERT; insert user with null coop; GUC-gated NULL→coop UPDATE (BLOCK 23); orphan Auth repair |
+| **A** | (1) `reg_mwlns2ze_x2u1gp`: `42501` coop-admin apps Drizzle defaults. (2) `reg_mwloorqb_6gzy7k` / `reg_mwlp1035_cnilvh`: coop UPDATE `P0001` (guard; BLOCK 23 `NULL` fallthrough). (3) `reg_mwlox6iu_75byxk`: INSERT with coop denied by RLS | Explicit app INSERT; null-coop INSERT + GUC UPDATE; BLOCK 23/24 guard; orphan Auth repair |
 | **B** | 5 verified Auth orphans after partial registration; login showed “no application account linked” | Buyer+profile repair (0 orphans); self-heal in `getUserByVerifiedAuthId` (buyer only; rate-limited) |
 | **C** | Resend against `*.example.test` → Auth `email_address_invalid`; built-in sender rate limits on real domains | 60s UI cooldown; JSON-safe client; dashboard SMTP / Auth rate limits (see report below) |
 | **D** | Verification loop from failed provision; client raw `Unexpected token 'A'…` on HTML/non-JSON | Self-heal + email_confirmed_at source of truth; `httpBatchLink` non-JSON wrapper; ErrorBoundary |
@@ -26,7 +26,7 @@ Updated: 2026-11-18 (verification + hardening follow-up)
 
 | Check | Result |
 |-------|--------|
-| `auth.register` buyer + existing coop | Fixed after BLOCK 23 + INSERT coop assign (re-verified post-deploy) |
+| `auth.register` buyer + existing coop | HTTP 200 after BLOCK 24 (`reg` live_verify_*); verificationRequired true |
 | `auth.register` coop_admin | HTTP 200 after app INSERT grants (`ad53a3a`) |
 | Orphans | Before: auth_without_app=5 (all verified); after repair: 0 / 0; SuperAdmin rows untouched (count=2) |
 | SuperAdmin `auth.me` | HTTP 200, role `superadmin` (SEED_SUPERADMIN_1_*) |

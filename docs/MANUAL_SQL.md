@@ -3913,6 +3913,14 @@ COMMIT;
 
 ---
 
+## BLOCK 24: `20261118141000_registration_coop_assign_guard_fallthrough.sql`
+
+**Bug:** BLOCK 23 used `NULL;` inside the allow branch; PL/pgSQL still continued to `RAISE`, so GUC-gated assignment still returned `P0001`. Replace with `IF NOT (allow…) THEN RAISE`.
+
+(See migration file for full function body.)
+
+---
+
 ## BLOCK 23: `20261118140000_registration_cooperative_assign_guard.sql`
 
 **Production blocker (A):** buyer/seller registration linked an existing cooperative via `UPDATE users.cooperativeId` after insert. Trigger `guard_users_protected_columns` rejected self-updates (`P0001`). RLS `agricoop_auth_users_self_insert` also requires `cooperativeId IS NULL` on INSERT, so assignment must be a post-insert UPDATE. Registration sets session GUC `agricoop.allow_registration_coop_assign=1` and the guard allows only NULL → value under that GUC.
@@ -3948,14 +3956,15 @@ BEGIN
         RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
       END IF;
       IF NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
-        IF allow_reg_coop = '1'
-           AND OLD."cooperativeId" IS NULL
-           AND NEW."cooperativeId" IS NOT NULL
-           AND NEW."role" IS NOT DISTINCT FROM OLD."role"
-           AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus" THEN
-          NULL;
+        IF NOT (
+          allow_reg_coop = '1'
+          AND OLD."cooperativeId" IS NULL
+          AND NEW."cooperativeId" IS NOT NULL
+          AND NEW."role" IS NOT DISTINCT FROM OLD."role"
+          AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus"
+        ) THEN
+          RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
         END IF;
-        RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
       END IF;
     ELSIF actor_role NOT IN ('admin', 'superadmin') THEN
       RAISE EXCEPTION 'Only Admin or SuperAdmin can change protected user fields';

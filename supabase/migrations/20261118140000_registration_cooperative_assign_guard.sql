@@ -30,14 +30,16 @@ BEGIN
       END IF;
       IF NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
         -- Registration / repair only: first cooperative link while GUC is set.
-        IF allow_reg_coop = '1'
-           AND OLD."cooperativeId" IS NULL
-           AND NEW."cooperativeId" IS NOT NULL
-           AND NEW."role" IS NOT DISTINCT FROM OLD."role"
-           AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus" THEN
-          NULL;
+        -- (Do not use bare NULL; that falls through to RAISE in PL/pgSQL.)
+        IF NOT (
+          allow_reg_coop = '1'
+          AND OLD."cooperativeId" IS NULL
+          AND NEW."cooperativeId" IS NOT NULL
+          AND NEW."role" IS NOT DISTINCT FROM OLD."role"
+          AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus"
+        ) THEN
+          RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
         END IF;
-        RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
       END IF;
     ELSIF actor_role NOT IN ('admin', 'superadmin') THEN
       RAISE EXCEPTION 'Only Admin or SuperAdmin can change protected user fields';
