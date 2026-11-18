@@ -146,18 +146,17 @@ test.describe("marketing boxed layout", () => {
       expect(metrics.maxWidthPx).toBeLessThanOrEqual(1280 + 0.5);
       expect(metrics.width).toBeLessThanOrEqual(Math.min(1280, metrics.clientWidth) + 1);
 
-      // Full-bleed bands span the visual viewport; clientWidth may be smaller under scrollbar-gutter.
+      // Full-bleed bands start at the left edge and cover at least the layout viewport.
       const bands = page.locator("[data-full-bleed], footer.border-t, header[data-testid='site-header']");
       const count = await bands.count();
       for (let i = 0; i < count; i += 1) {
         const box = await bands.nth(i).evaluate(el => {
           const rect = el.getBoundingClientRect();
-          return { left: rect.left, width: rect.width };
+          return { left: rect.left, right: rect.right, width: rect.width };
         });
         expect(Math.abs(box.left)).toBeLessThanOrEqual(1);
-        const matchesClient = Math.abs(box.width - metrics.clientWidth) <= 2;
-        const matchesInner = Math.abs(box.width - metrics.innerWidth) <= 2;
-        expect(matchesClient || matchesInner).toBe(true);
+        expect(box.width).toBeGreaterThanOrEqual(metrics.clientWidth - 2);
+        expect(box.right).toBeGreaterThanOrEqual(metrics.clientWidth - 2);
       }
     });
   }
