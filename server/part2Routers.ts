@@ -13,7 +13,7 @@ import {
   COOP_ADMIN_APPLICATION_CONTENT_TYPES,
   COOP_ADMIN_APPLICATION_MAX_BYTES,
 } from "../shared/coopAdminApplication";
-import { requireOperationalRole } from "./authz";
+import { canCreateManagedAccountRole, requireOperationalRole } from "./authz";
 import { createPublicAuthClient, supabaseAdmin } from "./clients";
 import {
   coopAdminApplicationExtension,
@@ -417,11 +417,13 @@ export const adminAccountsRouter = router({
     }).strict())
     .mutation(async ({ ctx, input }) => {
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
-      if (input.role === "admin" && actor.role !== "superadmin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only SuperAdmin can create Officer Admin accounts." });
-      }
-      if (input.role === "superadmin" as string) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "SuperAdmin accounts cannot be created from the UI." });
+      if (!canCreateManagedAccountRole(actor.role, input.role)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: input.role === "admin"
+            ? "Only SuperAdmin can create Officer Admin accounts."
+            : "You cannot create that account role.",
+        });
       }
       const needsCoop = input.role === "seller" || input.role === "admin";
       if (needsCoop && !input.cooperativeId && !input.newCooperativeName) {
@@ -535,11 +537,14 @@ export const adminAccountsRouter = router({
           if (appUser) {
             await recordAuditLog(db, {
               actorUserId: actor.id,
-              action: "admin_created_account",
+              action: "user_access_updated",
               entityType: "user",
               entityId: appUser.id,
               cooperativeId,
-              metadata: { role: input.role, email: input.email },
+              metadata: {
+                createdByAdmin: true,
+                after: { role: input.role, email: input.email, cooperativeId },
+              },
             });
           }
         });

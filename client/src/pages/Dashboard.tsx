@@ -9,7 +9,9 @@ import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import AdminRefundManagement from "@/components/AdminRefundManagement";
 import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
-import { AdminWorkspaceTabs } from "@/components/AdminWorkspaceTabs";
+import { AdminWorkspaceTabs, type AdminWorkspaceTabId } from "@/components/AdminWorkspaceTabs";
+import { OfficerApplicationsPanel } from "@/components/OfficerApplicationsPanel";
+import { AddAccountDialog } from "@/components/AddAccountDialog";
 import { getProductImageUrl } from "@/lib/productImages";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
@@ -550,6 +552,7 @@ function BuyerPaymentProof({ payment, onSubmitted }: { payment: any; onSubmitted
 }
 
 function BuyerDashboard() {
+  const { user: buyerUser } = useAuth();
   const [, setLocation] = useLocation();
   const openOrderChat = trpc.conversations.openForOrder.useMutation({
     onSuccess: data => setLocation(`/messages?id=${data.conversationId}`),
@@ -593,6 +596,13 @@ function BuyerDashboard() {
   return <>
     <WorkspaceHeader title="Buyer workspace" description="Track direct orders, quotation requests, and face-to-face coordination."/>
     <main className={`${shellContainerClass} py-8`}>
+      {buyerUser?.requestedRole === "admin" && (
+        <div className="mb-6 rounded-2xl border border-[#d7e4cf] bg-[#f3f8ef] p-4" role="status">
+          <p className="font-bold text-[#2f5a3d]">Complete your Cooperative Admin application</p>
+          <p className="mt-1 text-sm text-[#5f7164]">Upload your ID and proof of position so a SuperAdmin can review Officer Admin access.</p>
+          <Link href="/applications/cooperative-admin" className="agri-button mt-3 inline-flex min-h-11 text-sm no-underline">Open application</Link>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-3">
         <Metric label="Orders placed" value={String(orders.length)} icon={ClipboardList}/>
         <Metric label="Open quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/>
@@ -1251,6 +1261,10 @@ function AdminDashboard() {
     onError: error => toast.error(error.message),
   });
 
+  const [addAccountOpen, setAddAccountOpen] = useState(false);
+  const adminTabs: AdminWorkspaceTabId[] = user?.role === "superadmin"
+    ? ["moderation", "orders", "payments", "users", "applications"]
+    : ["moderation", "orders", "payments", "users"];
   if (sellerMode) return <SellerDashboard onExitSellerMode={() => setSellerMode(false)} />;
   if (isLoading) return <LoadingWorkspace />;
   if (overviewQuery.error) {
@@ -1306,8 +1320,11 @@ function AdminDashboard() {
         <AssociationRequestsManager />
         {user?.role === "superadmin" && <RoleConflictsPanel />}
 
+        <AddAccountDialog open={addAccountOpen} onClose={() => setAddAccountOpen(false)} />
         <AdminWorkspaceTabs
+          visibleTabs={adminTabs}
           panels={{
+            applications: user?.role === "superadmin" ? <OfficerApplicationsPanel /> : null,
             moderation: (
               <section className="agri-card overflow-hidden" data-testid="admin-moderation-content">
                 <div className="p-5 sm:p-6">
@@ -1374,9 +1391,16 @@ function AdminDashboard() {
             users: (
               <section className="grid gap-8 xl:grid-cols-[1.3fr_.7fr]" data-testid="admin-users-content">
                 <div className="agri-card overflow-hidden">
-                  <div className="p-5 sm:p-6">
-                    <h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2>
-                    <p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3 p-5 sm:p-6">
+                    <div>
+                      <h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2>
+                      <p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p>
+                    </div>
+                    {(user?.role === "admin" || user?.role === "superadmin") && (
+                      <button type="button" className="agri-button min-h-11 text-sm" onClick={() => setAddAccountOpen(true)}>
+                        Add account
+                      </button>
+                    )}
                   </div>
                   <div className="overflow-x-auto border-t border-[#e3e9de]">
                     <table className="w-full min-w-[860px] text-left text-sm">

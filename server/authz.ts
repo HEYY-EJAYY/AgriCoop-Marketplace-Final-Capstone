@@ -243,6 +243,17 @@ export function canUpdateCooperativeUser(
     && requestedRole !== "superadmin";
 }
 
+/** Admin Add-account UI: Admin may create buyer/seller; SuperAdmin may also create Officer Admin (admin). Nobody creates superadmin. */
+export function canCreateManagedAccountRole(
+  actorRole: AppRole,
+  createdRole: AppRole,
+) {
+  if (createdRole === "superadmin") return false;
+  if (actorRole === "superadmin") return createdRole === "buyer" || createdRole === "seller" || createdRole === "admin";
+  if (actorRole === "admin") return createdRole === "buyer" || createdRole === "seller";
+  return false;
+}
+
 export function isSellerApproved(approvalStatus: OperationalUser["approvalStatus"] | undefined) {
   return approvalStatus === "approved";
 }
