@@ -259,4 +259,9 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | Legacy seller columns / `seller-payment-qr` files | Preserved (2 users, 2 files); grants REVOKEd; storage owner policies dropped |
 | Live privilege | anon QR SELECT **false**; auth account SELECT/UPDATE **false**; `system-payment-qr` public=false; seller_qr policies **0** |
 | vitest | **351 passed**, 2 skipped |
-| typecheck | pass |
+| typecheck / build | pass |
+| Production deploy | `dpl_GLY7s7rEDaPLc3Nkwsxgf7DF9md8` **READY** on https://agricoop-marketplace-final-capstone.vercel.app |
+| Playwright `payment-coop-orders` 360+1280 | **8/8** |
+| Live privilege recheck | anon QR SELECT false; auth account SELECT/UPDATE false; system-payment-qr private; seller QR storage policies 0 |
+| Authenticated QA E2E (`qa-test-` accounts) | Not run this session (no QA credentials in environment); CI unit/matrix cover authz. Officer should configure Payments tab QR before Online checkout is offered. |
+| Thesis PDF | Regenerated via `scripts/build-system-docs.mjs` |
