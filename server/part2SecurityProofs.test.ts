@@ -196,18 +196,18 @@ describe("Part 2 security proofs", () => {
   it("buyer order archive does not change seller or admin order views", async () => {
     const dbSource = readFileSync(fileURLToPath(new URL("./db.ts", import.meta.url)), "utf8");
     const sellerBlock = dbSource.match(/export async function getSellerOrders[\s\S]*?^}/m)?.[0] ?? "";
-    expect(sellerBlock).not.toMatch(/archived/i);
+    expect(sellerBlock).toMatch(/threadStates\.userId,\s*sellerId/);
+    expect(sellerBlock).toMatch(/threadStates\.channel,\s*"seller_order"/);
+    expect(sellerBlock).not.toMatch(/threadStates\.channel,\s*"order"/);
     const adminBlock = dbSource.match(/export async function getAdminOverview[\s\S]*?^}/m)?.[0] ?? "";
     expect(adminBlock).not.toMatch(/archivedAt/i);
 
     await caller("seller", 20).orders.sellerMine();
-    expect(mocks.getSellerOrders).toHaveBeenCalledWith(20);
+    expect(mocks.getSellerOrders).toHaveBeenCalledWith(20, { archived: false, deleted: false });
     expect(mocks.getSellerOrders).toHaveBeenCalledTimes(1);
-    const sellerArgs = mocks.getSellerOrders.mock.calls[0] ?? [];
-    expect(sellerArgs).toHaveLength(1);
 
     await caller("buyer", 10).orders.buyerMine({ archived: true });
-    expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: true });
+    expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: true, deleted: false });
 
     await expect(
       caller("admin", 99).orders.updateArchive({ orderIds: [1], action: "archive" }),

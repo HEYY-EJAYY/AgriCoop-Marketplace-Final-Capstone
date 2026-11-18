@@ -110,9 +110,9 @@ describe("tRPC role × procedure access matrix", () => {
 
   it("scopes buyer and seller order lists", async () => {
     await expect(caller("buyer", 10).orders.buyerMine()).resolves.toEqual([]);
-    expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: false });
+    expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: false, deleted: false });
     await expect(caller("seller", 20).orders.sellerMine()).resolves.toEqual([]);
-    expect(mocks.getSellerOrders).toHaveBeenCalledWith(20);
+    expect(mocks.getSellerOrders).toHaveBeenCalledWith(20, { archived: false, deleted: false });
     await expect(caller("buyer", 10).orders.sellerMine()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 

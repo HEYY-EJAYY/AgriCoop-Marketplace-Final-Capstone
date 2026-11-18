@@ -26,6 +26,7 @@ vi.mock("./db", async importOriginal => {
 });
 
 import type { TrpcContext } from "./_core/context";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { cooperatives, roles as rolesTable, users as usersTable } from "../drizzle/pg-schema";
 import {
   appRouter,
@@ -71,14 +72,31 @@ function newAuthSignup() {
   };
 }
 
-function registrationDb(roleRows: Array<{ roleId: number; roleName: string }>, profileExecute = vi.fn().mockResolvedValue(undefined)) {
+const pgDialect = new PgDialect();
+
+function registrationDb(
+  roleRows: Array<{ roleId: number; roleName: string }>,
+  profileExecute = vi.fn().mockResolvedValue(undefined),
+  options: { softDeleted?: boolean } = {},
+) {
   return {
     select: vi.fn(() => ({
       from: vi.fn((table: unknown) => ({
-        where: vi.fn(() => ({
+        where: vi.fn((clause: any) => ({
           limit: vi.fn(async () => {
             if (table === cooperatives) return [{ id: 12, status: "active" }];
-            if (table === usersTable) return [{ id: 99 }];
+            if (table === usersTable) {
+              let sqlText = "";
+              try {
+                sqlText = clause ? pgDialect.sqlToQuery(clause).sql : "";
+              } catch {
+                sqlText = "";
+              }
+              if (sqlText.includes("deletedAt")) {
+                return options.softDeleted ? [{ id: 99 }] : [];
+              }
+              return [{ id: 99 }];
+            }
             if (table === rolesTable) return roleRows;
             return roleRows;
           }),
@@ -356,6 +374,22 @@ describe("public registration role policy and verification", () => {
     expect(result).toEqual({ success: true, verificationRequired: true });
     expect(mocks.upsertUser).toHaveBeenCalled();
     expect(profileExecute).toHaveBeenCalled();
+  });
+
+  it("rejects registration for a soft-deleted account with an inactive message", async () => {
+    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 47, roleName: "buyer" }], undefined, { softDeleted: true }));
+
+    await expect(appRouter.createCaller(publicContext("192.0.2.88")).auth.register({
+      email: "soft-deleted@example.test",
+      password: "example-password",
+      name: "Deleted User",
+      role: "buyer",
+    })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "This account is no longer active. Please contact an administrator.",
+    });
+
+    expect(mocks.createUser).not.toHaveBeenCalled();
   });
 
   it("denies operational tRPC procedures to an unverified request context", async () => {
