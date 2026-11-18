@@ -23,8 +23,8 @@ Updated: 2026-11-18
 | | |
 |--|--|
 | **Symptom** | “Unable to start registration. Please try again later.” |
-| **Root cause** | Nested `withRequestDatabaseScope` inside `auth.register` while the publicProcedure middleware already held the anon transaction. Serverless postgres client uses `max: 1`, so the nested authenticated transaction waited until the Vercel 30s timeout. Auth `admin.createUser` completed in ~187ms; no app row was written. Secondary: Auth `429 over_email_send_rate_limit` on confirmation email. |
-| **Fix** | Exclude `auth.register` / `auth.resendVerification` from the public DB middleware; `admin.createUser({ email_confirm: false })` → single authenticated provision scope → best-effort `auth.resend`. Correlation ID `(ref: reg_…)`; deferred confirmation on rate limit |
+| **Root cause** | (1) Nested `withRequestDatabaseScope` under public anon middleware deadlocked `max:1` pool (30s timeout). (2) After that fix: Drizzle `insert(users)` listed every column including revoked `onlinePayment*` as `DEFAULT` → `42501` during provisioning. Secondary: Auth email rate limit on confirmation. |
+| **Fix** | Exclude `auth.register` from public DB middleware; `admin.createUser({ email_confirm: false })` → authenticated provision with **explicit-column** `upsertUser` (no payment columns) → best-effort `auth.resend`. Correlation ID + cause logging |
 | **Dashboard** | If confirmation emails stay deferred: Supabase Auth → Rate Limits / custom SMTP. Env names only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
 
 ### Issue 3 — Cooperative missing on marketplace

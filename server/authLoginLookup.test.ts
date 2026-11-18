@@ -16,4 +16,17 @@ describe("login application-user lookup contract", () => {
     expect(lookup).not.toMatch(/onlinePaymentAccountNumber\s*:/);
     expect(lookup).not.toMatch(/onlinePaymentLabel\s*:/);
   });
+
+  it("registers users with an explicit column list that omits seller payment columns", () => {
+    const dbSource = readFileSync(join(process.cwd(), "server/db.ts"), "utf8");
+    const start = dbSource.indexOf("export async function upsertUser");
+    const end = dbSource.indexOf("export function legacyPaymentStatusFromOrder", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const upsert = dbSource.slice(start, end);
+    expect(upsert).toContain("insert into agricoop_app.users");
+    expect(upsert).toContain('"openId", name, email, "loginMethod", role, "approvalStatus", "cooperativeId", "lastSignedIn"');
+    const sqlOnly = upsert.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(sqlOnly).not.toMatch(/onlinePayment/);
+  });
 });

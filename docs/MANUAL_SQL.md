@@ -3470,3 +3470,12 @@ END $$;
 3. Correlation ID `(ref: reg_…)` on failure paths; rate-limited confirmation is deferred (not a hard fail).
 
 **Dashboard (if emails stay deferred):** Supabase Auth → Rate Limits / SMTP — raise email send rate or configure custom SMTP. Env vars involved by name only: `APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+## BLOCK 19 — Registration upsert must omit revoked payment columns
+
+**Root cause (after deadlock fix):** `upsertUser` used Drizzle `insert(users).values(...)`, which expands to every `agricoop_app.users` column (including `onlinePayment*` as `DEFAULT`). BLOCK 17 revoked authenticated INSERT/SELECT on those columns → Postgres `42501` during provisioning. Correlation showed the expanded INSERT in logs.
+
+**Fix (code):** `upsertUser` uses an explicit SQL column list:
+`openId, name, email, loginMethod, role, approvalStatus, cooperativeId, lastSignedIn` only.
+
+**Migration:** `supabase/migrations/20261118043000_registration_insert_column_contract.sql` (notice guard; no payment GRANT restore).

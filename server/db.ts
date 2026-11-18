@@ -171,14 +171,35 @@ export function buildUserUpsertPlan(user: InsertUser) {
 export async function upsertUser(user: InsertUser, executor?: RootDb | RootTransaction): Promise<void> {
   const db = executor ?? await getDb();
   const plan = buildUserUpsertPlan(user);
-  const [persisted] = await db.insert(users).values(plan.values).onConflictDoUpdate({
-    target: users.openId,
-    set: plan.updateSet,
-  }).returning({
-    role: users.role,
-    approvalStatus: users.approvalStatus,
-    cooperativeId: users.cooperativeId,
-  });
+  // Explicit column list only: Drizzle's full-table insert lists every users column
+  // (including onlinePayment* as DEFAULT). BLOCK 17 revoked authenticated INSERT on
+  // those payment columns, so the expanded insert raises 42501 and registration fails.
+  const rows = await db.execute(sql`
+    insert into agricoop_app.users (
+      "openId", name, email, "loginMethod", role, "approvalStatus", "cooperativeId", "lastSignedIn"
+    ) values (
+      ${plan.values.openId},
+      ${plan.values.name ?? null},
+      ${plan.values.email ?? null},
+      ${plan.values.loginMethod ?? null},
+      ${plan.values.role}::agricoop_app.user_role,
+      ${plan.values.approvalStatus}::agricoop_app.user_approval_status,
+      ${plan.values.cooperativeId ?? null},
+      ${plan.values.lastSignedIn}
+    )
+    on conflict ("openId") do update set
+      name = coalesce(excluded.name, agricoop_app.users.name),
+      email = coalesce(excluded.email, agricoop_app.users.email),
+      "loginMethod" = coalesce(excluded."loginMethod", agricoop_app.users."loginMethod"),
+      "lastSignedIn" = excluded."lastSignedIn",
+      "updatedAt" = now()
+    returning role, "approvalStatus", "cooperativeId"
+  `);
+  const persisted = (rows as unknown as Array<{
+    role: "buyer" | "seller" | "admin" | "superadmin";
+    approvalStatus: "approved" | "pending" | "suspended";
+    cooperativeId: number | null;
+  }>)[0];
   if (!persisted || !matchesPublicRegistrationIdentity(persisted, plan.identity)) {
     throw new Error("Existing application role or approval status conflicts with the canonical public role.");
   }
