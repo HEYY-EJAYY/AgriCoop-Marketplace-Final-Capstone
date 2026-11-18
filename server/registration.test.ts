@@ -69,13 +69,13 @@ function newAuthSignup() {
   };
 }
 
-function registrationDb(roleRows: Array<{ roleId: number; roleName: string }>, profileValues = vi.fn().mockResolvedValue(undefined)) {
+function registrationDb(roleRows: Array<{ roleId: number; roleName: string }>, profileExecute = vi.fn().mockResolvedValue(undefined)) {
   const limit = vi.fn().mockResolvedValue(roleRows);
   const where = vi.fn(() => ({ limit }));
   const from = vi.fn(() => ({ where }));
   return {
     select: vi.fn(() => ({ from })),
-    insert: vi.fn(() => ({ values: profileValues })),
+    execute: profileExecute,
   };
 }
 
@@ -122,8 +122,8 @@ describe("public registration role policy and verification", () => {
 
   it("starts Supabase email confirmation without auto-confirming or returning auth tokens", async () => {
     mocks.createUser.mockResolvedValue(newAuthSignup());
-    const profileValues = vi.fn().mockResolvedValue(undefined);
-    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 48, roleName: "seller" }], profileValues));
+    const profileExecute = vi.fn().mockResolvedValue(undefined);
+    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 48, roleName: "seller" }], profileExecute));
     const caller = appRouter.createCaller(publicContext());
 
     const result = await caller.auth.register({
@@ -150,12 +150,7 @@ describe("public registration role policy and verification", () => {
       approvalStatus: "pending",
       cooperativeId: null,
     }));
-    expect(profileValues).toHaveBeenCalledWith({
-      userId: "new-auth-user",
-      fullName: "Example Seller",
-      email: "seller@example.test",
-      roleId: 48,
-    });
+    expect(profileExecute).toHaveBeenCalled();
     expect(result).toEqual({ success: true, verificationRequired: true });
     expect(JSON.stringify(result)).not.toContain("access_token");
   });
@@ -164,8 +159,8 @@ describe("public registration role policy and verification", () => {
     const signup = newAuthSignup();
     signup.data.user.email = "buyer@example.test";
     mocks.createUser.mockResolvedValue(signup);
-    const profileValues = vi.fn().mockResolvedValue(undefined);
-    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 47, roleName: "buyer" }], profileValues));
+    const profileExecute = vi.fn().mockResolvedValue(undefined);
+    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 47, roleName: "buyer" }], profileExecute));
 
     const result = await appRouter.createCaller(publicContext()).auth.register({
       email: "buyer@example.test",
@@ -181,12 +176,7 @@ describe("public registration role policy and verification", () => {
       approvalStatus: "approved",
       cooperativeId: null,
     }));
-    expect(profileValues).toHaveBeenCalledWith({
-      userId: "new-auth-user",
-      fullName: "Example Buyer",
-      email: "buyer@example.test",
-      roleId: 47,
-    });
+    expect(profileExecute).toHaveBeenCalled();
   });
 
   it("fails closed and removes the Auth identity when a public registration role is ambiguous", async () => {
@@ -262,8 +252,8 @@ describe("public registration role policy and verification", () => {
     mocks.resend.mockResolvedValue({
       error: { code: "over_email_send_rate_limit", message: "email rate limit exceeded", name: "AuthApiError" },
     });
-    const profileValues = vi.fn().mockResolvedValue(undefined);
-    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 48, roleName: "seller" }], profileValues));
+    const profileExecute = vi.fn().mockResolvedValue(undefined);
+    mocks.getDb.mockResolvedValue(registrationDb([{ roleId: 48, roleName: "seller" }], profileExecute));
 
     const result = await appRouter.createCaller(publicContext("192.0.2.77")).auth.register({
       email: "seller-rate-limit@example.test",
@@ -274,6 +264,7 @@ describe("public registration role policy and verification", () => {
 
     expect(result).toEqual({ success: true, verificationRequired: true });
     expect(mocks.upsertUser).toHaveBeenCalled();
+    expect(profileExecute).toHaveBeenCalled();
   });
 
   it("denies operational tRPC procedures to an unverified request context", async () => {

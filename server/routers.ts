@@ -378,12 +378,17 @@ export const appRouter = router({
                 cooperativeId: null,
                 loginMethod: "supabase",
               });
-              await db.insert(profiles).values({
-                userId: createdAuthUser.id,
-                fullName: input.name,
-                email: input.email,
-                roleId: publicRoles[0].roleId,
-              });
+              // Explicit columns only — Drizzle expands defaults for cooperative_id /
+              // account_status / created_at, which authenticated cannot INSERT (42501).
+              await db.execute(sql`
+                insert into public.profiles (user_id, full_name, email, role_id)
+                values (
+                  ${createdAuthUser.id}::uuid,
+                  ${input.name},
+                  ${input.email},
+                  ${publicRoles[0].roleId}
+                )
+              `);
             }),
             async authUserId => {
               const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
