@@ -23,6 +23,7 @@ class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      const showTechnicalDetail = import.meta.env.DEV && this.state.error?.stack;
       return (
         <div className="flex items-center justify-center min-h-screen p-8 bg-background">
           <div className="flex flex-col items-center w-full max-w-2xl p-8">
@@ -31,13 +32,18 @@ class ErrorBoundary extends Component<Props, State> {
               className="text-destructive mb-6 flex-shrink-0"
             />
 
-            <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
+            <h2 className="text-xl mb-4 text-center">Something went wrong loading this page.</h2>
+            <p className="text-sm text-muted-foreground text-center mb-6">
+              Please try again. If the problem continues, refresh or come back in a few minutes.
+            </p>
 
-            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
-              <pre className="text-sm text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
-              </pre>
-            </div>
+            {showTechnicalDetail ? (
+              <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
+                <pre className="text-sm text-muted-foreground whitespace-break-spaces">
+                  {this.state.error?.stack}
+                </pre>
+              </div>
+            ) : null}
 
             <button
               onClick={() => window.location.reload()}
@@ -48,7 +54,7 @@ class ErrorBoundary extends Component<Props, State> {
               )}
             >
               <RotateCcw size={16} />
-              Reload Page
+              Retry
             </button>
           </div>
         </div>

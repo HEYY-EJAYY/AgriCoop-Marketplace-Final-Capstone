@@ -12,6 +12,16 @@ Updated: 2026-11-18 (verification + hardening follow-up)
 **Production:** READY — https://agricoop-marketplace-final-capstone.vercel.app (`275dfe7`, `dpl_HwEghTtkP5s6eo2vL7gqTVz2SUUm`)  
 **Design freeze:** No new marketing/shell layout changes in Part 2; additive DB and targeted surfaces only (Auth coop select, Cooperative Admin application, SuperAdmin Applications tab, buyer Activity Active/Archived, Add account). Officer Admin (`admin` role) remains **global** — not scoped to a single cooperative.
 
+### Production blockers (2026-11-18 follow-up, design freeze)
+
+| ID | Root cause | Fix |
+|----|------------|-----|
+| **A** | `cooperativeAdminApplications` Drizzle insert listed ungranted DEFAULT columns → `42501` on Cooperative Admin signup | Explicit-column SQL insert; orphan Auth repair on duplicate unconfirmed email; coop-create audit uses allowlisted `user_access_updated` |
+| **B** | Verified Auth without app user after partial registration | Self-heal in `getUserByVerifiedAuthId` (buyer + profiles), rate-limited, context passes email/name metadata |
+| **C** | Resend UX | 60s client cooldown; JSON-only tRPC fetch guard |
+| **D** | Non-JSON / stack traces in client errors | `httpBatchLink` fetch wrapper; softened `ErrorBoundary` |
+| **E** | `products.create` `updatedAt` INSERT + listing errors | Explicit product INSERT SQL; `42501` mapping; migration `20261118130000_part2_insert_grants_apps_and_products.sql` |
+
 ### Deliverables (A–E)
 
 | Item | Scope | Commit |

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   createUser: vi.fn(),
   resend: vi.fn(),
   deleteUser: vi.fn(),
+  listUsers: vi.fn(),
   getDb: vi.fn(),
   upsertUser: vi.fn(),
   withRequestDatabaseScope: vi.fn(),
@@ -11,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./clients", () => ({
   createPublicAuthClient: () => ({ auth: { resend: mocks.resend } }),
-  supabaseAdmin: { auth: { admin: { createUser: mocks.createUser, deleteUser: mocks.deleteUser } } },
+  supabaseAdmin: { auth: { admin: { createUser: mocks.createUser, deleteUser: mocks.deleteUser, listUsers: mocks.listUsers } } },
 }));
 
 vi.mock("./db", async importOriginal => {
@@ -93,6 +94,7 @@ describe("public registration role policy and verification", () => {
   beforeEach(() => {
     vi.stubEnv("APP_URL", "https://market.example.test");
     mocks.createUser.mockReset();
+    mocks.listUsers.mockReset().mockResolvedValue({ data: { users: [] }, error: null });
     mocks.resend.mockReset().mockResolvedValue({ error: null });
     mocks.deleteUser.mockReset().mockResolvedValue({ error: null });
     mocks.upsertUser.mockReset().mockResolvedValue(undefined);
@@ -243,7 +245,10 @@ describe("public registration role policy and verification", () => {
       cooperativeId: null,
       requestedRole: "admin",
     }), undefined, expect.objectContaining({ intent: "cooperative_admin" }));
-    expect(db.insert).toHaveBeenCalled();
+    const executedSql = profileExecute.mock.calls
+      .map(call => JSON.stringify(call))
+      .join("\n");
+    expect(executedSql).toMatch(/cooperativeAdminApplications/);
   });
 
   it("does not provision an application profile for an existing Auth identity", async () => {
@@ -261,6 +266,54 @@ describe("public registration role policy and verification", () => {
 
     expect(result).toEqual({ success: true, verificationRequired: true });
     expect(mocks.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("repairs orphan Auth users when duplicate signup is unconfirmed and has no app row", async () => {
+    mocks.createUser.mockResolvedValue({
+      data: { user: null },
+      error: { code: "email_exists", message: "User already registered", name: "AuthApiError" },
+    });
+    mocks.listUsers.mockResolvedValue({
+      data: {
+        users: [{
+          id: "orphan-auth-user",
+          email: "orphan@example.test",
+          email_confirmed_at: null,
+        }],
+      },
+      error: null,
+    });
+    const profileExecute = vi.fn().mockResolvedValue(undefined);
+    const orphanDb = {
+      select: vi.fn(() => ({
+        from: vi.fn((table: unknown) => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => {
+              if (table === usersTable) return [];
+              if (table === rolesTable) return [{ roleId: 47, roleName: "buyer" }];
+              if (table === cooperatives) return [{ id: 12, status: "active" }];
+              return [];
+            }),
+          })),
+        })),
+      })),
+      execute: profileExecute,
+    };
+    mocks.getDb.mockResolvedValue(orphanDb);
+
+    const result = await appRouter.createCaller(publicContext()).auth.register({
+      email: "orphan@example.test",
+      password: "example-password",
+      name: "Orphan Repair",
+      role: "buyer",
+    });
+
+    expect(result).toEqual({ success: true, verificationRequired: true });
+    expect(mocks.upsertUser).toHaveBeenCalledWith(expect.objectContaining({
+      openId: "orphan-auth-user",
+      role: "buyer",
+    }), undefined, expect.objectContaining({ intent: "buyer" }));
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
   });
 
   it("fails closed and removes a new Auth user if email confirmation is disabled", async () => {

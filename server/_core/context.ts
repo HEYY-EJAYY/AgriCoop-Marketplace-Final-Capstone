@@ -85,7 +85,11 @@ export async function createContext(opts: CreateExpressContextOptions): Promise<
       const verifiedAuthUserId = data.user.id;
       authUserId = verifiedAuthUserId;
       try {
-        const mapping = await withRequestDatabaseScope(verifiedAuthUserId, () => getUserByVerifiedAuthId(verifiedAuthUserId));
+        const mapping = await withRequestDatabaseScope(verifiedAuthUserId, () => getUserByVerifiedAuthId(verifiedAuthUserId, {
+          email: data.user.email,
+          name: typeof data.user.user_metadata?.name === "string" ? data.user.user_metadata.name : null,
+          userMetadata: data.user.user_metadata ?? null,
+        }));
         authResolution = mapping.status;
         if (mapping.status === "application_user_resolved") user = mapping.user;
         logAuthDiagnostic(authResolution, user ? { role: user.role } : {});

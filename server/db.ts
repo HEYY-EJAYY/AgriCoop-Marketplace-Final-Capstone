@@ -30,6 +30,11 @@ import {
 import { availableStockAfterReservations } from "./marketplaceRules";
 import { getSystemPaymentAvailability } from "./systemPayment";
 import {
+  RegistrationRateLimitError,
+  registrationRateLimiter,
+  requestedRoleFromAuthMetadata,
+} from "./registration";
+import {
   applicationRoleToPublicRoleName,
   matchesPublicRegistrationIdentity,
   resolveAuthIdentityMapping,
@@ -355,7 +360,16 @@ export async function syncProfileRoleToApplicationRole(
   return { publicRoleName, roleId: roleRow.roleId };
 }
 
-export async function getUserByVerifiedAuthId(authUserId: string) {
+export type VerifiedAuthIdentityContext = {
+  email?: string | null;
+  name?: string | null;
+  userMetadata?: Record<string, unknown> | null;
+};
+
+export async function getUserByVerifiedAuthId(
+  authUserId: string,
+  identityContext?: VerifiedAuthIdentityContext,
+) {
   const first = await loadAuthIdentityRecords(authUserId);
   let resolution = resolveAuthIdentityMapping(authUserId, first.applicationUsers, first.profileRoles);
   // Safe self-heal: when exactly one app user and one profile disagree, mirror app role into profiles.
@@ -371,6 +385,63 @@ export async function getUserByVerifiedAuthId(authUserId: string) {
       }
     } catch (error) {
       console.error("[auth] Role mapping self-heal failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+  if (resolution.status === "application_user_missing") {
+    const email = identityContext?.email?.trim().toLowerCase() ?? "";
+    const rateSubject = email || authUserId;
+    try {
+      registrationRateLimiter.consume("self_heal", undefined, rateSubject);
+    } catch (error) {
+      if (error instanceof RegistrationRateLimitError) {
+        console.warn("[auth] self_heal_application_user rate_limited", {
+          authUserPrefix: authUserId.slice(0, 8),
+        });
+        return resolution;
+      }
+      throw error;
+    }
+    try {
+      const displayName = identityContext?.name?.trim()
+        || identityContext?.email?.split("@")[0]?.trim()
+        || "AgriCoop member";
+      const requestedRole = requestedRoleFromAuthMetadata(identityContext?.userMetadata ?? undefined);
+      await upsertUser({
+        openId: authUserId,
+        email: email || null,
+        name: displayName,
+        role: "buyer",
+        approvalStatus: "approved",
+        cooperativeId: null,
+        requestedRole,
+        loginMethod: "supabase",
+      }, undefined, { intent: "buyer" });
+      const db = await getDb();
+      const [buyerRole] = await db.select({ roleId: roles.roleId })
+        .from(roles)
+        .where(eq(roles.roleName, "buyer"))
+        .limit(1);
+      if (!buyerRole) throw new Error('Canonical public role "buyer" is missing.');
+      await db.execute(sql`
+        insert into public.profiles (user_id, full_name, email, role_id)
+        values (
+          ${authUserId}::uuid,
+          ${displayName},
+          ${email || displayName},
+          ${buyerRole.roleId}
+        )
+        on conflict (user_id) do nothing
+      `);
+      console.info("[auth] self_heal_application_user", {
+        authUserPrefix: authUserId.slice(0, 8),
+        requestedRolePresent: Boolean(requestedRole),
+      });
+      const healed = await loadAuthIdentityRecords(authUserId);
+      resolution = resolveAuthIdentityMapping(authUserId, healed.applicationUsers, healed.profileRoles);
+    } catch (error) {
+      console.error("[auth] self_heal_application_user failed", {
         errorType: error instanceof Error ? error.name : "UnknownError",
       });
     }

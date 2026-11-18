@@ -72,8 +72,19 @@ const trpcClient = trpc.createClient({
       });
       return token ? { Authorization: `Bearer ${token}` } : {};
     },
-    fetch(input, init) {
-      return globalThis.fetch(input, { ...(init ?? {}), credentials: "include" });
+    async fetch(input, init) {
+      const friendlyMessage = "Something went wrong on our side. Please try again.";
+      try {
+        const response = await globalThis.fetch(input, { ...(init ?? {}), credentials: "include" });
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          throw new TRPCClientError(friendlyMessage);
+        }
+        return response;
+      } catch (error) {
+        if (error instanceof TRPCClientError) throw error;
+        throw new TRPCClientError(friendlyMessage);
+      }
     },
   })],
 });

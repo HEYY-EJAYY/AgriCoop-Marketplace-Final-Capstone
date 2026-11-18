@@ -13,7 +13,7 @@ import { AdminWorkspaceTabs, type AdminWorkspaceTabId } from "@/components/Admin
 import { OfficerApplicationsPanel } from "@/components/OfficerApplicationsPanel";
 import { AddAccountDialog } from "@/components/AddAccountDialog";
 import { getProductImageUrl } from "@/lib/productImages";
-import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { toUserFacingErrorMessage, USER_FACING_LOAD_ERROR, USER_FACING_SAVE_ERROR } from "@shared/userFacingErrors";
 import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
 import { PAYMENT_PROOF_BUCKET, PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../../../shared/paymentProofs";
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../../../shared/profileVerification";
@@ -141,7 +141,7 @@ function Empty({ icon: Icon, title, body }: { icon: LucideIcon; title: string; b
 
 function QueryErrorState({ message, onRetry, isFetching }: { message: string; onRetry: () => void; isFetching: boolean }) {
   return <div className="agri-card p-6 text-center">
-    <p role="alert" className="text-sm text-[#a34838]">{toUserFacingErrorMessage(message)}</p>
+    <p role="alert" className="text-sm text-[#a34838]">{toUserFacingErrorMessage(message, USER_FACING_LOAD_ERROR)}</p>
     <button type="button" className="agri-ghost mt-3 text-sm" disabled={isFetching} onClick={onRetry}>
       {isFetching && <Loader2 className="animate-spin" size={15}/>} Retry
     </button>
@@ -663,7 +663,7 @@ function SellerProductCard({ product }: { product: any }) {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imageError, setImageError] = useState("");
   const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), qualityGrade: product.qualityGrade, status: product.status, allowsPickup: product.allowsPickup ?? true, allowsDelivery: product.allowsDelivery ?? true });
-  const update = trpc.products.update.useMutation({ onSuccess: result => { toast.success(result.reviewRequired ? "Listing changes submitted for review and hidden until approval." : "Listing and inventory updated."); setEditing(false); setImageFiles([]); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
+  const update = trpc.products.update.useMutation({ onSuccess: result => { toast.success(result.reviewRequired ? "Listing changes submitted for review and hidden until approval." : "Listing and inventory updated."); setEditing(false); setImageFiles([]); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_SAVE_ERROR)) });
   const uploadImage = trpc.products.uploadImage.useMutation();
   const archive = trpc.products.archive.useMutation({ onSuccess: () => { toast.success("Listing archived."); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
   const submitProduct = trpc.products.submit.useMutation({ onSuccess: () => { toast.success("Product submitted for verification."); utils.products.mine.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
@@ -742,7 +742,7 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true });
   const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFiles, setImageFiles] = useState<File[]>([]); const [imageError, setImageError] = useState("");
   const uploadImage = trpc.products.uploadImage.useMutation();
-  const create = trpc.products.create.useMutation({ onSuccess: () => { toast.success("Product listing submitted for verification."); setOpenForm(false); setForm(emptyForm()); setImageFiles([]); setImageError(""); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message)) });
+  const create = trpc.products.create.useMutation({ onSuccess: () => { toast.success("Product listing submitted for verification."); setOpenForm(false); setForm(emptyForm()); setImageFiles([]); setImageError(""); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_SAVE_ERROR)) });
   const updateStatus = trpc.orders.updateStatus.useMutation({ onSuccess: () => { toast.success("Order status updated."); utils.orders.sellerMine.invalidate(); utils.products.mine.invalidate(); }, onError: error => toast.error(error.message) });
   const respond = trpc.quotations.respond.useMutation({ onSuccess: () => { toast.success("Quotation response sent."); utils.quotations.sellerMine.invalidate(); }, onError: error => toast.error(error.message) });
   const submit = async (event: FormEvent) => {

@@ -50,6 +50,7 @@ export default function Auth() {
   const [verificationState, setVerificationState] = useState<VerificationState>("none");
   const [verificationEmail, setVerificationEmail] = useState("");
   const [resendNotice, setResendNotice] = useState("");
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
   const registerAccount = trpc.auth.register.useMutation();
   const resendVerification = trpc.auth.resendVerification.useMutation();
 
@@ -67,7 +68,7 @@ export default function Auth() {
     }
     if (authResolution === "application_user_missing") {
       logAuthDiagnostic("application_user_missing_after_login", { supabaseSessionPresent: true });
-      toast.error("Supabase sign-in succeeded, but no AgriCoop application account is linked to this Auth identity. Contact an administrator to verify the account mapping.");
+      toast.error("We could not finish linking your AgriCoop profile yet. Wait a moment and sign in again, or contact support if this continues.");
       return false;
     }
     if (authResolution === "application_user_mapping_unavailable") {
@@ -193,11 +194,21 @@ export default function Auth() {
     };
   }, [navigate, resolveApplicationSession]);
 
+  useEffect(() => {
+    if (resendCooldownSeconds <= 0) return undefined;
+    const timer = window.setInterval(() => {
+      setResendCooldownSeconds(seconds => (seconds > 1 ? seconds - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldownSeconds]);
+
   const resendVerificationEmail = async () => {
+    if (resendCooldownSeconds > 0 || !verificationEmail.trim()) return;
     setResendNotice("");
     try {
       await resendVerification.mutateAsync({ email: verificationEmail });
       setResendNotice("If this address can receive a confirmation message, a new link is on its way.");
+      setResendCooldownSeconds(60);
     } catch (error) {
       setResendNotice(error instanceof Error ? error.message : "Unable to request a verification email. Please try again later.");
     }
@@ -321,8 +332,12 @@ export default function Auth() {
           </p>
           <label className="field-label mt-3">Email for confirmation<input required type="email" className="field-control" value={verificationEmail} onChange={event => setVerificationEmail(event.target.value)} /></label>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className="agri-button text-sm" disabled={resendVerification.isPending || !verificationEmail.trim()} onClick={() => void resendVerificationEmail()}>
-              {resendVerification.isPending ? "Please wait…" : "Resend verification"}
+            <button type="button" className="agri-button text-sm" disabled={resendVerification.isPending || resendCooldownSeconds > 0 || !verificationEmail.trim()} onClick={() => void resendVerificationEmail()}>
+              {resendVerification.isPending
+                ? "Please wait…"
+                : resendCooldownSeconds > 0
+                  ? `Resend in ${resendCooldownSeconds}s`
+                  : "Resend verification"}
             </button>
             <button type="button" className="agri-ghost text-sm" onClick={returnToSignIn}>Back to sign in</button>
           </div>

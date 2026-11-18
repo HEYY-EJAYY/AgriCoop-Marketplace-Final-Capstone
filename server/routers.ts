@@ -55,7 +55,7 @@ import {
 } from "./paymentOptions";
 import { isStorageKeyWithinPrefix, isStoragePublicUrlWithinPrefix, storageCreateSignedUploadUrl, storageDeleteObject, storageDeletePublicUrl, storageDownloadPrivateObject, storageDownloadPrivateProof, storageGet, storageGetSignedUrl, storageKeyFromPublicUrlWithinPrefix, storagePut } from "./storage";
 import { quotationResponseInputSchema } from "../shared/quotation";
-import { getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupabaseEmail, RegistrationCleanupError, RegistrationRateLimitError, registrationRateLimiter, provisionAuthAccount } from "./registration";
+import { findAuthUserByEmail, getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupabaseEmail, RegistrationCleanupError, RegistrationRateLimitError, registrationRateLimiter, provisionAuthAccount } from "./registration";
 import { canRequestCooperativeAssociation, canReviewCooperativeAssociation } from "./cooperativeAssociations";
 import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
 import {
@@ -364,52 +364,78 @@ export const appRouter = router({
           email_confirm: false,
           user_metadata: { name: input.name },
         });
+        let authUserId: string | null = null;
+        let removeAuthUserOnProvisionFailure = false;
         if (error) {
-          if (isDuplicateSignupError(error)) return { success: true, verificationRequired: true };
-          const errorCode = "code" in error ? String(error.code) : "unknown";
-          const isEmailRateLimited = errorCode === "over_email_send_rate_limit"
-            || /rate limit|only request this after/i.test(error.message);
-          console.error("[registration] signup_failed", {
-            correlationId,
-            errorType: error.name ?? "AuthError",
-            errorCode,
-            status: "status" in error ? Number(error.status) : undefined,
-            message: error.message,
-          });
-          throw new TRPCError({
-            code: isEmailRateLimited ? "TOO_MANY_REQUESTS" : "INTERNAL_SERVER_ERROR",
-            message: isEmailRateLimited
-              ? `Too many verification emails were requested. Wait a few minutes, then try again or use Resend verification. (ref: ${correlationId})`
-              : `Unable to start registration. Please try again later. (ref: ${correlationId})`,
-          });
+          if (isDuplicateSignupError(error)) {
+            const existingAuth = await findAuthUserByEmail(input.email);
+            const orphanAuth = existingAuth
+              && !isVerifiedSupabaseEmail(existingAuth)
+              && !(await withRequestDatabaseScope(null, async () => {
+                const previewDb = await getDb();
+                const [existingApp] = await previewDb.select({ id: users.id }).from(users)
+                  .where(eq(users.openId, existingAuth.id))
+                  .limit(1);
+                return Boolean(existingApp);
+              }));
+            if (orphanAuth) {
+              authUserId = existingAuth.id;
+              removeAuthUserOnProvisionFailure = false;
+            } else {
+              return { success: true, verificationRequired: true };
+            }
+          } else {
+            const errorCode = "code" in error ? String(error.code) : "unknown";
+            const isEmailRateLimited = errorCode === "over_email_send_rate_limit"
+              || /rate limit|only request this after/i.test(error.message);
+            console.error("[registration] signup_failed", {
+              correlationId,
+              errorType: error.name ?? "AuthError",
+              errorCode,
+              status: "status" in error ? Number(error.status) : undefined,
+              message: error.message,
+            });
+            throw new TRPCError({
+              code: isEmailRateLimited ? "TOO_MANY_REQUESTS" : "INTERNAL_SERVER_ERROR",
+              message: isEmailRateLimited
+                ? `Too many verification emails were requested. Wait a few minutes, then try again or use Resend verification. (ref: ${correlationId})`
+                : `Unable to start registration. Please try again later. (ref: ${correlationId})`,
+            });
+          }
+        } else {
+          const createdAuthUser = data.user;
+          if (!createdAuthUser) {
+            console.error("[registration] signup_missing_user", { correlationId });
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: `Unable to start registration. Please try again later. (ref: ${correlationId})`,
+            });
+          }
+          if (isVerifiedSupabaseEmail(createdAuthUser)) {
+            try {
+              const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(createdAuthUser.id);
+              if (deleteError) throw deleteError;
+            } catch (deleteError) {
+              console.error("[registration] Could not remove an account created without email confirmation", {
+                correlationId,
+                errorType: deleteError instanceof Error ? deleteError.name : "UnknownError",
+              });
+            }
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "Email confirmation is not enabled. Contact support before registering.",
+            });
+          }
+          authUserId = createdAuthUser.id;
+          removeAuthUserOnProvisionFailure = true;
         }
-        const createdAuthUser = data.user;
-        if (!createdAuthUser) {
-          console.error("[registration] signup_missing_user", { correlationId });
+        if (!authUserId) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: `Unable to start registration. Please try again later. (ref: ${correlationId})`,
           });
         }
-        if (isVerifiedSupabaseEmail(createdAuthUser)) {
-          try {
-            const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(createdAuthUser.id);
-            if (deleteError) throw deleteError;
-          } catch (deleteError) {
-            console.error("[registration] Could not remove an account created without email confirmation", {
-              correlationId,
-              errorType: deleteError instanceof Error ? deleteError.name : "UnknownError",
-            });
-          }
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: "Email confirmation is not enabled. Contact support before registering.",
-          });
-        }
-        try {
-          await provisionAuthAccount(
-            createdAuthUser.id,
-            () => withRequestDatabaseScope(createdAuthUser.id, async () => {
+        const provisionRegistration = () => withRequestDatabaseScope(authUserId!, async () => {
               const db = await getDb();
               const identity = resolvePublicRegistrationIdentity(input.role);
               if (!identity || identity.registrationChoice !== input.role) {
@@ -430,7 +456,7 @@ export const appRouter = router({
               let cooperativeId: number | null = null;
               // User row first so current_app_user_id / createdBy FK work for new coops.
               await upsertUser({
-                openId: createdAuthUser.id,
+                openId: authUserId!,
                 email: input.email,
                 name: input.name,
                 role: identity.applicationRole,
@@ -466,15 +492,15 @@ export const appRouter = router({
                 cooperativeId = resolved.cooperativeId;
                 if (resolved.kind === "created") {
                   const [appUserForAudit] = await db.select({ id: users.id }).from(users)
-                    .where(eq(users.openId, createdAuthUser.id)).limit(1);
+                    .where(eq(users.openId, authUserId!)).limit(1);
                   if (appUserForAudit) {
                     await recordAuditLog(db, {
                       actorUserId: appUserForAudit.id,
-                      action: "cooperative_created_by_user",
+                      action: "user_access_updated",
                       entityType: "cooperative",
                       entityId: cooperativeId,
                       cooperativeId,
-                      metadata: { source: "user", registrationRole: input.role },
+                      metadata: { createdCooperativeId: cooperativeId, source: "user", registrationRole: input.role },
                     });
                   }
                 }
@@ -484,7 +510,7 @@ export const appRouter = router({
                 await db.execute(sql`
                   update agricoop_app.users
                   set "cooperativeId" = ${cooperativeId}
-                  where "openId" = ${createdAuthUser.id}
+                  where "openId" = ${authUserId!}
                 `);
               }
 
@@ -493,7 +519,7 @@ export const appRouter = router({
               await db.execute(sql`
                 insert into public.profiles (user_id, full_name, email, role_id)
                 values (
-                  ${createdAuthUser.id}::uuid,
+                  ${authUserId!}::uuid,
                   ${input.name},
                   ${input.email},
                   ${publicRoles[0].roleId}
@@ -505,22 +531,34 @@ export const appRouter = router({
                   throw new Error("Cooperative Admin registration requires a cooperative.");
                 }
                 const [appUser] = await db.select({ id: users.id }).from(users)
-                  .where(eq(users.openId, createdAuthUser.id)).limit(1);
+                  .where(eq(users.openId, authUserId!)).limit(1);
                 if (!appUser) throw new Error("Application user missing after registration upsert.");
-                await db.insert(cooperativeAdminApplications).values({
-                  userId: appUser.id,
-                  fullName: input.name,
-                  cooperativeId,
-                  positionTitle: "",
-                  status: "awaiting_documents",
-                });
+                await db.execute(sql`
+                  insert into agricoop_app."cooperativeAdminApplications"
+                    ("userId", "fullName", "cooperativeId", "positionTitle", status)
+                  values (
+                    ${appUser.id},
+                    ${input.name},
+                    ${cooperativeId},
+                    ${""},
+                    ${"awaiting_documents"}
+                  )
+                `);
               }
-            }),
-            async authUserId => {
-              const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
-              if (error) throw error;
-            },
-          );
+            });
+        try {
+          if (removeAuthUserOnProvisionFailure) {
+            await provisionAuthAccount(
+              authUserId,
+              provisionRegistration,
+              async orphanId => {
+                const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(orphanId);
+                if (deleteError) throw deleteError;
+              },
+            );
+          } else {
+            await provisionRegistration();
+          }
         } catch (error) {
           if (error instanceof TRPCError) throw error;
           if (error instanceof Error && error.message === "COOP_NEEDS_CONFIRMATION") {
@@ -1282,26 +1320,63 @@ export const appRouter = router({
         const db = await dbOrThrow();
         validateProductImageUrls(input.imageUrls, seller.id);
         const { imageUrls, submitForVerification, ...productValues } = input;
-        return db.transaction(async tx => {
-          const [created] = await tx.insert(products).values({
-            ...productValues,
-            acceptsOnlinePayment: false,
-            sellerId: seller.id,
-            cooperativeId: seller.cooperativeId,
-            verificationStatus: submitForVerification ? "pending" : "draft",
-            visibility: "hidden",
-            primaryImageUrl: imageUrls[0] ?? null,
-          }).returning({ id: products.id });
-          if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Product creation did not return an ID." });
-          if (imageUrls.length) {
-            await tx.insert(productImages).values(imageUrls.map((imageUrl, displayOrder) => ({
-              productId: created.id,
-              imageUrl,
-              displayOrder,
-            })));
+        const verificationStatus = submitForVerification ? "pending" : "draft";
+        try {
+          return await db.transaction(async tx => {
+            const insertResult = await tx.execute(sql`
+              insert into agricoop_app.products (
+                "sellerId", "cooperativeId", name, category, variety, description, unit,
+                "priceCents", "stockQty", "minOrderQty", "qualityGrade", status,
+                "verificationStatus", visibility, "primaryImageUrl",
+                "allowsPickup", "allowsDelivery", "acceptsOnlinePayment"
+              ) values (
+                ${seller.id},
+                ${seller.cooperativeId},
+                ${productValues.name},
+                ${productValues.category},
+                ${productValues.variety},
+                ${productValues.description ?? null},
+                ${productValues.unit},
+                ${productValues.priceCents},
+                ${productValues.stockQty},
+                ${productValues.minOrderQty},
+                ${productValues.qualityGrade}::agricoop_app.product_quality_grade,
+                ${"published"}::agricoop_app.product_status,
+                ${verificationStatus}::agricoop_app.product_verification_status,
+                ${"hidden"}::agricoop_app.product_visibility,
+                ${imageUrls[0] ?? null},
+                ${productValues.allowsPickup},
+                ${productValues.allowsDelivery},
+                ${false}
+              )
+              returning id
+            `);
+            const createdRow = (insertResult as unknown as Array<{ id: number }>)[0];
+            if (!createdRow?.id) {
+              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Product creation did not return an ID." });
+            }
+            if (imageUrls.length) {
+              for (let displayOrder = 0; displayOrder < imageUrls.length; displayOrder += 1) {
+                await tx.execute(sql`
+                  insert into agricoop_app."productImages" ("productId", "imageUrl", "displayOrder")
+                  values (${createdRow.id}, ${imageUrls[displayOrder]}, ${displayOrder})
+                `);
+              }
+            }
+            return { success: true };
+          });
+        } catch (error) {
+          const postgresCode = typeof error === "object" && error && "code" in error
+            ? String((error as { code: unknown }).code)
+            : undefined;
+          if (postgresCode === "42501") {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Your account does not have permission to create listings. Contact an administrator to review database grants.",
+            });
           }
-          return { success: true };
-        });
+          throw error;
+        }
       }),
     uploadImage: protectedProcedure
       .input(z.object({

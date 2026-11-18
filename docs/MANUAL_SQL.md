@@ -3913,6 +3913,43 @@ COMMIT;
 
 ---
 
+## BLOCK 22: `20261118130000_part2_insert_grants_apps_and_products.sql`
+
+**Production blockers (A/E):** registration `cooperativeAdminApplications` inserts must stay column-scoped; Drizzle product inserts need `updatedAt` INSERT when ORM lists DEFAULT columns.
+
+```sql
+-- PURPOSE: Align INSERT grants with explicit SQL in registration and products.create.
+-- ADDITIVE ONLY.
+
+BEGIN;
+
+GRANT INSERT (
+  "userId", "fullName", "cooperativeId", "positionTitle",
+  "idDocumentPath", "proofDocumentPath", status
+) ON TABLE agricoop_app."cooperativeAdminApplications" TO authenticated;
+
+GRANT INSERT ("updatedAt") ON TABLE agricoop_app.products TO authenticated;
+
+COMMIT;
+
+DO $postflight$
+BEGIN
+  IF NOT has_column_privilege(
+        'authenticated',
+        'agricoop_app."cooperativeAdminApplications"',
+        'userId',
+        'INSERT'
+     )
+     OR NOT has_column_privilege('authenticated', 'agricoop_app.products', 'updatedAt', 'INSERT')
+  THEN
+    RAISE EXCEPTION 'part2_insert_grants_apps_and_products postflight failed';
+  END IF;
+END
+$postflight$;
+```
+
+---
+
 ## BLOCK 21: `20261118121000_buyer_order_archive_channel.sql`
 
 **Part 2 (C):** extends `threadStates.channel` check to include `order` for per-buyer archive.

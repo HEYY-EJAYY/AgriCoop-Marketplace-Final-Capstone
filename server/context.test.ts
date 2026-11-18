@@ -55,7 +55,10 @@ describe("request context identity resolution", () => {
     expect(context.user).toBeNull();
     expect(context.authUserId).toBe("f47ac10b-58cc-4372-a567-0e02b2c3d479");
     expect(context.authResolution).toBe("application_user_missing");
-    expect(mocks.getUserByVerifiedAuthId).toHaveBeenCalledWith("f47ac10b-58cc-4372-a567-0e02b2c3d479");
+    expect(mocks.getUserByVerifiedAuthId).toHaveBeenCalledWith("f47ac10b-58cc-4372-a567-0e02b2c3d479", expect.objectContaining({
+      email: "unlinked@example.test",
+      name: "Unlinked",
+    }));
   });
 
   it("reports when no bearer token was received without validating a token", async () => {
@@ -143,7 +146,7 @@ describe("request context identity resolution", () => {
     expect(context.authUserId).toBe(authUserId);
     expect(context.user).toBeNull();
     expect(mocks.withRequestDatabaseScope).toHaveBeenCalledWith(authUserId, expect.any(Function));
-    expect(mocks.getUserByVerifiedAuthId).toHaveBeenCalledWith(authUserId);
+    expect(mocks.getUserByVerifiedAuthId).toHaveBeenCalledWith(authUserId, expect.any(Object));
   });
 
   it("logs only the database phase and SQLSTATE, not credentials or identity values", async () => {
@@ -268,6 +271,9 @@ describe("request context identity resolution", () => {
 
     expect(context.user).toBe(existingUser);
     expect(context.authResolution).toBe("application_user_resolved");
-    expect(mocks.getUserByVerifiedAuthId).toHaveBeenCalledWith(existingUser.openId);
+    expect(mocks.getUserByVerifiedAuthId).toHaveBeenCalledWith(existingUser.openId, expect.objectContaining({
+      email: "member@example.test",
+      name: "Updated Member",
+    }));
   });
 });

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { supabaseAdmin } from "./clients";
 
 export class RegistrationProvisioningError extends Error {
   constructor() {
@@ -21,7 +22,7 @@ export class RegistrationRateLimitError extends Error {
   }
 }
 
-type RegistrationAction = "register" | "resend" | "create_cooperative" | "coop_propose";
+type RegistrationAction = "register" | "resend" | "create_cooperative" | "coop_propose" | "self_heal";
 type RegistrationRateLimit = {
   count: number;
   resetAt: number;
@@ -55,6 +56,12 @@ const rateLimits: Record<RegistrationAction, {
     ipLimit: 10,
     ipWindowMs: 60 * 60 * 1000,
     emailLimit: 0,
+    emailWindowMs: 60 * 60 * 1000,
+  },
+  self_heal: {
+    ipLimit: 8,
+    ipWindowMs: 60 * 60 * 1000,
+    emailLimit: 3,
     emailWindowMs: 60 * 60 * 1000,
   },
 };
@@ -137,6 +144,27 @@ export function isVerifiedSupabaseEmail(user: { email_confirmed_at?: string | nu
 export function isDuplicateSignupError(error: unknown) {
   if (typeof error !== "object" || error === null || !("code" in error)) return false;
   return ["email_exists", "user_already_exists"].includes(String(error.code));
+}
+
+export async function findAuthUserByEmail(email: string) {
+  const normalized = email.trim().toLowerCase();
+  for (let page = 1; page <= 25; page += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw error;
+    const match = data.users.find(user => user.email?.trim().toLowerCase() === normalized);
+    if (match) return match;
+    if (data.users.length < 200) break;
+  }
+  return null;
+}
+
+/** Cooperative Admin intent from metadata only — never elevates application role. */
+export function requestedRoleFromAuthMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): "admin" | null {
+  if (!metadata) return null;
+  const raw = metadata.requestedRole ?? metadata.requested_role;
+  return raw === "admin" ? "admin" : null;
 }
 
 export async function provisionAuthAccount<T>(

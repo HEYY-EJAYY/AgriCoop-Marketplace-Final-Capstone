@@ -257,6 +257,18 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
         ) as ok
       `.then(rows => rows[0]?.ok)).toBe(true);
 
+      expect(await sql`
+        select has_column_privilege(
+          'authenticated',
+          'agricoop_app."cooperativeAdminApplications"',
+          'userId',
+          'INSERT'
+        ) as ok
+      `.then(rows => rows[0]?.ok)).toBe(true);
+      expect(await sql`
+        select has_column_privilege('authenticated', 'agricoop_app.products', 'updatedAt', 'INSERT') as ok
+      `.then(rows => rows[0]?.ok)).toBe(true);
+
       await sql.begin(async tx => {
         await tx`select set_config('role', 'authenticated', true)`;
         await tx.unsafe("set local role authenticated");
