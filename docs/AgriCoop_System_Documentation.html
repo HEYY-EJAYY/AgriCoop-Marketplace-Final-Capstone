@@ -134,7 +134,7 @@ This document describes the implemented system as evidenced in source code, conf
 
 AgriCoop Marketplace is a cooperative-oriented produce marketplace. Public visitors may browse approved product listings. Registered buyers and sellers trade under approval and verification rules. Cooperative **admin** officers (runtime role `admin`) moderate listings, orders, payments, and members within a cooperative scope. **superadmin** users manage platform-wide configuration, identity reconciliation, and cross-cooperative reporting.
 
-The application does not implement an automated payment gateway. Checkout records **Cash on Pickup**, **Cash on Delivery**, and **Online Payment** (seller QR + buyer receipt at order create). Legacy rows may still show `gcash` or `f2f`; new creates normalize Online to `online`. Fulfillment (`pickup`/`delivery`) is stored separately from payment method. Sellers review Online receipts; officers retain cash/completion controls. Business rules live in `server/marketplaceRules.ts` and `shared/paymentMethods.ts`; APIs are exposed through `server/routers.ts` as a typed tRPC `appRouter`. Order detail is `/orders/:id`; cooperatives have public pages at `/cooperatives/:slug`.
+The application does not implement an automated payment gateway. Checkout records **Cash on Pickup**, **Cash on Delivery**, and **Online Payment** (platform QR managed by Admin/SuperAdmin + buyer receipt at order create). Legacy rows may still show `gcash` or `f2f`; new creates normalize Online to `online`. Fulfillment (`pickup`/`delivery`) is stored separately from payment method and remains a per-listing seller option. Online availability is a system setting (`systemPaymentSettings` + active `systemOnlinePaymentAccounts` QR). Sellers see payment status as read-only; only Admin/SuperAdmin confirm/reject receipts and mark cash received. Business rules live in `shared/paymentMethods.ts` and `server/systemPayment.ts`; APIs are exposed through `server/routers.ts` as a typed tRPC `appRouter`. Order detail is `/orders/:id`; cooperatives have public pages at `/cooperatives/:slug`.
 
 Authentication uses Supabase-issued bearer tokens. Each API request runs inside a PostgreSQL transaction with session role and JWT claim GUCs set (`server/db.ts`: `withRequestDatabaseScope`, `applyRequestDatabaseSettings`). Row-level security policies in `supabase/migrations/` provide defense in depth alongside procedure-level checks in `server/authz.ts`.
 
@@ -146,7 +146,7 @@ Runtime roles are enumerated in `drizzle/pg-schema.ts` as `user_role`: `buyer`, 
 
 ### 3.1 Buyer
 
-**Objectives.** Discover verified produce, request quotations, place single-seller orders, track fulfillment, submit profile verification and GCash payment proofs, and access support channels.
+**Objectives.** Discover verified produce, request quotations, place single-seller orders, track fulfillment, submit profile verification and Online Payment receipts at checkout, and access support channels.
 
 **Implemented features (evidence).**
 
@@ -155,7 +155,7 @@ Runtime roles are enumerated in `drizzle/pg-schema.ts` as `user_role`: `buyer`, 
 - Quotation request and accept/decline flow: `quotations.request`, `quotations.decide`; place order from accepted quote via `orders.create` rules in `marketplaceRules.ts` (`canPlaceAcceptedQuotationOrder`).
 - Order history: `orders.buyerMine`, buyer views in `/dashboard` and `/activity`.
 - Profile and identity verification upload: `account.requestVerificationUpload`, `account.submitVerification`.
-- GCash proof submission: `payments.uploadProof`, `payments.finalizeProofUpload`.
+- Online receipt submission at checkout and re-upload: checkout receipt intents + `payments.uploadProof` / `payments.finalizeProofUpload`.
 - Support conversations: `conversations.*`; support tickets: `support.createTicket`, `support.myTickets`.
 
 Self-registration sets `buyer` with `approvalStatus` **approved** (`resolvePublicRegistrationIdentity` in `server/authIdentity.ts`).
@@ -170,14 +170,14 @@ Self-registration sets `buyer` with `approvalStatus` **approved** (`resolvePubli
 - Cooperative association request: `cooperativeAssociations.request`, `mine`, `activeCooperatives`.
 - Seller order and quotation queues: `orders.sellerMine`, `quotations.sellerMine`, `quotations.respond`.
 - Order status transitions for own orders: `orders.updateStatus` (seller among allowed roles).
-- Cash receipt recording at ready state: `payments.recordCashReceipt` (authz guards in `server/authz.ts`).
+- Fulfillment status updates only (Confirm / Mark ready). Cash received and receipt verification are Admin/SuperAdmin actions.
 - Dashboard workspace: `SellerVerificationWorkspace` on `/dashboard` (`docs/UX_AUDIT.md`).
 
 Self-registration sets `seller` with `approvalStatus` **pending** until admin approval.
 
 ### 3.3 Admin (Cooperative Officer)
 
-**Objectives.** Govern cooperative members and listings, complete orders with adjustable delivered quantities, verify GCash proofs and profile documents, configure cooperative payment options, and audit activity within cooperative scope.
+**Objectives.** Govern cooperative members and listings, complete orders with adjustable delivered quantities, verify Online receipts and cash payments (Payments tab), review profile documents, configure system payment methods/QR, and audit activity within cooperative scope.
 
 **Implemented features.**
 
@@ -186,7 +186,7 @@ Self-registration sets `seller` with `approvalStatus` **pending** until admin ap
 - User management: `admin.updateUser`, `cooperativeAdmin.updateMemberStatus`.
 - Association request review: `cooperativeAssociations.reviewAssociationRequest` (router `cooperativeAdmin.reviewAssociationRequest`).
 - Order completion with final quantities: `orders.updateStatus` → `prepareOrderCompletion` in `marketplaceRules.ts`.
-- Payment proof and profile verification queues: `payments.reviewProof`, `account.reviewVerification`.
+- Payment and profile verification queues: `payments.reviewProof`, `payments.recordCashReceipt`, `systemPayment.*`, `account.reviewVerification`.
 - Payment options CRUD (cooperative scope): `adminPayment.*`.
 - Reports CSV exports: `/reports` page.
 - Audit log read (cooperative scope): `auditLogs.list` on `/admin/audit-logs`.
@@ -300,7 +300,8 @@ Application tables are defined in `drizzle/pg-schema.ts`. The `agricoop_app` Pos
 | `agricoop_app.orders` / `orderItems` / `orderEvents` | Orders and audit trail |
 | `agricoop_app.transactions` | Legacy F2F transaction notes linked to orders |
 | `agricoop_app.payments` / `paymentEvents` / `paymentAttempts` | Payment records and lifecycle |
-| `agricoop_app.paymentOptions` / `paymentProofs` | Checkout methods and GCash proof uploads |
+| `agricoop_app.systemPaymentSettings` / `systemOnlinePaymentAccounts` / `systemPaymentSettingsAudit` | Platform method toggles, active Online account + QR, change history |
+| `agricoop_app.paymentOptions` / `paymentProofs` | Legacy coop payment options tooling; private Online receipt uploads |
 | `agricoop_app.conversations` / `conversationMessages` | Trade messages (buyer↔seller) and platform support inquiries (separated by FK presence) |
 | `agricoop_app.threadStates` | Per-user read / pin / archive / soft-delete for conversation inboxes |
 | `agricoop_app.notifications` | In-app notifications |
@@ -720,7 +721,7 @@ Source: `docs/PERFORMANCE.md` (Lighthouse 12.6.1, Vercel region `sin1` aligned w
 
 | Category | Limitation | Evidence |
 |----------|------------|----------|
-| Payments | No automated payment processor; GCash and F2F are manually verified | `docs/PROJECT_SUMMARY.md`, checkout UX |
+| Payments | No automated payment processor; Cash and Online are officer-verified (system QR) | `docs/UX_DECISIONS.md`, checkout UX |
 | Order enum | `processing`, `shipped`, `delivered` not in `canTransitionOrder` map | `marketplaceRules.ts` vs `pg-schema.ts` |
 | UX | Product details page lacks direct add-to-cart; mobile cart tab does not open `#order` | `docs/UX_AUDIT.md` UX-01–UX-03 |
 | UX | Dual support paths (`/support` vs `/support-tickets`) | `docs/UX_AUDIT.md` |
