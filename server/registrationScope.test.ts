@@ -7,6 +7,8 @@ describe("registration database scope contract", () => {
     const source = readFileSync(join(process.cwd(), "server/_core/trpc.ts"), "utf8");
     expect(source).toMatch(/"auth\.register"/);
     expect(source).toMatch(/"auth\.resendVerification"/);
+    expect(source).toMatch(/"admin\.createAccount"/);
     expect(source).toMatch(/Nesting withRequestDatabaseScope/);
   });
 });
+
