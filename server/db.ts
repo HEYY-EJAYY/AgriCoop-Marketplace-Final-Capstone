@@ -27,7 +27,7 @@ import {
   transactions,
   users,
 } from "../drizzle/pg-schema";
-import { availableStockAfterReservations } from "./marketplaceRules";
+import { availableStockAfterReservations, productPurchaseBlockReason } from "./marketplaceRules";
 import { getSystemPaymentAvailability } from "./systemPayment";
 import {
   RegistrationRateLimitError,
@@ -504,7 +504,7 @@ export async function getOpenOrderReservationQuantities(db: RootTransaction, pro
 export async function getMarketplace(category?: string, sort: "asc" | "desc" = "asc") {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), isNull(products.deletedAt), eq(users.approvalStatus, "approved")];
+  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), isNull(products.deletedAt), eq(users.approvalStatus, "approved"), isNull(users.deletedAt)];
   if (category && category !== "all") conditions.push(eq(products.category, category));
   const listings = await db
     .select({
@@ -523,11 +523,14 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
       status: products.status,
       verificationStatus: products.verificationStatus,
       visibility: products.visibility,
+      deletedAt: products.deletedAt,
       primaryImageUrl: products.primaryImageUrl,
       allowsPickup: products.allowsPickup,
       allowsDelivery: products.allowsDelivery,
       acceptsOnlinePayment: products.acceptsOnlinePayment,
       sellerName: users.name,
+      sellerApprovalStatus: users.approvalStatus,
+      sellerDeletedAt: users.deletedAt,
       cooperativeName: cooperatives.name,
       cooperativeNormalizedName: cooperatives.normalizedName,
     })
@@ -554,6 +557,24 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
     urls.push(row.imageUrl);
     imagesByProduct.set(row.productId, urls);
   }
+  const purchasableListings = listings.filter(listing => productPurchaseBlockReason({
+    name: listing.name,
+    unit: listing.unit,
+    status: listing.status,
+    verificationStatus: listing.verificationStatus,
+    visibility: listing.visibility,
+    deletedAt: listing.deletedAt,
+    stockQty: availableStockAfterReservations(
+      listing.stockQty,
+      reservations.get(listing.id) ?? 0,
+    ),
+    minOrderQty: listing.minOrderQty,
+    allowsPickup: listing.allowsPickup,
+    allowsDelivery: listing.allowsDelivery,
+  }, {
+    approvalStatus: listing.sellerApprovalStatus,
+    deletedAt: listing.sellerDeletedAt,
+  }) === null);
   let onlinePaymentAvailable = false;
   try {
     const availability = await getSystemPaymentAvailability(db);
@@ -561,10 +582,12 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
   } catch (error) {
     console.error("[marketplace] system payment availability unavailable", error instanceof Error ? error.name : "UnknownError");
   }
-  return listings.map(listing => {
+  return purchasableListings.map(listing => {
     const storedImages = imagesByProduct.get(listing.id) ?? [];
     const {
       sellerName,
+      sellerApprovalStatus,
+      sellerDeletedAt,
       cooperativeName,
       cooperativeNormalizedName,
       ...productFields
@@ -596,7 +619,13 @@ export async function getMarketplaceProduct(productId: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
-    .select({ product: products, sellerName: users.name, cooperativeName: cooperatives.name })
+    .select({
+      product: products,
+      sellerName: users.name,
+      sellerApprovalStatus: users.approvalStatus,
+      sellerDeletedAt: users.deletedAt,
+      cooperativeName: cooperatives.name,
+    })
     .from(products)
     .innerJoin(users, eq(products.sellerId, users.id))
     .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
@@ -607,6 +636,7 @@ export async function getMarketplaceProduct(productId: number) {
       eq(products.visibility, "visible"),
       isNull(products.deletedAt),
       eq(users.approvalStatus, "approved"),
+      isNull(users.deletedAt),
     ))
     .limit(1);
   const listing = rows[0];
@@ -615,6 +645,25 @@ export async function getMarketplaceProduct(productId: number) {
     .where(eq(productImages.productId, listing.product.id))
     .orderBy(asc(productImages.displayOrder), asc(productImages.id));
   const reservations = await getOpenOrderReservationQuantities(db, [listing.product.id]);
+  const stockQty = availableStockAfterReservations(
+    listing.product.stockQty,
+    reservations.get(listing.product.id) ?? 0,
+  );
+  if (productPurchaseBlockReason({
+    name: listing.product.name,
+    unit: listing.product.unit,
+    status: listing.product.status,
+    verificationStatus: listing.product.verificationStatus,
+    visibility: listing.product.visibility,
+    deletedAt: listing.product.deletedAt,
+    stockQty,
+    minOrderQty: listing.product.minOrderQty,
+    allowsPickup: listing.product.allowsPickup,
+    allowsDelivery: listing.product.allowsDelivery,
+  }, {
+    approvalStatus: listing.sellerApprovalStatus,
+    deletedAt: listing.sellerDeletedAt,
+  })) return undefined;
   return {
     ...listing,
     product: {
@@ -622,10 +671,7 @@ export async function getMarketplaceProduct(productId: number) {
       imageUrls: imageRows.length
         ? imageRows.map(row => row.imageUrl)
         : listing.product.primaryImageUrl ? [listing.product.primaryImageUrl] : [],
-      stockQty: availableStockAfterReservations(
-        listing.product.stockQty,
-        reservations.get(listing.product.id) ?? 0,
-      ),
+      stockQty,
     },
   };
 }
@@ -643,6 +689,7 @@ export async function getCategories() {
       eq(products.visibility, "visible"),
       isNull(products.deletedAt),
       eq(users.approvalStatus, "approved"),
+      isNull(users.deletedAt),
     ))
     .orderBy(asc(products.category));
 }

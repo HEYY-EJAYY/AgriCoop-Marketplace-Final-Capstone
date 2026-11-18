@@ -13,6 +13,8 @@ import {
   defaultFulfillmentForPayment,
   fulfillmentOptionsForListings,
   methodsForListings,
+  paymentMethodAvailability,
+  PAYMENT_METHODS,
   PAYMENT_METHOD_HELPERS,
   paymentMethodLabel,
   type FulfillmentMethod,
@@ -225,31 +227,46 @@ function SellerCheckoutGroup({
       </ul>
 
       <div className="mt-5">
-        <p className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Payment</p>
+        <fieldset className="min-w-0">
+          <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Payment</legend>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          {methods.map(method => (
-            <label
-              key={method}
-              className={`cursor-pointer rounded-xl border p-3 text-sm font-bold ${
-                choice.paymentMethod === method
-                  ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
-                  : "border-[#e3e9de] bg-white text-[#66766b]"
-              }`}
-            >
-              <input
-                type="radio"
-                name={`payment-${sellerId}`}
-                className="mr-2 accent-[#4e8257]"
-                checked={choice.paymentMethod === method}
-                onChange={() => setPaymentMethod(method)}
-              />
-              {checkoutMethodLabel(method)}
-            </label>
-          ))}
+          {PAYMENT_METHODS.map(method => {
+            const methodAvailability = paymentMethodAvailability(method, flags, availability);
+            const reasonId = `payment-${sellerId}-${method}-reason`;
+            return (
+              <label
+                key={method}
+                className={`rounded-xl border p-3 text-sm font-bold ${
+                  methodAvailability.available ? "cursor-pointer" : "cursor-not-allowed opacity-70"
+                } ${
+                  choice.paymentMethod === method
+                    ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
+                    : "border-[#e3e9de] bg-white text-[#66766b]"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`payment-${sellerId}`}
+                  className="mr-2 accent-[#4e8257]"
+                  checked={choice.paymentMethod === method}
+                  disabled={!methodAvailability.available}
+                  aria-describedby={methodAvailability.reason ? reasonId : undefined}
+                  onChange={() => setPaymentMethod(method)}
+                />
+                {checkoutMethodLabel(method)}
+                {methodAvailability.reason && (
+                  <span id={reasonId} className="mt-1 block text-xs font-normal leading-5">
+                    {methodAvailability.reason}
+                  </span>
+                )}
+              </label>
+            );
+          })}
         </div>
         {choice.paymentMethod && (
           <p className="mt-2 text-xs leading-5 text-[#4d6854]">{PAYMENT_METHOD_HELPERS[choice.paymentMethod]}</p>
         )}
+        </fieldset>
       </div>
 
       {showOnline && fulfillmentOptions.length > 1 && (
@@ -431,7 +448,18 @@ export default function Checkout() {
     );
   }, [choices]);
 
-  const canSubmit = Boolean(cart && choices.size === sellerMap.size && allOnlineHaveReceipt && !submitting && !isCartLoading);
+  const allChoicesAvailable = Array.from(sellerMap.entries()).every(([sellerId, items]) => {
+    const choice = choices.get(sellerId);
+    return Boolean(choice && methodsForListings(listingFlags(items), availability).includes(choice.paymentMethod));
+  });
+  const canSubmit = Boolean(
+    cart
+    && choices.size === sellerMap.size
+    && allChoicesAvailable
+    && allOnlineHaveReceipt
+    && !submitting
+    && !isCartLoading,
+  );
 
   const updateChoice = useCallback((sellerId: number, next: SellerGroupChoice) => {
     setChoices(current => {

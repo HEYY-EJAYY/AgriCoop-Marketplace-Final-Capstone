@@ -25,6 +25,48 @@ export type AvailableProduct = {
   name: string;
 };
 
+export type PurchasabilityProduct = {
+  name: string;
+  unit: string;
+  status: string;
+  verificationStatus: string;
+  visibility: string;
+  deletedAt?: Date | null;
+  stockQty: number;
+  minOrderQty: number;
+  allowsPickup?: boolean | null;
+  allowsDelivery?: boolean | null;
+};
+
+export type PurchasabilitySeller = {
+  approvalStatus: string;
+  deletedAt?: Date | null;
+};
+
+export function productPurchaseBlockReason(
+  product: PurchasabilityProduct,
+  seller: PurchasabilitySeller,
+) {
+  if (
+    product.deletedAt
+    || product.status !== "published"
+    || product.verificationStatus !== "approved"
+    || product.visibility !== "visible"
+  ) {
+    return `${product.name} is not currently listed for purchase.`;
+  }
+  if (seller.deletedAt || seller.approvalStatus !== "approved") {
+    return `${product.name}'s seller is not currently approved to sell.`;
+  }
+  if (product.allowsPickup === false && product.allowsDelivery === false) {
+    return `${product.name} has no pickup or delivery option available.`;
+  }
+  if (product.stockQty < product.minOrderQty) {
+    return `${product.name} has only ${product.stockQty} ${product.unit} available; the minimum order is ${product.minOrderQty} ${product.unit}.`;
+  }
+  return null;
+}
+
 export function aggregateOrderItems(items: OrderItemRequest[]) {
   const quantities = new Map<number, number>();
   for (const item of items) {

@@ -79,9 +79,11 @@ describe("cart router", () => {
   });
 
   it("clamps quantity to stock and ignores client-side price", async () => {
-    const execute = vi.fn(async () => undefined);
+    const execute = vi.fn(async () => []);
     const productRow = {
       id: 9,
+      name: "Tomatoes",
+      unit: "kg",
       sellerId: 7,
       stockQty: 12,
       minOrderQty: 1,
@@ -89,6 +91,8 @@ describe("cart router", () => {
       verificationStatus: "approved",
       visibility: "visible",
       deletedAt: null,
+      sellerApprovalStatus: "approved",
+      sellerDeletedAt: null,
     };
     const cartLoadRows = [{
       productId: 9,
@@ -110,6 +114,8 @@ describe("cart router", () => {
       verificationStatus: "approved",
       visibility: "visible",
       deletedAt: null,
+      sellerApprovalStatus: "approved",
+      sellerDeletedAt: null,
     }];
 
     let selectPass = 0;
@@ -119,8 +125,10 @@ describe("cart router", () => {
         if (selectPass === 1) {
           return {
             from: () => ({
-              where: () => ({
-                limit: async () => [productRow],
+              leftJoin: () => ({
+                where: () => ({
+                  limit: async () => [productRow],
+                }),
               }),
             }),
           };
@@ -158,17 +166,23 @@ describe("cart router", () => {
         if (selectPass === 1) {
           return {
             from: () => ({
-              where: () => ({
-                limit: async () => [{
-                  id: 9,
-                  sellerId: 7,
-                  stockQty: 5,
-                  minOrderQty: 1,
-                  status: "published",
-                  verificationStatus: "approved",
-                  visibility: "visible",
-                  deletedAt: null,
-                }],
+              leftJoin: () => ({
+                where: () => ({
+                  limit: async () => [{
+                    id: 9,
+                    sellerId: 7,
+                    stockQty: 5,
+                    minOrderQty: 1,
+                    status: "published",
+                    verificationStatus: "approved",
+                    visibility: "visible",
+                    deletedAt: null,
+                    name: "Tomatoes",
+                    unit: "kg",
+                    sellerApprovalStatus: "approved",
+                    sellerDeletedAt: null,
+                  }],
+                }),
               }),
             }),
           };
@@ -186,7 +200,7 @@ describe("cart router", () => {
         };
       },
       delete: () => ({ where: deleteWhere }),
-      execute: vi.fn(),
+      execute: vi.fn(async () => []),
     });
 
     const result = await buyerCaller().cart.setQuantity({ productId: 9, quantity: 0 });

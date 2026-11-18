@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checkoutCartSchema, groupCartItemsBySeller, hasMinimumOrderStock } from "../shared/checkoutCart";
-import { methodsForListings, normalizePaymentMethodInput, paymentMethodLabel } from "../shared/paymentMethods";
+import { methodsForListings, normalizePaymentMethodInput, paymentMethodAvailability, paymentMethodLabel } from "../shared/paymentMethods";
 
 describe("checkout cart session payload", () => {
   const item = {
@@ -93,5 +93,30 @@ describe("payment method helpers", () => {
       onlineEnabled: false,
       onlineAccountReady: true,
     })).toEqual([]);
+  });
+
+  it("explains disabled payment methods for the checkout radio group", () => {
+    const availability = {
+      cashPickupEnabled: true,
+      cashDeliveryEnabled: true,
+      onlineEnabled: false,
+      onlineAccountReady: false,
+    };
+
+    expect(paymentMethodAvailability("cash_delivery", [{ allowsPickup: true, allowsDelivery: false }], availability))
+      .toEqual({ available: false, reason: "This seller doesn't offer delivery." });
+    expect(paymentMethodAvailability("online", [{ allowsPickup: true, allowsDelivery: true }], availability))
+      .toEqual({ available: false, reason: "Online payment isn't set up yet." });
+    expect(paymentMethodAvailability("cash_pickup", [{ allowsPickup: true, allowsDelivery: true }], availability))
+      .toEqual({ available: true, reason: null });
+    expect(methodsForListings([
+      { allowsPickup: true, allowsDelivery: false },
+      { allowsPickup: false, allowsDelivery: true },
+    ], { ...availability, onlineEnabled: true, onlineAccountReady: true })).toEqual([]);
+    expect(paymentMethodAvailability("online", [
+      { allowsPickup: true, allowsDelivery: false },
+      { allowsPickup: false, allowsDelivery: true },
+    ], { ...availability, onlineEnabled: true, onlineAccountReady: true }).reason)
+      .toContain("don't share a pickup or delivery option");
   });
 });

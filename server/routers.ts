@@ -6,7 +6,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCashReceipt, canManageCooperativeResource, canManageRefundRecord, canRecordCashReceipt, canReviewPaymentProof, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, canVerifyPaymentRecord, isPaymentOrderConsistent, isPaymentTransactionConsistent, isSellerApproved, requireOperationalRole } from "./authz";
-import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertOrderCanAcceptPaymentProof, assertPaymentProofReadyForReview, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems } from "./marketplaceRules";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertOrderCanAcceptPaymentProof, assertPaymentProofReadyForReview, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason } from "./marketplaceRules";
 import {
   getAdminOverview,
   getBuyerOrders,
@@ -1793,7 +1793,7 @@ export const appRouter = router({
           const [product] = await tx.select().from(products)
             .where(eq(products.id, input.productId))
             .for("update");
-          if (!product || product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible") {
+          if (!product) {
             throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
           }
           try {
@@ -1801,18 +1801,39 @@ export const appRouter = router({
           } catch (error) {
             throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." });
           }
-          const [seller] = await tx.select({ approvalStatus: users.approvalStatus })
+          const [seller] = await tx.select({
+            approvalStatus: users.approvalStatus,
+            deletedAt: users.deletedAt,
+          })
             .from(users)
             .where(eq(users.id, product.sellerId))
             .for("update");
-          if (!isSellerApproved(seller?.approvalStatus)) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive quotation requests." });
+          const reserved = await getOpenOrderReservationQuantities(tx, [product.id]);
+          const availableQty = availableStockAfterReservations(
+            product.stockQty,
+            reserved.get(product.id) ?? 0,
+          );
+          const purchaseBlockReason = productPurchaseBlockReason({
+            name: product.name,
+            unit: product.unit,
+            status: product.status,
+            verificationStatus: product.verificationStatus,
+            visibility: product.visibility,
+            deletedAt: product.deletedAt,
+            stockQty: availableQty,
+            minOrderQty: product.minOrderQty,
+            allowsPickup: product.allowsPickup,
+            allowsDelivery: product.allowsDelivery,
+          }, {
+            approvalStatus: seller?.approvalStatus ?? "suspended",
+            deletedAt: seller?.deletedAt,
+          });
+          if (purchaseBlockReason) {
+            throw new TRPCError({ code: "NOT_FOUND", message: purchaseBlockReason });
           }
           if (input.requestedQty < product.minOrderQty) {
             throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum order is ${product.minOrderQty} ${product.unit}.` });
           }
-          const reserved = await getOpenOrderReservationQuantities(tx, [product.id]);
-          const availableQty = availableStockAfterReservations(product.stockQty, reserved.get(product.id) ?? 0);
           if (input.requestedQty > availableQty) {
             throw new TRPCError({ code: "BAD_REQUEST", message: `Only ${availableQty} ${product.unit} are currently available.` });
           }
@@ -1914,10 +1935,8 @@ export const appRouter = router({
             .where(inArray(products.id, productIds))
             .orderBy(asc(products.id))
             .for("update");
-          if (currentProducts.length !== productIds.length || currentProducts.some(product =>
-            product.status !== "published" || product.verificationStatus !== "approved" || product.visibility !== "visible"
-          )) {
-            throw new TRPCError({ code: "BAD_REQUEST", message: "One or more products are no longer available for purchase." });
+          if (currentProducts.length !== productIds.length) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "A product in this order could not be found." });
           }
           const reservedByProduct = await getOpenOrderReservationQuantities(tx, productIds);
           const availableProducts = currentProducts.map(product => ({
@@ -1927,6 +1946,36 @@ export const appRouter = router({
               reservedByProduct.get(product.id) ?? 0,
             ),
           }));
+          const sellerIds = Array.from(new Set(availableProducts.map(product => product.sellerId)));
+          const currentSellers = await tx.select({
+            id: users.id,
+            approvalStatus: users.approvalStatus,
+            deletedAt: users.deletedAt,
+          })
+            .from(users)
+            .where(inArray(users.id, sellerIds))
+            .for("update");
+          const sellersById = new Map(currentSellers.map(seller => [seller.id, seller]));
+          for (const product of availableProducts) {
+            const purchaseBlockReason = productPurchaseBlockReason({
+              name: product.name,
+              unit: product.unit,
+              status: product.status,
+              verificationStatus: product.verificationStatus,
+              visibility: product.visibility,
+              deletedAt: product.deletedAt,
+              stockQty: product.stockQty,
+              minOrderQty: product.minOrderQty,
+              allowsPickup: product.allowsPickup,
+              allowsDelivery: product.allowsDelivery,
+            }, {
+              approvalStatus: sellersById.get(product.sellerId)?.approvalStatus ?? "suspended",
+              deletedAt: sellersById.get(product.sellerId)?.deletedAt,
+            });
+            if (purchaseBlockReason) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: purchaseBlockReason });
+            }
+          }
           let currentOrder;
           try {
             currentOrder = prepareOrder(availableProducts, input.items);
@@ -1934,16 +1983,6 @@ export const appRouter = router({
           } catch (error) {
             throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to prepare this order." });
           }
-          const [currentSeller] = await tx.select({
-            approvalStatus: users.approvalStatus,
-          })
-            .from(users)
-            .where(eq(users.id, currentOrder.sellerId))
-            .for("update");
-          if (!isSellerApproved(currentSeller?.approvalStatus)) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "This Seller is not currently approved to receive orders." });
-          }
-
           const availability = await getSystemPaymentAvailability(tx);
           const listingFlags = currentProducts.map(product => ({
             allowsPickup: product.allowsPickup ?? true,

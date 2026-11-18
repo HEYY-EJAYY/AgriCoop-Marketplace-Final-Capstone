@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertPaymentConfirmed, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, reconcilePaymentAmount, STOCK_RESERVING_ORDER_STATUSES, transactionStatusFor } from "./marketplaceRules";
+import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertPaymentConfirmed, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason, reconcilePaymentAmount, STOCK_RESERVING_ORDER_STATUSES, transactionStatusFor } from "./marketplaceRules";
 
 const products = [
   { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, minOrderQty: 2, priceCents: 5500, unit: "kg", status: "published", name: "Fresh Cabbage" },
@@ -7,6 +7,29 @@ const products = [
 ];
 
 describe("marketplace order rules", () => {
+  it("uses the same listing and seller eligibility rule across purchase surfaces", () => {
+    const listing = {
+      name: "Fresh Cabbage",
+      unit: "kg",
+      status: "published",
+      verificationStatus: "approved",
+      visibility: "visible",
+      deletedAt: null,
+      stockQty: 4,
+      minOrderQty: 2,
+      allowsPickup: true,
+      allowsDelivery: true,
+    };
+    const seller = { approvalStatus: "approved", deletedAt: null };
+
+    expect(productPurchaseBlockReason(listing, seller)).toBeNull();
+    expect(productPurchaseBlockReason({ ...listing, stockQty: 1 }, seller)).toContain("minimum order is 2 kg");
+    expect(productPurchaseBlockReason(listing, { ...seller, approvalStatus: "suspended" })).toContain("seller is not currently approved");
+    expect(productPurchaseBlockReason({ ...listing, status: "archived" }, seller)).toContain("not currently listed");
+    expect(productPurchaseBlockReason({ ...listing, allowsPickup: false, allowsDelivery: false }, seller))
+      .toContain("no pickup or delivery option");
+  });
+
   it("normalizes a multi-product order from one farmer and calculates its total", () => {
     const order = prepareOrder(products, [{ productId: 1, quantity: 2 }, { productId: 2, quantity: 3 }]);
     expect(order.orderType).toBe("bulk");

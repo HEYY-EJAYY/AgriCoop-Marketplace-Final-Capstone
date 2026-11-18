@@ -3,7 +3,8 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { cartItems, cooperatives, products, users } from "../drizzle/pg-schema";
 import { requireOperationalRole } from "./authz";
-import { getDb } from "./db";
+import { getDb, getOpenOrderReservationQuantities } from "./db";
+import { availableStockAfterReservations, productPurchaseBlockReason } from "./marketplaceRules";
 import { protectedProcedure, router } from "./_core/trpc";
 
 const mergeItemSchema = z.object({
@@ -30,6 +31,8 @@ async function loadCartRows(userId: number) {
       priceCents: products.priceCents,
       sellerId: products.sellerId,
       sellerName: users.name,
+      sellerApprovalStatus: users.approvalStatus,
+      sellerDeletedAt: users.deletedAt,
       cooperativeId: products.cooperativeId,
       cooperativeName: cooperatives.name,
       allowsPickup: products.allowsPickup,
@@ -47,21 +50,36 @@ async function loadCartRows(userId: number) {
     .leftJoin(cooperatives, eq(products.cooperativeId, cooperatives.id))
     .where(eq(cartItems.userId, userId));
 
+  const reservations = await getOpenOrderReservationQuantities(db, rows.map(row => row.productId));
   return rows
-    .filter(row =>
-      row.status === "published"
-      && row.verificationStatus === "approved"
-      && row.visibility === "visible"
-      && row.deletedAt == null
-      && row.stockQty > 0,
-    )
+    .filter(row => productPurchaseBlockReason({
+      name: row.name,
+      unit: row.unit,
+      status: row.status,
+      verificationStatus: row.verificationStatus,
+      visibility: row.visibility,
+      deletedAt: row.deletedAt,
+      stockQty: availableStockAfterReservations(
+        row.stockQty,
+        reservations.get(row.productId) ?? 0,
+      ),
+      minOrderQty: row.minOrderQty,
+      allowsPickup: row.allowsPickup,
+      allowsDelivery: row.allowsDelivery,
+    }, {
+      approvalStatus: row.sellerApprovalStatus,
+      deletedAt: row.sellerDeletedAt,
+    }) === null)
     .map(row => ({
       productId: row.productId,
       name: row.name,
       unit: row.unit,
       quantity: Math.min(Math.max(row.quantity, row.minOrderQty), row.stockQty),
       minOrderQty: row.minOrderQty,
-      stockQty: row.stockQty,
+      stockQty: availableStockAfterReservations(
+        row.stockQty,
+        reservations.get(row.productId) ?? 0,
+      ),
       priceCents: row.priceCents,
       sellerId: row.sellerId,
       sellerName: row.sellerName || "Verified seller",
@@ -81,24 +99,26 @@ async function upsertCartQuantity(userId: number, productId: number, quantity: n
   const [product] = await db
     .select({
       id: products.id,
+      name: products.name,
+      unit: products.unit,
       sellerId: products.sellerId,
       stockQty: products.stockQty,
       minOrderQty: products.minOrderQty,
+      allowsPickup: products.allowsPickup,
+      allowsDelivery: products.allowsDelivery,
       status: products.status,
       verificationStatus: products.verificationStatus,
       visibility: products.visibility,
       deletedAt: products.deletedAt,
+      sellerApprovalStatus: users.approvalStatus,
+      sellerDeletedAt: users.deletedAt,
     })
     .from(products)
+    .leftJoin(users, eq(products.sellerId, users.id))
     .where(and(eq(products.id, productId), isNull(products.deletedAt)))
     .limit(1);
 
-  if (
-    !product
-    || product.status !== "published"
-    || product.verificationStatus !== "approved"
-    || product.visibility !== "visible"
-  ) {
+  if (!product) {
     throw new TRPCError({ code: "NOT_FOUND", message: "That listing is no longer available." });
   }
   if (product.sellerId === userId) {
@@ -109,13 +129,33 @@ async function upsertCartQuantity(userId: number, productId: number, quantity: n
     return { clamped: false as const, quantity: 0, stockQty: product.stockQty };
   }
 
-  const clamped = Math.min(Math.max(quantity, product.minOrderQty), product.stockQty);
-  if (clamped > product.stockQty || product.stockQty < product.minOrderQty) {
+  const reservations = await getOpenOrderReservationQuantities(db, [productId]);
+  const availableQty = availableStockAfterReservations(
+    product.stockQty,
+    reservations.get(productId) ?? 0,
+  );
+  const blockReason = productPurchaseBlockReason({
+    name: product.name,
+    unit: product.unit,
+    status: product.status,
+    verificationStatus: product.verificationStatus,
+    visibility: product.visibility,
+    deletedAt: product.deletedAt,
+    stockQty: availableQty,
+    minOrderQty: product.minOrderQty,
+    allowsPickup: product.allowsPickup,
+    allowsDelivery: product.allowsDelivery,
+  }, {
+    approvalStatus: product.sellerApprovalStatus ?? "suspended",
+    deletedAt: product.sellerDeletedAt,
+  });
+  if (blockReason) {
     throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Only ${product.stockQty} available.`,
+      code: "NOT_FOUND",
+      message: blockReason,
     });
   }
+  const clamped = Math.min(Math.max(quantity, product.minOrderQty), availableQty);
 
   await db.execute(sql`
     insert into agricoop_app."cartItems" ("userId", "productId", quantity, "createdAt", "updatedAt")
@@ -128,7 +168,7 @@ async function upsertCartQuantity(userId: number, productId: number, quantity: n
   return {
     clamped: clamped !== quantity,
     quantity: clamped,
-    stockQty: product.stockQty,
+    stockQty: availableQty,
   };
 }
 
@@ -140,12 +180,7 @@ export const cartRouter = router({
 
   count: protectedProcedure.query(async ({ ctx }) => {
     const actor = requireOperationalRole(ctx.user, ["buyer", "seller"]);
-    const db = await dbOrThrow();
-    const [row] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(cartItems)
-      .where(eq(cartItems.userId, actor.id));
-    return { count: row?.count ?? 0 };
+    return { count: (await loadCartRows(actor.id)).length };
   }),
 
   setQuantity: protectedProcedure
@@ -231,17 +266,7 @@ export const cartRouter = router({
     const rows = await db.select({ productId: cartItems.productId }).from(cartItems).where(eq(cartItems.userId, actor.id));
     if (!rows.length) return { removed: 0 };
     const productIds = rows.map(row => row.productId);
-    const live = await db
-      .select({ id: products.id })
-      .from(products)
-      .where(and(
-        inArray(products.id, productIds),
-        eq(products.status, "published"),
-        eq(products.verificationStatus, "approved"),
-        eq(products.visibility, "visible"),
-        isNull(products.deletedAt),
-      ));
-    const liveIds = new Set(live.map(row => row.id));
+    const liveIds = new Set((await loadCartRows(actor.id)).map(row => row.productId));
     const stale = productIds.filter(id => !liveIds.has(id));
     if (stale.length) {
       await db.delete(cartItems).where(and(

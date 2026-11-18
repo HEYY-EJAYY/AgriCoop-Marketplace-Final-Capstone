@@ -117,12 +117,47 @@ export function methodsForListings(
     : availability;
   const pickup = system.cashPickupEnabled && listings.every(l => l.allowsPickup);
   const delivery = system.cashDeliveryEnabled && listings.every(l => l.allowsDelivery);
-  const online = system.onlineEnabled && system.onlineAccountReady;
+  const online = system.onlineEnabled
+    && system.onlineAccountReady
+    && (listings.every(listing => listing.allowsPickup) || listings.every(listing => listing.allowsDelivery));
   const methods: PaymentMethod[] = [];
   if (pickup) methods.push("cash_pickup");
   if (delivery) methods.push("cash_delivery");
   if (online) methods.push("online");
   return methods;
+}
+
+export function paymentMethodAvailability(
+  method: PaymentMethod,
+  listings: ListingPaymentFlags[],
+  availability: SystemPaymentAvailability,
+) {
+  if (!listings.length) return { available: false, reason: "Add a product to see available payment methods." };
+  if (method === "cash_pickup") {
+    if (!listings.every(listing => listing.allowsPickup)) {
+      return { available: false, reason: "This seller doesn't offer pickup." };
+    }
+    if (!availability.cashPickupEnabled) {
+      return { available: false, reason: "Cash on pickup is temporarily unavailable." };
+    }
+  }
+  if (method === "cash_delivery") {
+    if (!listings.every(listing => listing.allowsDelivery)) {
+      return { available: false, reason: "This seller doesn't offer delivery." };
+    }
+    if (!availability.cashDeliveryEnabled) {
+      return { available: false, reason: "Cash on delivery is temporarily unavailable." };
+    }
+  }
+  if (method === "online") {
+    if (!listings.every(listing => listing.allowsPickup) && !listings.every(listing => listing.allowsDelivery)) {
+      return { available: false, reason: "These listings don't share a pickup or delivery option." };
+    }
+    if (!availability.onlineEnabled || !availability.onlineAccountReady) {
+      return { available: false, reason: "Online payment isn't set up yet." };
+    }
+  }
+  return { available: true, reason: null };
 }
 
 export function fulfillmentOptionsForListings(listings: ListingPaymentFlags[]): FulfillmentMethod[] {
