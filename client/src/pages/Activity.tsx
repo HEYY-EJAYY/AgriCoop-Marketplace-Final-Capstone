@@ -71,7 +71,22 @@ export default function Activity() {
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
-  const quotationsQuery = trpc.quotations.buyerMine.useQuery(undefined, { enabled: ordersEnabled });
+  const quotationsQuery = trpc.quotations.buyerMine.useQuery(
+    { archived: inboxTab === "archived" },
+    { enabled: ordersEnabled },
+  );
+  const quotationCountsQuery = trpc.quotations.counts.useQuery(
+    { side: "buyer" },
+    { enabled: ordersEnabled },
+  );
+  const quotationStateMutation = trpc.quotations.updateState.useMutation({
+    onSuccess: (_data, variables) => {
+      toast.success(variables.action === "archive" ? "Quotations archived." : variables.action === "unarchive" ? "Quotations restored." : "Quotation view updated.");
+      void utils.quotations.buyerMine.invalidate();
+      void utils.quotations.counts.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
 
   const setInboxTab = useCallback(
     (next: OrderInboxTab) => {
@@ -322,7 +337,9 @@ export default function Activity() {
                 </span>
                 <div>
                   <h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2>
-                  <p className="text-sm text-[#6a796e]">Pricing requests awaiting or receiving farm replies.</p>
+                  <p className="text-sm text-[#6a796e]">
+                    {inboxTab === "archived" ? "Archived" : "Active"} · {quotationCountsQuery.data?.active ?? 0} active / {quotationCountsQuery.data?.archived ?? 0} archived
+                  </p>
                 </div>
               </div>
               <div className="mt-5 space-y-3">
@@ -345,10 +362,38 @@ export default function Activity() {
                           {peso(row.quotation.quotedPriceCents)} per {row.unit}
                         </p>
                       )}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="agri-ghost px-3 py-1.5 text-xs"
+                          disabled={quotationStateMutation.isPending}
+                          onClick={() => quotationStateMutation.mutate({
+                            quotationIds: [row.quotation.id],
+                            action: inboxTab === "active" ? "archive" : "unarchive",
+                            side: "buyer",
+                          })}
+                        >
+                          {inboxTab === "active" ? "Archive" : "Unarchive"}
+                        </button>
+                        <button
+                          type="button"
+                          className="agri-ghost px-3 py-1.5 text-xs text-[#a34838]"
+                          disabled={quotationStateMutation.isPending}
+                          onClick={() => quotationStateMutation.mutate({
+                            quotationIds: [row.quotation.id],
+                            action: "delete",
+                            side: "buyer",
+                          })}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (
-                  <p className="py-9 text-center text-sm text-[#6d7d70]">No quotation requests yet.</p>
+                  <p className="py-9 text-center text-sm text-[#6d7d70]">
+                    {inboxTab === "archived" ? "No archived quotation requests." : "No quotation requests yet."}
+                  </p>
                 )}
               </div>
             </div>

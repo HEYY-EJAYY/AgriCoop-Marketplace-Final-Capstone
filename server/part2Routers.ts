@@ -5,6 +5,7 @@ import {
   cooperativeAdminApplications,
   cooperatives,
   orders,
+  quotations,
   roles,
   threadStates,
   users,
@@ -22,7 +23,19 @@ import {
   isCoopAdminApplicationStorageKey,
   verifyCoopAdminApplicationUploadIntent,
 } from "./coopAdminApplication";
-import { countBuyerOrderInboxStates, getBuyerOrders, getDb, syncProfileRoleToApplicationRole, upsertUser, withRequestDatabaseScope } from "./db";
+import {
+  countBuyerOrderInboxStates,
+  countQuotationInboxStates,
+  countSellerOrderInboxStates,
+  getBuyerOrders,
+  getBuyerQuotations,
+  getDb,
+  getSellerOrders,
+  getSellerQuotations,
+  syncProfileRoleToApplicationRole,
+  upsertUser,
+  withRequestDatabaseScope,
+} from "./db";
 import { assertBuyerOwnsOrders } from "./orderArchive";
 import { normalizeCooperativeName } from "./cooperativeNames";
 import { isDuplicateSignupError, RegistrationRateLimitError, registrationRateLimiter } from "./registration";
@@ -595,12 +608,53 @@ export const orderArchiveRouterExtras = {
   buyerMineArchivedCapable: true as const,
 };
 
+async function upsertPerUserThreadState(args: {
+  userId: number;
+  channel: "order" | "seller_order" | "quotation";
+  threadId: number;
+  action: "archive" | "unarchive" | "delete" | "restore";
+}) {
+  const db = await dbOrThrow();
+  const now = new Date();
+  const [existing] = await db.select().from(threadStates).where(and(
+    eq(threadStates.userId, args.userId),
+    eq(threadStates.channel, args.channel),
+    eq(threadStates.threadId, args.threadId),
+  )).limit(1);
+  const patch: {
+    archivedAt?: Date | null;
+    deletedAt?: Date | null;
+    updatedAt: Date;
+  } = { updatedAt: now };
+  if (args.action === "archive") patch.archivedAt = now;
+  if (args.action === "unarchive") patch.archivedAt = null;
+  if (args.action === "delete") patch.deletedAt = now;
+  if (args.action === "restore") {
+    patch.deletedAt = null;
+    patch.archivedAt = null;
+  }
+  if (existing) {
+    await db.update(threadStates).set(patch).where(eq(threadStates.id, existing.id));
+  } else {
+    await db.insert(threadStates).values({
+      userId: args.userId,
+      channel: args.channel,
+      threadId: args.threadId,
+      archivedAt: patch.archivedAt ?? null,
+      deletedAt: patch.deletedAt ?? null,
+    });
+  }
+}
+
 export const orderArchiveProcedures = {
   buyerMine: protectedProcedure
-    .input(z.object({ archived: z.boolean().optional() }).optional())
+    .input(z.object({ archived: z.boolean().optional(), deleted: z.boolean().optional() }).optional())
     .query(({ ctx, input }) => {
       requireOperationalRole(ctx.user, ["buyer", "seller"]);
-      return getBuyerOrders(ctx.user.id, { archived: input?.archived ?? false });
+      return getBuyerOrders(ctx.user.id, {
+        archived: input?.archived ?? false,
+        deleted: input?.deleted ?? false,
+      });
     }),
   buyerMineCounts: protectedProcedure.query(({ ctx }) => {
     requireOperationalRole(ctx.user, ["buyer", "seller"]);
@@ -609,7 +663,7 @@ export const orderArchiveProcedures = {
   updateArchive: protectedProcedure
     .input(z.object({
       orderIds: z.array(z.number().int().positive()).min(1).max(100),
-      action: z.enum(["archive", "unarchive"]),
+      action: z.enum(["archive", "unarchive", "delete", "restore"]),
     }).strict())
     .mutation(async ({ ctx, input }) => {
       requireOperationalRole(ctx.user, ["buyer", "seller"]);
@@ -619,27 +673,104 @@ export const orderArchiveProcedures = {
         inArray(orders.id, input.orderIds),
       ));
       assertBuyerOwnsOrders(input.orderIds, owned);
-      const archiveNow = input.action === "archive";
-      const now = new Date();
       for (const order of owned) {
-        const [existing] = await db.select().from(threadStates).where(and(
-          eq(threadStates.userId, ctx.user.id),
-          eq(threadStates.channel, "order"),
-          eq(threadStates.threadId, order.id),
-        )).limit(1);
-        if (existing) {
-          await db.update(threadStates).set({
-            archivedAt: archiveNow ? now : null,
-            updatedAt: now,
-          }).where(eq(threadStates.id, existing.id));
-        } else {
-          await db.insert(threadStates).values({
-            userId: ctx.user.id,
-            channel: "order",
-            threadId: order.id,
-            archivedAt: archiveNow ? now : null,
-          });
-        }
+        await upsertPerUserThreadState({
+          userId: ctx.user.id,
+          channel: "order",
+          threadId: order.id,
+          action: input.action,
+        });
+      }
+      return { success: true, count: owned.length };
+    }),
+  sellerMine: protectedProcedure
+    .input(z.object({ archived: z.boolean().optional(), deleted: z.boolean().optional() }).optional())
+    .query(({ ctx, input }) => {
+      requireOperationalRole(ctx.user, ["seller"]);
+      return getSellerOrders(ctx.user.id, {
+        archived: input?.archived ?? false,
+        deleted: input?.deleted ?? false,
+      });
+    }),
+  sellerMineCounts: protectedProcedure.query(({ ctx }) => {
+    requireOperationalRole(ctx.user, ["seller"]);
+    return countSellerOrderInboxStates(ctx.user.id);
+  }),
+  sellerUpdateArchive: protectedProcedure
+    .input(z.object({
+      orderIds: z.array(z.number().int().positive()).min(1).max(100),
+      action: z.enum(["archive", "unarchive", "delete", "restore"]),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      requireOperationalRole(ctx.user, ["seller"]);
+      const db = await dbOrThrow();
+      const owned = await db.select({ id: orders.id }).from(orders).where(and(
+        eq(orders.sellerId, ctx.user.id),
+        inArray(orders.id, input.orderIds),
+      ));
+      if (owned.length !== input.orderIds.length) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You can only change your own fulfillment queue." });
+      }
+      for (const order of owned) {
+        await upsertPerUserThreadState({
+          userId: ctx.user.id,
+          channel: "seller_order",
+          threadId: order.id,
+          action: input.action,
+        });
+      }
+      return { success: true, count: owned.length };
+    }),
+};
+
+export const quotationArchiveProcedures = {
+  buyerMine: protectedProcedure
+    .input(z.object({ archived: z.boolean().optional(), deleted: z.boolean().optional() }).optional())
+    .query(({ ctx, input }) => {
+      requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      return getBuyerQuotations(ctx.user.id, {
+        archived: input?.archived ?? false,
+        deleted: input?.deleted ?? false,
+      });
+    }),
+  sellerMine: protectedProcedure
+    .input(z.object({ archived: z.boolean().optional(), deleted: z.boolean().optional() }).optional())
+    .query(({ ctx, input }) => {
+      requireOperationalRole(ctx.user, ["seller"]);
+      return getSellerQuotations(ctx.user.id, {
+        archived: input?.archived ?? false,
+        deleted: input?.deleted ?? false,
+      });
+    }),
+  counts: protectedProcedure
+    .input(z.object({ side: z.enum(["buyer", "seller"]) }))
+    .query(({ ctx, input }) => {
+      requireOperationalRole(ctx.user, input.side === "buyer" ? ["buyer", "seller"] : ["seller"]);
+      return countQuotationInboxStates(ctx.user.id, input.side);
+    }),
+  updateState: protectedProcedure
+    .input(z.object({
+      quotationIds: z.array(z.number().int().positive()).min(1).max(100),
+      action: z.enum(["archive", "unarchive", "delete", "restore"]),
+      side: z.enum(["buyer", "seller"]),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      requireOperationalRole(ctx.user, input.side === "buyer" ? ["buyer", "seller"] : ["seller"]);
+      const db = await dbOrThrow();
+      const owned = await db.select({ id: quotations.id }).from(quotations).where(and(
+        input.side === "buyer" ? eq(quotations.buyerId, ctx.user.id) : eq(quotations.sellerId, ctx.user.id),
+        inArray(quotations.id, input.quotationIds),
+      ));
+      if (owned.length !== input.quotationIds.length) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You can only change your own quotation requests." });
+      }
+      for (const row of owned) {
+        await upsertPerUserThreadState({
+          userId: ctx.user.id,
+          channel: "quotation",
+          threadId: row.id,
+          action: input.action,
+        });
       }
       return { success: true, count: owned.length };
     }),

@@ -127,6 +127,6 @@ describe("orders.updateArchive", () => {
 
   it("scopes buyerMine lists with archived flag", async () => {
     await caller("buyer", 10).orders.buyerMine({ archived: true });
-    expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: true });
+    expect(mocks.getBuyerOrders).toHaveBeenCalledWith(10, { archived: true, deleted: false });
   });
 });

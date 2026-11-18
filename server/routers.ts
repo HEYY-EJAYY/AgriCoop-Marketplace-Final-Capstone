@@ -81,7 +81,7 @@ import { createRefundRecord, completedRefundAmountCents, parseRefundRecords, res
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../shared/profileVerification";
 import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
-import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures } from "./part2Routers";
+import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures, quotationArchiveProcedures } from "./part2Routers";
 import { cartRouter } from "./cart";
 import { accountInactiveMessage, canSoftDeleteTargetUser } from "./userSoftDelete";
 import {
@@ -1780,14 +1780,10 @@ export const appRouter = router({
   }),
 
   quotations: router({
-    buyerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["buyer", "seller"]);
-      return getBuyerQuotations(ctx.user.id);
-    }),
-    sellerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["seller"]);
-      return getSellerQuotations(ctx.user.id);
-    }),
+    buyerMine: quotationArchiveProcedures.buyerMine,
+    sellerMine: quotationArchiveProcedures.sellerMine,
+    counts: quotationArchiveProcedures.counts,
+    updateState: quotationArchiveProcedures.updateState,
     request: protectedProcedure
       .input(z.object({ productId: z.number().int().positive(), requestedQty: z.number().int().positive(), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
@@ -1892,10 +1888,9 @@ export const appRouter = router({
     buyerMine: orderArchiveProcedures.buyerMine,
     buyerMineCounts: orderArchiveProcedures.buyerMineCounts,
     updateArchive: orderArchiveProcedures.updateArchive,
-    sellerMine: protectedProcedure.query(({ ctx }) => {
-      requireOperationalRole(ctx.user, ["seller"]);
-      return getSellerOrders(ctx.user.id);
-    }),
+    sellerMine: orderArchiveProcedures.sellerMine,
+    sellerMineCounts: orderArchiveProcedures.sellerMineCounts,
+    sellerUpdateArchive: orderArchiveProcedures.sellerUpdateArchive,
     create: protectedProcedure
       .input(z.object({
         items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive() })).min(1),

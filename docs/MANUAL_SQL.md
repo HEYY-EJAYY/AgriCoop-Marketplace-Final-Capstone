@@ -4095,3 +4095,9 @@ Anon has no UPDATE privilege on `deletedAt` / `deletedBy`.
 **Purpose:** Additive `deletedAt` / `deletedBy` / `deletedByRole` on `agricoop_app.users` with column UPDATE grants. Soft-delete bans Auth user (no Auth delete), hides listings, clears cart rows, keeps orders.
 
 **Applied:** Supabase MCP `user_soft_delete_columns` (2026-11-18).
+
+## BLOCK 30: `20261118200000_products_update_owner_or_staff.sql`
+
+**Purpose:** Tighten `agricoop_mkt_products_seller_update` so same-coop Sellers/Buyers cannot UPDATE others' products. Allowed: owner, SuperAdmin, or Admin with `shares_cooperative`.
+
+**Applied:** Supabase MCP (2026-11-18).

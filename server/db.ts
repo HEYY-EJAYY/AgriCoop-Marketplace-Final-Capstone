@@ -683,14 +683,22 @@ export async function getSellerProducts(sellerId: number) {
 
 export type BuyerOrderListOptions = {
   archived?: boolean;
+  deleted?: boolean;
 };
+
+function inboxVisibility(archived: boolean, deleted: boolean) {
+  if (deleted) return sql`${threadStates.deletedAt} is not null`;
+  if (archived) return and(sql`${threadStates.archivedAt} is not null`, isNull(threadStates.deletedAt));
+  return and(isNull(threadStates.archivedAt), isNull(threadStates.deletedAt));
+}
 
 export async function countBuyerOrderInboxStates(buyerId: number) {
   const db = await getDb();
-  if (!db) return { active: 0, archived: 0 };
+  if (!db) return { active: 0, archived: 0, deleted: 0 };
   const rows = await db
     .select({
       archived: sql<boolean>`${threadStates.archivedAt} is not null`,
+      deleted: sql<boolean>`${threadStates.deletedAt} is not null`,
       count: sql<number>`count(*)::int`,
     })
     .from(orders)
@@ -700,19 +708,79 @@ export async function countBuyerOrderInboxStates(buyerId: number) {
       eq(threadStates.threadId, orders.id),
     ))
     .where(eq(orders.buyerId, buyerId))
-    .groupBy(sql`${threadStates.archivedAt} is not null`);
+    .groupBy(sql`${threadStates.archivedAt} is not null`, sql`${threadStates.deletedAt} is not null`);
 
   let active = 0;
   let archived = 0;
+  let deleted = 0;
   for (const row of rows) {
-    if (row.archived) archived += row.count;
+    if (row.deleted) deleted += row.count;
+    else if (row.archived) archived += row.count;
     else active += row.count;
   }
-  return { active, archived };
+  return { active, archived, deleted };
+}
+
+export async function countSellerOrderInboxStates(sellerId: number) {
+  const db = await getDb();
+  if (!db) return { active: 0, archived: 0, deleted: 0 };
+  const rows = await db
+    .select({
+      archived: sql<boolean>`${threadStates.archivedAt} is not null`,
+      deleted: sql<boolean>`${threadStates.deletedAt} is not null`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(orders)
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, sellerId),
+      eq(threadStates.channel, "seller_order"),
+      eq(threadStates.threadId, orders.id),
+    ))
+    .where(eq(orders.sellerId, sellerId))
+    .groupBy(sql`${threadStates.archivedAt} is not null`, sql`${threadStates.deletedAt} is not null`);
+  let active = 0;
+  let archived = 0;
+  let deleted = 0;
+  for (const row of rows) {
+    if (row.deleted) deleted += row.count;
+    else if (row.archived) archived += row.count;
+    else active += row.count;
+  }
+  return { active, archived, deleted };
+}
+
+export async function countQuotationInboxStates(userId: number, side: "buyer" | "seller") {
+  const db = await getDb();
+  if (!db) return { active: 0, archived: 0, deleted: 0 };
+  const owner = side === "buyer" ? eq(quotations.buyerId, userId) : eq(quotations.sellerId, userId);
+  const rows = await db
+    .select({
+      archived: sql<boolean>`${threadStates.archivedAt} is not null`,
+      deleted: sql<boolean>`${threadStates.deletedAt} is not null`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(quotations)
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, userId),
+      eq(threadStates.channel, "quotation"),
+      eq(threadStates.threadId, quotations.id),
+    ))
+    .where(owner)
+    .groupBy(sql`${threadStates.archivedAt} is not null`, sql`${threadStates.deletedAt} is not null`);
+  let active = 0;
+  let archived = 0;
+  let deleted = 0;
+  for (const row of rows) {
+    if (row.deleted) deleted += row.count;
+    else if (row.archived) archived += row.count;
+    else active += row.count;
+  }
+  return { active, archived, deleted };
 }
 
 export async function getBuyerOrders(buyerId: number, options: BuyerOrderListOptions = {}) {
   const archived = options.archived ?? false;
+  const deleted = options.deleted ?? false;
   const db = await getDb();
   if (!db) return [];
   const rows = await db
@@ -732,9 +800,7 @@ export async function getBuyerOrders(buyerId: number, options: BuyerOrderListOpt
     ))
     .where(and(
       eq(orders.buyerId, buyerId),
-      archived
-        ? sql`${threadStates.archivedAt} is not null`
-        : and(isNull(threadStates.archivedAt), isNull(threadStates.deletedAt)),
+      inboxVisibility(archived, deleted),
     ))
     .orderBy(desc(orders.createdAt));
   if (!rows.length) return [];
@@ -752,7 +818,9 @@ export async function getBuyerOrders(buyerId: number, options: BuyerOrderListOpt
   }));
 }
 
-export async function getSellerOrders(sellerId: number) {
+export async function getSellerOrders(sellerId: number, options: BuyerOrderListOptions = {}) {
+  const archived = options.archived ?? false;
+  const deleted = options.deleted ?? false;
   const db = await getDb();
   if (!db) return [];
   return db
@@ -762,7 +830,15 @@ export async function getSellerOrders(sellerId: number) {
     .innerJoin(products, eq(orderItems.productId, products.id))
     .innerJoin(users, eq(orders.buyerId, users.id))
     .leftJoin(transactions, eq(transactions.orderId, orders.id))
-    .where(eq(orders.sellerId, sellerId))
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, sellerId),
+      eq(threadStates.channel, "seller_order"),
+      eq(threadStates.threadId, orders.id),
+    ))
+    .where(and(
+      eq(orders.sellerId, sellerId),
+      inboxVisibility(archived, deleted),
+    ))
     .orderBy(desc(orders.createdAt));
 }
 
@@ -868,7 +944,9 @@ export async function getOrderDetail(orderId: number) {
   };
 }
 
-export async function getBuyerQuotations(buyerId: number) {
+export async function getBuyerQuotations(buyerId: number, options: BuyerOrderListOptions = {}) {
+  const archived = options.archived ?? false;
+  const deleted = options.deleted ?? false;
   const db = await getDb();
   if (!db) return [];
   return db
@@ -876,11 +954,18 @@ export async function getBuyerQuotations(buyerId: number) {
     .from(quotations)
     .innerJoin(products, eq(quotations.productId, products.id))
     .innerJoin(users, eq(quotations.sellerId, users.id))
-    .where(eq(quotations.buyerId, buyerId))
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, buyerId),
+      eq(threadStates.channel, "quotation"),
+      eq(threadStates.threadId, quotations.id),
+    ))
+    .where(and(eq(quotations.buyerId, buyerId), inboxVisibility(archived, deleted)))
     .orderBy(desc(quotations.createdAt));
 }
 
-export async function getSellerQuotations(sellerId: number) {
+export async function getSellerQuotations(sellerId: number, options: BuyerOrderListOptions = {}) {
+  const archived = options.archived ?? false;
+  const deleted = options.deleted ?? false;
   const db = await getDb();
   if (!db) return [];
   return db
@@ -888,7 +973,12 @@ export async function getSellerQuotations(sellerId: number) {
     .from(quotations)
     .innerJoin(products, eq(quotations.productId, products.id))
     .innerJoin(users, eq(quotations.buyerId, users.id))
-    .where(eq(quotations.sellerId, sellerId))
+    .leftJoin(threadStates, and(
+      eq(threadStates.userId, sellerId),
+      eq(threadStates.channel, "quotation"),
+      eq(threadStates.threadId, quotations.id),
+    ))
+    .where(and(eq(quotations.sellerId, sellerId), inboxVisibility(archived, deleted)))
     .orderBy(desc(quotations.createdAt));
 }
 

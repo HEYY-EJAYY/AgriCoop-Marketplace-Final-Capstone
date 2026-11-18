@@ -349,10 +349,16 @@ export default function Auth() {
         {(verificationState === "required" || verificationState === "expired") && <section role={verificationState === "expired" ? "alert" : "status"} className="mt-6 rounded-xl border border-[#d6e5cb] bg-[#f2f8ee] p-4">
           <h2 className="font-bold text-[#315640]">{verificationState === "expired" ? "Verification link expired or invalid" : "Verify your email to continue"}</h2>
           <p className="mt-2 text-sm leading-6 text-[#617467]">
+            {verificationEmail.trim()
+              ? <>We sent a confirmation request to <strong className="font-semibold text-[#315640]">{verificationEmail.trim()}</strong>. Delivery is not guaranteed from this screen—check your inbox and spam folder.</>
+              : "Enter the email that should receive the confirmation link."}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-[#617467]">
             {verificationState === "expired"
               ? "Request a fresh confirmation link. Your account cannot use AgriCoop until Supabase confirms the email address."
-              : "If this address can be registered, Supabase will send a confirmation link. Confirm it before signing in. Seller approval and cooperative assignment remain separate."}
+              : "Confirm the link before signing in. Seller approval and cooperative assignment remain separate."}
           </p>
+          <p className="mt-2 text-xs leading-5 text-[#617467]">Tip: look in spam/junk if nothing arrives within a few minutes. Resend is limited to once every 60 seconds.</p>
           <label className="field-label mt-3">Email for confirmation<input required type="email" className="field-control" value={verificationEmail} onChange={event => setVerificationEmail(event.target.value)} /></label>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" className="agri-button text-sm" disabled={resendVerification.isPending || resendCooldownSeconds > 0 || !verificationEmail.trim()} onClick={() => void resendVerificationEmail()}>
@@ -361,6 +367,17 @@ export default function Auth() {
                 : resendCooldownSeconds > 0
                   ? `Resend in ${resendCooldownSeconds}s`
                   : "Resend verification"}
+            </button>
+            <button
+              type="button"
+              className="agri-ghost text-sm"
+              onClick={() => {
+                setVerificationState("none");
+                setRegister(true);
+                setResendNotice("");
+              }}
+            >
+              Wrong email? Use a different email
             </button>
             <button type="button" className="agri-ghost text-sm" onClick={returnToSignIn}>Back to sign in</button>
           </div>
