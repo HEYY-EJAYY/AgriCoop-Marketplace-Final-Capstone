@@ -71,6 +71,8 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
           has_column_privilege('anon', 'agricoop_app.cooperatives', 'name', 'SELECT') as anon_coop_name,
           has_column_privilege('anon', 'agricoop_app.cooperatives', 'normalizedName', 'SELECT') as anon_coop_slug,
           has_column_privilege('authenticated', 'public.profiles', 'user_id', 'INSERT') as profile_insert,
+          has_column_privilege('authenticated', 'public.profiles', 'full_name', 'INSERT') as profile_name_ins,
+          has_column_privilege('authenticated', 'public.profiles', 'full_name', 'UPDATE') as profile_name_upd,
           has_column_privilege('authenticated', 'agricoop_app.users', 'openId', 'INSERT') as user_openid_ins
       `;
       expect(row.open_id_sel).toBe(true);
@@ -83,6 +85,9 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
       expect(row.anon_coop_name).toBe(true);
       expect(row.anon_coop_slug).toBe(true);
       expect(row.profile_insert).toBe(true);
+      expect(row.profile_name_ins).toBe(true);
+      // Registration uses plain INSERT (routers.ts); ON CONFLICT DO UPDATE must stay denied.
+      expect(row.profile_name_upd).toBe(false);
       expect(row.user_openid_ins).toBe(true);
     } finally {
       await sql.end({ timeout: 5 });
@@ -150,10 +155,11 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
         const [roleRow] = await tx`select role_id from public.roles where role_name = 'buyer' limit 1`;
         expect(roleRow?.role_id).toBeTruthy();
 
+        // Match production registration: plain INSERT of granted columns only
+        // (no ON CONFLICT DO UPDATE — authenticated has no UPDATE on profiles).
         await tx`
           insert into public.profiles (user_id, full_name, email, role_id)
           values (${authUserId}::uuid, 'Harness Buyer', 'harness-buyer@example.test', ${roleRow.role_id})
-          on conflict (user_id) do update set full_name = excluded.full_name
         `;
 
         // Login projection: only granted columns (no onlinePayment*).
