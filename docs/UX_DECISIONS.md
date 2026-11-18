@@ -79,7 +79,36 @@ URL params: `q`, `category`, `cooperativeId`, `sort` (`price_asc` | `price_desc`
 
 ## Layout width
 
-One shared token: CSS `--agri-content-max: 100rem` (1600px) + `.agri-shell` / `shellContainerClass`. Full-bleed bands use `.agri-full-bleed` / `data-full-bleed` with an inner `.agri-shell`. Navbar and footer use the same shell. Avoid `100vw` for horizontal sizing (`overflow-x: clip` on `html`/`body` as a guard).
+### Marketing boxed shell (2026-11-18)
+
+**Root cause (stretched Home / How It Works / Support):** After the full-width pass, marketing pages reused `.agri-shell` with `--agri-content-max: 100%`, so content ran edge-to-edge on ultra-wide screens. Side gutters were tiny and could look uneven with classic scrollbar occupancy.
+
+**Fix:** One shared marketing container:
+- Tokens: `--agri-marketing-max: 80rem` (1280px), `--agri-marketing-pad: clamp(1rem, 4vw, 3rem)`
+- Class: `.agri-marketing-shell` (`margin-inline: auto`, equal `padding-inline`)
+- Applied to Home, How It Works (`/about`), Support content, and **PublicHeader / PublicFooter** inner rows so those pages share one grid
+- Section / hero / footer **bands** stay `.agri-full-bleed` (viewport edge-to-edge); only inner content is boxed
+- `html { scrollbar-gutter: stable; }` to reduce one-sided scrollbar shift (avoid `100vw`)
+
+**Unchanged (by design):** marketplace, cart, checkout, auth form column, and dashboards keep `.agri-shell` (full-width small gutters).
+
+**Unequal / mismatched padding report:**
+| Surface | Notes |
+|---------|--------|
+| Marketplace / product / coop / checkout | Content uses `.agri-shell` gutters; header/footer use marketing pad — content and chrome do not share the same max-width grid |
+| Auth | Same as above (content shell unchanged) |
+| WorkspaceHeader pages (dashboard, orders, …) | Still `.agri-shell`; not on the marketing grid |
+| Home / About / Support | Left = right within 1px under the marketing token |
+
+### Logged-out Support nav (2026-11-18)
+
+**Root cause:** `/support` used `WorkspaceHeader` (title workspace chrome) instead of `PublicHeader` / `PageFrame`. Logged-out `WorkspaceHeader` previously rendered center links but **no Login / Join**. During `useAuth().loading`, Support returned a full-page spinner with **no header at all**. Separately, `PublicHeader`’s `HeaderRightActions` also hid Login/Join while `loading`, so public routes could flash an empty right rail.
+
+**Fix:** Support (and other public guest shells: product detail, cooperative, messages/profile guest, 404) use `PageFrame` → `PublicHeader`. While auth is loading, show logged-out center links + Login/Join (same size). Join → `/auth?register=1`. `aria-current="page"` on active center links. Mobile overlay already exposed Login/Join; keep that on every public route.
+
+## Layout width (app shell)
+
+App / marketplace token: CSS `--agri-content-max: 100%` + `.agri-shell` / `shellContainerClass`. Full-bleed bands use `.agri-full-bleed` / `data-full-bleed` with an inner shell. Avoid `100vw` for horizontal sizing (`overflow-x: clip` on `html`/`body` as a guard).
 
 ## Workspace
 

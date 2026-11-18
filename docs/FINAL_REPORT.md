@@ -2,7 +2,39 @@
 
 Branch: `finish/agricoop-complete`  
 Live URL: **https://agricoop-marketplace-final-capstone.vercel.app**  
-Updated: 2026-11-17
+Updated: 2026-11-18
+
+---
+
+## UI consistency — boxed marketing + public nav (2026-11-18)
+
+### Visual changes (DESIGN FREEZE inventory)
+
+| Change | Where |
+|--------|--------|
+| Content max width capped ~1280px with equal fluid side padding | Home, How It Works (`/about`), Support inner content |
+| Header / footer inner rows use the same marketing pad + max width | All `PageFrame` routes (chrome only) |
+| `scrollbar-gutter: stable` on `html` | Global (reduces one-sided scrollbar shift) |
+| Support page title moves into main (no `WorkspaceHeader` title bar) | `/support` |
+| Login + Join AgriCoop always present while auth loads | `PublicHeader` / `WorkspaceHeader` right rail |
+| Join navigates to `/auth?register=1` | Header + mobile menu |
+| 404 uses AgriCoop `PageFrame` chrome | `/404` |
+| Product / cooperative / guest Messages & Profile use `PageFrame` | Public routes listed above |
+| **Unchanged:** marketplace / cart / checkout / auth form / dashboards content width | As designed |
+
+### Root causes
+
+| Issue | Root cause | Fix |
+|-------|------------|-----|
+| Stretched Home/About/Support | Marketing pages used full-bleed `.agri-shell` (`max-width: 100%`) | Shared `.agri-marketing-shell` + tokens |
+| Support Login/Join missing | Support rendered `WorkspaceHeader` (no auth CTAs) and a no-header spinner while `loading` | `PageFrame` + keep logged-out CTAs during load |
+
+### Tests / gates
+
+| Gate | Result |
+|------|--------|
+| `e2e/public-nav-layout.spec.ts` | Logged-out nav identity across public routes; marketing pad symmetry; axe on Home/About/Support; role Support checks when `QA_*` present |
+| `pnpm check` / `test` / `build` | Recorded below after this pass |
 
 Companion docs: `docs/UX_DECISIONS.md`, `docs/UX_AUDIT.md`, `docs/MANUAL_SQL.md`, `docs/AgriCoop_System_Documentation.pdf`
 

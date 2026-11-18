@@ -46,16 +46,17 @@ test.describe("home hero layout and width", () => {
     expect(heroBox && textBox && mediaBox && imageBox && badgeBox && h1Box && ctaBox).toBeTruthy();
     if (!heroBox || !textBox || !mediaBox || !imageBox || !badgeBox || !h1Box || !ctaBox) return;
 
-    // Equal horizontal padding on the hero content shell (±4px)
-    const shell = hero.locator(".agri-shell").first();
+    // Equal horizontal padding on the hero marketing shell (±1px)
+    const shell = hero.locator(".agri-marketing-shell").first();
     const padding = await shell.evaluate(el => {
       const styles = getComputedStyle(el);
       return {
         left: Number.parseFloat(styles.paddingLeft),
         right: Number.parseFloat(styles.paddingRight),
+        maxWidth: styles.maxWidth,
       };
     });
-    expect(Math.abs(padding.left - padding.right)).toBeLessThanOrEqual(4);
+    expect(Math.abs(padding.left - padding.right)).toBeLessThanOrEqual(1);
 
     // Full-bleed sections match viewport width
     if (testInfo.project.name.startsWith("desktop")) {

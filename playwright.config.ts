@@ -16,6 +16,7 @@ export default defineConfig({
   },
   projects: [
     { name: "mobile-360", use: { viewport: { width: 360, height: 740 }, isMobile: true, hasTouch: true } },
+    { name: "mobile-375", use: { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true } },
     { name: "tablet-768", use: { viewport: { width: 768, height: 1024 } } },
     { name: "desktop-1280", use: { viewport: { width: 1280, height: 800 } } },
     { name: "desktop-1920", use: { viewport: { width: 1920, height: 1080 } } },

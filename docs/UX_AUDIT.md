@@ -19,15 +19,15 @@
 | `/about` | `About` | `PageFrame` |
 | `/auth` | `Auth` | `PageFrame` |
 | `/marketplace` | `Marketplace` | `PageFrame` |
-| `/products/:id` | `ProductDetails` | `WorkspaceHeader` only (no `PageFrame`) |
+| `/products/:id` | `ProductDetails` | `PageFrame` (app `.agri-shell` content) |
 | `/checkout` | `Checkout` | `PageFrame` |
 | `/orders/:id` | `OrderDetail` | `WorkspaceHeader` |
-| `/cooperatives/:slug` | `CooperativePage` | `WorkspaceHeader` |
-| `/profile` | `Profile` | `WorkspaceHeader` |
-| `/messages` | `Messages` | `WorkspaceHeader` |
+| `/cooperatives/:slug` | `CooperativePage` | `PageFrame` (app `.agri-shell` content) |
+| `/profile` | `Profile` | `PageFrame` when logged out; `WorkspaceHeader` when logged in |
+| `/messages` | `Messages` | `PageFrame` when logged out; `WorkspaceHeader` when logged in |
 | `/activity` | `Activity` | `WorkspaceHeader` |
 | `/dashboard` | `Dashboard` (role branch) | `WorkspaceHeader` / `AuthGate` |
-| `/support` | `Support` | `WorkspaceHeader` |
+| `/support` | `Support` | `PageFrame` + `.agri-marketing-shell` |
 | `/support-tickets` | `SupportTickets` | `WorkspaceHeader` |
 | `/reports` | `Reports` | `WorkspaceHeader` |
 | `/admin/payment-options` | `PaymentOptions` | `WorkspaceHeader` |
@@ -41,7 +41,9 @@ There is **no** `/cart` route; basket state lives on `/marketplace` in the `#ord
 
 | Fix | Where it shows up in UX |
 |-----|-------------------------|
-| **Full-width shell** `agri-shell` / `--agri-content-max: 1600px` + full-bleed bands | Shared `.agri-shell`; hero is true 2-col grid; glass badge bottom-right; marketplace banner is viewport-wide without negative-margin hacks |
+| **Marketing boxed shell** `.agri-marketing-shell` (1280px + clamp pad) | Home / How It Works / Support content; PublicHeader + PublicFooter inner rows align; full-bleed bands unchanged |
+| **Support logged-out Login/Join** | Support uses `PageFrame`/`PublicHeader`; auth loading keeps Login/Join; Join → `/auth?register=1` |
+| **Full-width app shell** `agri-shell` / `--agri-content-max: 100%` + full-bleed bands | Marketplace / checkout / dashboards; hero remains true 2-col grid; glass badge bottom-right |
 | **Mobile menu overlay** (was in-flow drawer under header) | Shared `MobileMenuOverlay`: fixed `dvh` panel, no content push, scroll lock, focus trap; used by `PublicHeader` + `WorkspaceHeader` for all roles |
 | **Header marketplace search** | `MarketplaceSearch` in `PublicHeader` (desktop inline, mobile second row); syncs `?q=` on `/marketplace` |
 | **Mobile bottom navigation** | `MobileBottomNav` on `PageFrame` only (`md:hidden`, 5 tabs) |
