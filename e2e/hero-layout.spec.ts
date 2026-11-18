@@ -58,19 +58,15 @@ test.describe("home hero layout and width", () => {
     });
     expect(Math.abs(padding.left - padding.right)).toBeLessThanOrEqual(1);
 
-    // Full-bleed sections match viewport width
+    // Full-bleed sections match layout viewport (clientWidth accounts for scrollbar-gutter)
     if (testInfo.project.name.startsWith("desktop")) {
-      const viewport = page.viewportSize();
-      expect(viewport).toBeTruthy();
-      if (viewport) {
-        expect(Math.abs(heroBox.width - viewport.width)).toBeLessThanOrEqual(2);
-        const bands = page.locator("[data-full-bleed]");
-        const count = await bands.count();
-        for (let i = 0; i < count; i += 1) {
-          const box = await bands.nth(i).boundingBox();
-          expect(box).toBeTruthy();
-          if (box) expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(2);
-        }
+      const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
+      expect(Math.abs(heroBox.width - clientWidth)).toBeLessThanOrEqual(2);
+      const bands = page.locator("[data-full-bleed]");
+      const count = await bands.count();
+      for (let i = 0; i < count; i += 1) {
+        const width = await bands.nth(i).evaluate(el => el.getBoundingClientRect().width);
+        expect(Math.abs(width - clientWidth)).toBeLessThanOrEqual(2);
       }
 
       // Two-column: image must not intersect text column

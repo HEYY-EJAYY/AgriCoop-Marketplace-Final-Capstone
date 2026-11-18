@@ -30,7 +30,7 @@ export default function About() {
                   <Icon size={26} />
                 </div>
                 <div>
-                  <p className="text-xs font-extrabold uppercase tracking-[.12em] text-[#6d9147]">{tag}</p>
+                  <p className="text-xs font-extrabold uppercase tracking-[.12em] text-[#315640]">{tag}</p>
                   <h2 className="mt-2 font-display text-2xl font-bold text-[#1e4933]">{title}</h2>
                   <p className="mt-2 max-w-2xl leading-7 text-[#5b7160]">{body}</p>
                 </div>
@@ -42,7 +42,7 @@ export default function About() {
         <section className={`${marketingShellClass} pb-20`}>
           <div className="rounded-[2rem] bg-[#e3efd8] p-8 text-center sm:p-12">
             <h2 className="font-display text-3xl font-bold text-[#1c4b34]">Ready to discover what local farms have to offer?</h2>
-            <p className="mx-auto mt-3 max-w-xl text-[#56715d]">Browse available listings and connect directly with the farmers and cooperatives preparing them.</p>
+            <p className="mx-auto mt-3 max-w-xl text-[#2f4f3c]">Browse available listings and connect directly with the farmers and cooperatives preparing them.</p>
             <Link href="/marketplace" className="agri-button mt-6 no-underline">
               Visit marketplace <ArrowRight size={18} />
             </Link>

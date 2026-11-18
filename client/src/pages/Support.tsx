@@ -141,7 +141,7 @@ export default function Support() {
           <div className="agri-card p-8 text-center">
             <MessageCircle className="mx-auto text-[#6d9852]" />
             <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to open an inquiry</h1>
-            <p className="mt-2 text-sm text-[#6d7d70]">Order coordination with sellers belongs under Messages, not here.</p>
+            <p className="mt-2 text-sm text-[#4a5c50]">Order coordination with sellers belongs under Messages, not here.</p>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <Link href="/auth" className="agri-ghost inline-flex min-h-11 items-center no-underline">Login</Link>
               <Link href="/auth?register=1" className="agri-button inline-flex min-h-11 items-center no-underline">Join AgriCoop</Link>
@@ -156,9 +156,9 @@ export default function Support() {
     <PageFrame>
       <main className={`${marketingShellClass} py-8`}>
         <div className="mb-6">
-          <p className="text-sm font-extrabold uppercase tracking-[.13em] text-[#668d49]">Platform support</p>
+          <p className="text-sm font-extrabold uppercase tracking-[.13em] text-[#315640]">Platform support</p>
           <h1 className="mt-1 font-display text-3xl font-bold text-[#244e36]">Account and platform help</h1>
-          <p className="mt-2 max-w-2xl text-sm text-[#6d7d70]">
+          <p className="mt-2 max-w-2xl text-sm text-[#4a5c50]">
             Account, billing, and AgriCoop platform help. For buyer–seller order chat, use Messages instead.
           </p>
         </div>
@@ -251,7 +251,7 @@ export default function Support() {
                   })}
                 </div>
               ) : (
-                <p className="p-5 text-sm text-[#6d7d70]">No platform inquiries yet. Start one above.</p>
+                <p className="p-5 text-sm text-[#4a5c50]">No platform inquiries yet. Start one above.</p>
               )}
             </div>
           </aside>
@@ -259,7 +259,7 @@ export default function Support() {
             {activeId ? (
               <>
                 <div className="border-b border-[#e3e9de] pb-4">
-                  <p className="text-xs font-extrabold uppercase tracking-[.13em] text-[#6d9147]">Platform support</p>
+                  <p className="text-xs font-extrabold uppercase tracking-[.13em] text-[#315640]">Platform support</p>
                   <h2 className="mt-1 font-display text-2xl font-bold text-[#264f37]">{activeThread?.conversation.subject ?? "Conversation"}</h2>
                 </div>
                 <div className="flex-1 space-y-3 overflow-y-auto py-5">
@@ -269,7 +269,7 @@ export default function Support() {
                       <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#385644]">{row.message.body}</p>
                       <p className="mt-2 text-[11px] text-[#78907d]" title={formatDateTimeManila(row.message.createdAt)}>{formatDateTimeManila(row.message.createdAt)}</p>
                     </div>
-                  )) : <p className="text-sm text-[#6d7d70]">No messages yet.</p>}
+                  )) : <p className="text-sm text-[#4a5c50]">No messages yet.</p>}
                 </div>
                 <form
                   onSubmit={event => {
@@ -287,7 +287,7 @@ export default function Support() {
                 <div>
                   <MessageCircle className="mx-auto text-[#7ba15b]" size={38} />
                   <h2 className="mt-4 font-display text-2xl font-bold text-[#264f37]">Your support inbox</h2>
-                  <p className="mt-2 text-sm text-[#6d7d70]">Platform help threads appear here. Order chat with sellers lives under Messages.</p>
+                  <p className="mt-2 text-sm text-[#4a5c50]">Platform help threads appear here. Order chat with sellers lives under Messages.</p>
                 </div>
               </div>
             )}

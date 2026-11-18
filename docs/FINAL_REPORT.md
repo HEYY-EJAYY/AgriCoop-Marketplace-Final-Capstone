@@ -20,6 +20,7 @@ Updated: 2026-11-18
 | Join navigates to `/auth?register=1` | Header + mobile menu |
 | 404 uses AgriCoop `PageFrame` chrome | `/404` |
 | Product / cooperative / guest Messages & Profile use `PageFrame` | Public routes listed above |
+| Darker stage/eyebrow labels on How It Works + Support for AA contrast | `/about`, `/support` |
 | **Unchanged:** marketplace / cart / checkout / auth form / dashboards content width | As designed |
 
 ### Root causes

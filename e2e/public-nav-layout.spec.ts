@@ -126,7 +126,7 @@ test.describe("marketing boxed layout", () => {
       await expect(page.getByTestId("site-header")).toBeVisible();
       await assertNoHorizontalOverflow(page);
 
-      const marketingShell = page.locator("main .agri-marketing-shell").first();
+      const marketingShell = page.locator("main.agri-marketing-shell, main .agri-marketing-shell").first();
       await expect(marketingShell).toBeVisible();
 
       const metrics = await marketingShell.evaluate(el => {
@@ -137,23 +137,19 @@ test.describe("marketing boxed layout", () => {
           padRight: Number.parseFloat(styles.paddingRight),
           maxWidthPx: Number.parseFloat(styles.maxWidth),
           width: rect.width,
+          clientWidth: document.documentElement.clientWidth,
         };
       });
 
       expect(Math.abs(metrics.padLeft - metrics.padRight)).toBeLessThanOrEqual(1);
       expect(metrics.maxWidthPx).toBeLessThanOrEqual(1280 + 0.5);
-      expect(metrics.width).toBeLessThanOrEqual(1280 + 1);
+      expect(metrics.width).toBeLessThanOrEqual(Math.min(1280, metrics.clientWidth) + 1);
 
-      const viewport = page.viewportSize();
-      expect(viewport).toBeTruthy();
-      if (viewport) {
-        const bands = page.locator("[data-full-bleed], footer, header");
-        const count = await bands.count();
-        for (let i = 0; i < count; i += 1) {
-          const box = await bands.nth(i).boundingBox();
-          if (!box) continue;
-          expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(2);
-        }
+      const bands = page.locator("[data-full-bleed], footer.border-t, header[data-testid='site-header']");
+      const count = await bands.count();
+      for (let i = 0; i < count; i += 1) {
+        const width = await bands.nth(i).evaluate(el => el.getBoundingClientRect().width);
+        expect(Math.abs(width - metrics.clientWidth)).toBeLessThanOrEqual(2);
       }
     });
   }
