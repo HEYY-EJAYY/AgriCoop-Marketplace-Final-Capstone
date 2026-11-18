@@ -1,4 +1,5 @@
 import { PageFrame, shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { CooperativeSelect, emptyCooperativeSelectValue, type CooperativeSelectValue } from "@/components/CooperativeSelect";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { blobToBase64, prepareProfileImage } from "@/lib/profileImage";
 import { roleDisplayLabel } from "@/lib/roleLabels";
@@ -22,6 +23,18 @@ export default function Profile() {
   const [busy, setBusy] = useState(false);
   const updateProfile = trpc.account.updateProfile.useMutation();
   const uploadPhoto = trpc.account.uploadProfileImage.useMutation();
+  const { data: cooperatives = [] } = trpc.cooperatives.list.useQuery(undefined, { enabled: !!user });
+  const associationMine = trpc.cooperativeAssociations.mine.useQuery(undefined, {
+    enabled: !!user && user.role === "seller",
+  });
+  const associationRequest = trpc.cooperativeAssociations.request.useMutation({
+    onSuccess: () => {
+      toast.success("Cooperative association request submitted.");
+      void associationMine.refetch();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const [sellerCoop, setSellerCoop] = useState<CooperativeSelectValue>(emptyCooperativeSelectValue);
 
   useEffect(() => {
     if (!user) return;
@@ -29,7 +42,16 @@ export default function Profile() {
     setContactNumber(user.contactNumber ?? "");
     setAddress(user.address ?? "");
     setPreview(user.profileImageUrl ?? null);
+    setSellerCoop({
+      ...emptyCooperativeSelectValue(),
+      cooperativeId: user.cooperativeId ?? null,
+    });
   }, [user]);
+
+  const assignedCooperative = user?.cooperativeId
+    ? cooperatives.find(row => row.id === user.cooperativeId)
+    : undefined;
+  const pendingAssociation = associationMine.data?.find(row => row.request.status === "pending");
 
   if (loading) {
     return (
@@ -178,6 +200,57 @@ export default function Profile() {
           </section>
 
           <div className="grid w-full gap-6">
+            <section className="agri-card w-full p-6 sm:p-8">
+              <h2 className="font-display text-xl font-bold text-[#264f37]">Cooperative</h2>
+              <p className="mt-1 text-sm text-[#6a796e]">
+                {user.role === "seller"
+                  ? "Request a different cooperative. An officer must approve before assignments change."
+                  : "Your linked cooperative (read-only here)."}
+              </p>
+              {user.role === "seller" ? (
+                <div className="mt-4 space-y-3">
+                  <p className="text-sm text-[#315640]">
+                    Current: {assignedCooperative?.name ?? (user.cooperativeId ? "Assigned cooperative" : "Not assigned")}
+                  </p>
+                  <CooperativeSelect
+                    value={sellerCoop}
+                    onChange={setSellerCoop}
+                    allowAddNew={false}
+                    required={false}
+                    label="Request cooperative"
+                  />
+                  {pendingAssociation && (
+                    <p className="text-sm text-[#65766b]" role="status">
+                      Pending request: {pendingAssociation.cooperativeName} ({pendingAssociation.request.status})
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="agri-button text-sm"
+                    disabled={associationRequest.isPending || !sellerCoop.cooperativeId || sellerCoop.cooperativeId === user.cooperativeId || Boolean(pendingAssociation)}
+                    onClick={() => {
+                      if (!sellerCoop.cooperativeId) return;
+                      associationRequest.mutate({ cooperativeId: sellerCoop.cooperativeId });
+                    }}
+                  >
+                    Submit association request
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <CooperativeSelect
+                    value={{
+                      ...emptyCooperativeSelectValue(),
+                      cooperativeId: user.cooperativeId ?? null,
+                    }}
+                    onChange={() => undefined}
+                    allowAddNew={false}
+                    disabled
+                    label="Linked cooperative"
+                  />
+                </div>
+              )}
+            </section>
             <section className="agri-card w-full p-6 sm:p-8">
               <h2 className="font-display text-xl font-bold text-[#264f37]">Change password</h2>
               <p className="mt-1 text-sm text-[#6a796e]">Leave blank to keep your current password.</p>

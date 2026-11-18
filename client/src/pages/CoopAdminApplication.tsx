@@ -1,9 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { WorkspaceHeader, shellContainerClass } from "@/components/AgriShell";
-import { CooperativeSelect, type CooperativeSelectValue } from "@/components/CooperativeSelect";
+import { CooperativeDuplicateNotice } from "@/components/CooperativeDuplicateNotice";
+import { CooperativeSelect, emptyCooperativeSelectValue, type CooperativeSelectValue } from "@/components/CooperativeSelect";
+import {
+  appendNewCooperativeFields,
+  confirmNormalizedNameForNewCoop,
+  cooperativeConflictFromError,
+  type CooperativeConflictUi,
+} from "@/lib/cooperativeConflict";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
@@ -58,21 +65,36 @@ export default function CoopAdminApplication() {
 
   const [fullName, setFullName] = useState(user?.name ?? "");
   const [positionTitle, setPositionTitle] = useState("");
-  const [coop, setCoop] = useState<CooperativeSelectValue>({
-    cooperativeId: null,
-    newCooperativeName: "",
-    newCooperativeLocation: "Philippines",
-    addNew: false,
-  });
+  const [coop, setCoop] = useState<CooperativeSelectValue>(emptyCooperativeSelectValue);
   const [idImage, setIdImage] = useState<LocalImage | null>(null);
   const [proofImage, setProofImage] = useState<LocalImage | null>(null);
-  const [coopSuggestion, setCoopSuggestion] = useState<{
-    id: number;
-    name: string;
-    normalizedName: string;
-    location: string;
-  } | null>(null);
+  const [coopConflict, setCoopConflict] = useState<CooperativeConflictUi | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!coop.addNew || coop.newCooperativeName.trim().length < 3) return undefined;
+    if (!coop.newCooperativeLocation.trim() || coop.newCooperativeAddress.trim().length < 3) return undefined;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void utils.cooperatives.previewCreate
+        .fetch({
+          newCooperativeName: coop.newCooperativeName.trim(),
+          newCooperativeLocation: coop.newCooperativeLocation.trim(),
+          newCooperativeAddress: coop.newCooperativeAddress.trim(),
+        })
+        .then(() => {
+          if (!cancelled) setCoopConflict(null);
+        })
+        .catch(error => {
+          const conflict = cooperativeConflictFromError(error);
+          if (!cancelled && conflict) setCoopConflict(conflict);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [coop.addNew, coop.newCooperativeName, coop.newCooperativeLocation, coop.newCooperativeAddress, utils.cooperatives.previewCreate]);
 
   const pending = mine.data?.application.status === "pending";
   const awaiting = !mine.data || mine.data.application.status === "awaiting_documents" || mine.data.application.status === "rejected";
@@ -125,14 +147,12 @@ export default function CoopAdminApplication() {
     const payload: Parameters<typeof submit.mutateAsync>[0] = {
       fullName: fullName.trim(),
       positionTitle: positionTitle.trim(),
-      cooperativeId: coop.addNew ? undefined : coop.cooperativeId ?? undefined,
-      newCooperativeName: coop.addNew ? coop.newCooperativeName.trim() : undefined,
-      newCooperativeLocation: coop.addNew ? (coop.newCooperativeLocation.trim() || "Philippines") : undefined,
       idDocumentPath: idIntent.storagePath,
       proofDocumentPath: proofIntent.storagePath,
       idUploadIntent: idIntent.uploadIntent,
       proofUploadIntent: proofIntent.uploadIntent,
     };
+    appendNewCooperativeFields(payload, coop);
     if (confirmSimilarNormalizedName) {
       payload.confirmSimilarNormalizedName = confirmSimilarNormalizedName;
     }
@@ -146,22 +166,12 @@ export default function CoopAdminApplication() {
   ) => {
     try {
       await submit.mutateAsync(buildSubmitPayload(idIntent, proofIntent, confirmSimilarNormalizedName));
-      setCoopSuggestion(null);
+      setCoopConflict(null);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Submit failed.";
-      const suggestionMatch = /Did you mean "([^"]+)"/i.exec(message);
-      if (suggestionMatch && coop.addNew) {
-        const list = await utils.cooperatives.listActive.fetch();
-        const found = list.find(row => row.name === suggestionMatch[1]);
-        if (found) {
-          setCoopSuggestion({
-            id: found.id,
-            name: found.name,
-            normalizedName: found.normalizedName,
-            location: found.location,
-          });
-          return;
-        }
+      const conflict = cooperativeConflictFromError(error);
+      if (conflict) {
+        setCoopConflict(conflict);
+        return;
       }
       throw error;
     }
@@ -176,7 +186,7 @@ export default function CoopAdminApplication() {
       const proofIntent = await uploadOne("proof", proofImage);
       await runSubmit(idIntent, proofIntent);
     } catch (error) {
-      if (error instanceof Error && /Did you mean "/i.test(error.message) && coop.addNew) return;
+      if (cooperativeConflictFromError(error)) return;
       toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
     } finally {
       setBusy(false);
@@ -229,64 +239,73 @@ export default function CoopAdminApplication() {
               value={coop}
               onChange={next => {
                 setCoop(next);
-                setCoopSuggestion(null);
+                setCoopConflict(null);
               }}
               required
             />
-            {coopSuggestion && (
-              <section role="alertdialog" aria-labelledby="coop-admin-app-did-you-mean-title" className="rounded-xl border border-[#e2c48a] bg-[#fff8ea] p-4">
-                <h2 id="coop-admin-app-did-you-mean-title" className="font-bold text-[#6a4e16]">Did you mean…?</h2>
-                <p className="mt-2 text-sm text-[#6a4e16]">
-                  A similar cooperative already exists: <strong>{coopSuggestion.name}</strong> ({coopSuggestion.location}).
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="agri-button text-sm"
-                    disabled={busy}
-                    onClick={() => {
-                      if (!idImage || !proofImage) return;
-                      setBusy(true);
-                      void (async () => {
-                        try {
-                          const idIntent = await uploadOne("id", idImage);
-                          const proofIntent = await uploadOne("proof", proofImage);
-                          await runSubmit(idIntent, proofIntent, coopSuggestion.normalizedName);
-                        } catch (error) {
-                          toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
-                        } finally {
-                          setBusy(false);
-                        }
-                      })();
-                    }}
-                  >
-                    Use {coopSuggestion.name}
-                  </button>
-                  <button
-                    type="button"
-                    className="agri-ghost text-sm"
-                    disabled={busy}
-                    onClick={() => {
-                      if (!idImage || !proofImage) return;
-                      const normalized = coop.newCooperativeName.trim().toLowerCase().replace(/[^a-z0-9]+/gi, "");
-                      setBusy(true);
-                      void (async () => {
-                        try {
-                          const idIntent = await uploadOne("id", idImage);
-                          const proofIntent = await uploadOne("proof", proofImage);
-                          await runSubmit(idIntent, proofIntent, normalized || coopSuggestion.normalizedName);
-                        } catch (error) {
-                          toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
-                        } finally {
-                          setBusy(false);
-                        }
-                      })();
-                    }}
-                  >
-                    Create mine anyway
-                  </button>
-                </div>
-              </section>
+            {coopConflict && (
+              <CooperativeDuplicateNotice
+                {...(coopConflict.mode === "exact"
+                  ? {
+                      mode: "exact" as const,
+                      match: coopConflict.match,
+                      onUse: match => {
+                        if (!idImage || !proofImage) return;
+                        setBusy(true);
+                        void (async () => {
+                          try {
+                            const idIntent = await uploadOne("id", idImage);
+                            const proofIntent = await uploadOne("proof", proofImage);
+                            await runSubmit(idIntent, proofIntent, match.normalizedName);
+                          } catch (error) {
+                            if (!cooperativeConflictFromError(error)) {
+                              toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
+                            }
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      },
+                    }
+                  : {
+                      mode: "similar" as const,
+                      matches: coopConflict.matches,
+                      onUse: match => {
+                        if (!idImage || !proofImage) return;
+                        setBusy(true);
+                        void (async () => {
+                          try {
+                            const idIntent = await uploadOne("id", idImage);
+                            const proofIntent = await uploadOne("proof", proofImage);
+                            await runSubmit(idIntent, proofIntent, match.normalizedName);
+                          } catch (error) {
+                            if (!cooperativeConflictFromError(error)) {
+                              toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
+                            }
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      },
+                      onAddMine: () => {
+                        if (!idImage || !proofImage) return;
+                        setBusy(true);
+                        void (async () => {
+                          try {
+                            const idIntent = await uploadOne("id", idImage);
+                            const proofIntent = await uploadOne("proof", proofImage);
+                            await runSubmit(idIntent, proofIntent, confirmNormalizedNameForNewCoop(coop));
+                          } catch (error) {
+                            if (!cooperativeConflictFromError(error)) {
+                              toast.error(toUserFacingErrorMessage(error instanceof Error ? error.message : "Submit failed."));
+                            }
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      },
+                    })}
+              />
             )}
             <label className="field-label">Position or title
               <input className="field-control" required value={positionTitle} onChange={e => setPositionTitle(e.target.value)} placeholder="e.g. Board Secretary" />

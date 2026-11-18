@@ -12,6 +12,13 @@ import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQuery
 import { AdminWorkspaceTabs, type AdminWorkspaceTabId } from "@/components/AdminWorkspaceTabs";
 import { OfficerApplicationsPanel } from "@/components/OfficerApplicationsPanel";
 import { AddAccountDialog } from "@/components/AddAccountDialog";
+import { CooperativeDuplicateNotice } from "@/components/CooperativeDuplicateNotice";
+import { CooperativeSelect, emptyCooperativeSelectValue, type CooperativeSelectValue } from "@/components/CooperativeSelect";
+import {
+  confirmNormalizedNameForNewCoop,
+  cooperativeConflictFromError,
+  type CooperativeConflictUi,
+} from "@/lib/cooperativeConflict";
 import { getProductImageUrl } from "@/lib/productImages";
 import { toUserFacingErrorMessage, USER_FACING_LOAD_ERROR, USER_FACING_SAVE_ERROR } from "@shared/userFacingErrors";
 import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
@@ -263,7 +270,7 @@ function AuthGate({ children }: { children: ReactNode }) {
 
 function SellerAssociationRequestPanel() {
   const utils = trpc.useUtils();
-  const [cooperativeId, setCooperativeId] = useState("");
+  const [coop, setCoop] = useState<CooperativeSelectValue>(emptyCooperativeSelectValue);
   const [message, setMessage] = useState("");
   const { data: cooperatives = [], isLoading: cooperativesLoading, error: cooperativesError } = trpc.cooperativeAssociations.activeCooperatives.useQuery();
   const { data: requests = [], isLoading: requestsLoading, error: requestsError } = trpc.cooperativeAssociations.mine.useQuery();
@@ -289,15 +296,11 @@ function SellerAssociationRequestPanel() {
     </div>)}
     {!pendingRequest && !cooperativesLoading && !cooperativesError && <form className="mt-4 space-y-3" onSubmit={event => {
       event.preventDefault();
-      const selectedId = Number(cooperativeId);
-      if (Number.isSafeInteger(selectedId) && selectedId > 0) request.mutate({ cooperativeId: selectedId, message: message.trim() || undefined });
+      if (coop.cooperativeId) request.mutate({ cooperativeId: coop.cooperativeId, message: message.trim() || undefined });
     }}>
-      <label className="field-label">Choose a cooperative<select required className="field-control" value={cooperativeId} onChange={event => setCooperativeId(event.target.value)}>
-        <option value="">Select a cooperative</option>
-        {cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}
-      </select></label>
+      <CooperativeSelect value={coop} onChange={setCoop} allowAddNew={false} required label="Choose a cooperative" />
       <label className="field-label">Message for the Admin (optional)<textarea maxLength={600} className="field-control min-h-20" value={message} onChange={event => setMessage(event.target.value)}/></label>
-      <button className="agri-button text-sm" disabled={request.isPending || !cooperativeId || !cooperatives.length}>Submit association request</button>
+      <button className="agri-button text-sm" disabled={request.isPending || !coop.cooperativeId || !cooperatives.length}>Submit association request</button>
     </form>}
     {!cooperativesLoading && !cooperativesError && !cooperatives.length && <p className="mt-3 text-sm text-[#65766b]">No active cooperatives are currently accepting requests.</p>}
   </section>;
@@ -737,8 +740,13 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   });
   const utils = trpc.useUtils(); const { user } = useAuth(); const productsQuery = trpc.products.mine.useQuery(); const { data: products = [], isLoading } = productsQuery; const ordersQuery = trpc.orders.sellerMine.useQuery(undefined, { enabled: user?.role === "seller" || !!onExitSellerMode }); const { data: orders = [] } = ordersQuery; const quotationsQuery = trpc.quotations.sellerMine.useQuery(undefined, { enabled: user?.role === "seller" || !!onExitSellerMode }); const { data: quotations = [] } = quotationsQuery;
   const { data: cooperatives = [] } = trpc.cooperatives.list.useQuery();
-  const sellerCooperativeName = cooperatives.find(cooperative => cooperative.id === user?.cooperativeId)?.name
-    ?? (user?.cooperativeId == null ? "Not assigned — request a cooperative before publishing" : "Assigned cooperative");
+  const assignedCooperative = user?.cooperativeId
+    ? cooperatives.find(cooperative => cooperative.id === user.cooperativeId)
+    : undefined;
+  const cooperativeRemoved = user?.cooperativeId != null && !assignedCooperative;
+  const needsCooperative = user?.cooperativeId == null || cooperativeRemoved;
+  const sellerCooperativeName = assignedCooperative?.name
+    ?? (cooperativeRemoved ? "Cooperative removed — choose another" : "Not assigned — request a cooperative before publishing");
   const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true });
   const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFiles, setImageFiles] = useState<File[]>([]); const [imageError, setImageError] = useState("");
   const uploadImage = trpc.products.uploadImage.useMutation();
@@ -780,13 +788,15 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   if (productsQuery.isLoading || (user?.role === "seller" && (ordersQuery.isLoading || quotationsQuery.isLoading))) {
     return <LoadingWorkspace/>;
   }
-  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className={`${shellContainerClass} pt-5`}><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(products.filter(product => product.status === "published").length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p></div><button className="agri-button text-sm" onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{openForm && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Cooperative<input readOnly className="field-control bg-white/70" value={sellerCooperativeName} aria-label="Listing cooperative"/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ListingPaymentFlagFields allowsPickup={form.allowsPickup} allowsDelivery={form.allowsDelivery} onChange={patch => setForm({ ...form, ...patch })}/><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:col-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div className="md:col-span-2 flex justify-center pt-1"><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : products.length ? products.map(product => <SellerProductCard key={product.id} product={product}/>) : <Empty icon={Package} title="No products published" body="Add your first harvest to begin reaching buyers."/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.buyerName || "Buyer"}</Link><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div><div className="mt-3"><button type="button" className="agri-ghost min-h-11 px-3 py-2 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}><MessageCircle size={14}/> Message</button></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}<button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
+  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className={`${shellContainerClass} pt-5`}><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(products.filter(product => product.status === "published").length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p>{needsCooperative && <p className="mt-2 text-sm font-semibold text-[#a34838]" role="alert">Your cooperative was removed or is not assigned. Choose another before publishing new listings.</p>}</div><button className="agri-button text-sm" disabled={needsCooperative} onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{needsCooperative && <div className="mt-4"><SellerAssociationRequestPanel/></div>}{openForm && !needsCooperative && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Cooperative<input readOnly className="field-control bg-white/70" value={sellerCooperativeName} aria-label="Listing cooperative"/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ListingPaymentFlagFields allowsPickup={form.allowsPickup} allowsDelivery={form.allowsDelivery} onChange={patch => setForm({ ...form, ...patch })}/><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:col-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div className="md:col-span-2 flex justify-center pt-1"><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : products.length ? products.map(product => <SellerProductCard key={product.id} product={product}/>) : <Empty icon={Package} title="No products published" body="Add your first harvest to begin reaching buyers."/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.buyerName || "Buyer"}</Link><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div><div className="mt-3"><button type="button" className="agri-ghost min-h-11 px-3 py-2 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}><MessageCircle size={14}/> Message</button></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}<button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
 }
 
 function SellerVerificationWorkspace() {
   const { user } = useAuth();
+  const { data: cooperatives = [] } = trpc.cooperatives.list.useQuery();
+  const cooperativeRemoved = user?.cooperativeId != null && !cooperatives.some(c => c.id === user.cooperativeId);
   return <>
-    {user?.cooperativeId === null && <div className={`${shellContainerClass} pt-5`}><SellerAssociationRequestPanel/></div>}
+    {(user?.cooperativeId === null || cooperativeRemoved) && <div className={`${shellContainerClass} pt-5`}><SellerAssociationRequestPanel/></div>}
     <SellerDashboard/>
     <main className={`${shellContainerClass} pb-8`}><ProfileVerificationPanel/></main>
   </>;
@@ -1235,6 +1245,181 @@ function RoleConflictsPanel() {
   </section>;
 }
 
+function CooperativesAdminPanel() {
+  const utils = trpc.useUtils();
+  const manageQuery = trpc.cooperatives.manageList.useQuery();
+  const [name, setName] = useState("");
+  const [coopLocation, setCoopLocation] = useState("");
+  const [coopAddress, setCoopAddress] = useState("");
+  const [coopConflict, setCoopConflict] = useState<CooperativeConflictUi | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: number;
+    name: string;
+    sellerCount: number;
+    listingCount: number;
+  } | null>(null);
+
+  const createCooperative = trpc.cooperatives.create.useMutation({
+    onSuccess: () => {
+      toast.success("Cooperative added.");
+      setName("");
+      setCoopLocation("");
+      setCoopAddress("");
+      setCoopConflict(null);
+      void utils.cooperatives.manageList.invalidate();
+      void utils.admin.overview.invalidate();
+      void utils.cooperatives.list.invalidate();
+    },
+    onError: error => {
+      const conflict = cooperativeConflictFromError(error);
+      if (conflict) {
+        setCoopConflict(conflict);
+        return;
+      }
+      toast.error(error.message);
+    },
+  });
+  const softDelete = trpc.cooperatives.softDelete.useMutation({
+    onSuccess: () => {
+      toast.success("Cooperative deleted.");
+      setDeleteTarget(null);
+      void manageQuery.refetch();
+      void utils.cooperatives.list.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const restore = trpc.cooperatives.restore.useMutation({
+    onSuccess: () => {
+      toast.success("Cooperative restored.");
+      void manageQuery.refetch();
+      void utils.cooperatives.list.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const runCreate = (confirmSimilarNormalizedName?: string) => {
+    createCooperative.mutate({
+      name: name.trim(),
+      location: coopLocation.trim(),
+      address: coopAddress.trim(),
+      confirmSimilarNormalizedName,
+    });
+  };
+
+  return (
+  <div className="space-y-8">
+    <form
+      className="agri-card p-5 sm:p-6"
+      onSubmit={event => {
+        event.preventDefault();
+        runCreate();
+      }}
+    >
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2>
+      <label className="field-label mt-4">Cooperative name<input required minLength={3} className="field-control" value={name} onChange={e => setName(e.target.value)} /></label>
+      <label className="field-label mt-4">Street / barangay address<input required minLength={3} className="field-control" value={coopAddress} onChange={e => setCoopAddress(e.target.value)} /></label>
+      <label className="field-label mt-4">Location<input required minLength={3} className="field-control" value={coopLocation} onChange={e => setCoopLocation(e.target.value)} placeholder="City, Province" /></label>
+      {coopConflict && (
+        <CooperativeDuplicateNotice
+          {...(coopConflict.mode === "exact"
+            ? {
+                mode: "exact" as const,
+                match: coopConflict.match,
+                onUse: match => runCreate(match.normalizedName),
+              }
+            : {
+                mode: "similar" as const,
+                matches: coopConflict.matches,
+                onUse: match => runCreate(match.normalizedName),
+                onAddMine: () => runCreate(confirmNormalizedNameForNewCoop({
+                  cooperativeId: null,
+                  newCooperativeName: name,
+                  newCooperativeLocation: coopLocation,
+                  newCooperativeAddress: coopAddress,
+                  addNew: true,
+                })),
+              })}
+        />
+      )}
+      <button type="submit" className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16} /> Create cooperative</button>
+    </form>
+
+    <section className="agri-card overflow-hidden p-5 sm:p-6">
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">Cooperatives</h2>
+      {manageQuery.isLoading && <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]" />}
+      {manageQuery.error && <p role="alert" className="mt-3 text-sm text-[#a34838]">{manageQuery.error.message}</p>}
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full min-w-[640px] text-left text-sm">
+          <thead className="border-b border-[#e2e9dd] text-xs uppercase text-[#718174]">
+            <tr>
+              <th className="pb-2">Name</th>
+              <th className="pb-2">Location</th>
+              <th className="pb-2">Sellers</th>
+              <th className="pb-2">Listings</th>
+              <th className="pb-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {manageQuery.data?.map(row => (
+              <tr key={row.id} className={`border-t border-[#edf0e9] ${row.deletedAt ? "opacity-70" : ""}`}>
+                <td className="py-2 font-semibold text-[#315640]">{row.name}{row.deletedAt ? " (deleted)" : ""}</td>
+                <td className="py-2 text-[#65766b]">{[row.address, row.location].filter(Boolean).join(" · ")}</td>
+                <td className="py-2">{row.sellerCount}</td>
+                <td className="py-2">{row.listingCount}</td>
+                <td className="py-2 text-right">
+                  {row.deletedAt ? (
+                    <button type="button" className="agri-ghost px-2 py-1 text-xs" disabled={restore.isPending} onClick={() => restore.mutate({ id: row.id })}>Restore</button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="agri-ghost px-2 py-1 text-xs text-[#a34838]"
+                      onClick={() => setDeleteTarget({
+                        id: row.id,
+                        name: row.name,
+                        sellerCount: row.sellerCount,
+                        listingCount: row.listingCount,
+                      })}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!manageQuery.isLoading && !manageQuery.data?.length && (
+          <p className="py-4 text-sm text-[#6d7d70]">No cooperatives yet.</p>
+        )}
+      </div>
+    </section>
+
+    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This soft-deletes the cooperative. It currently has {deleteTarget?.sellerCount ?? 0} seller(s) and {deleteTarget?.listingCount ?? 0} listing(s).
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-[#a34838]"
+            disabled={softDelete.isPending}
+            onClick={() => {
+              if (deleteTarget) softDelete.mutate({ id: deleteTarget.id });
+            }}
+          >
+            Delete cooperative
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </div>
+  );
+}
+
 function AdminDashboard() {
   const [sellerMode, setSellerMode] = useState(false);
   const [rejectingProductId, setRejectingProductId] = useState<number | null>(null);
@@ -1243,18 +1428,6 @@ function AdminDashboard() {
   const utils = trpc.useUtils();
   const overviewQuery = trpc.admin.overview.useQuery();
   const { data: overview, isLoading } = overviewQuery;
-  const [name, setName] = useState("");
-  const [coopLocation, setCoopLocation] = useState("");
-  const createCooperative = trpc.cooperatives.create.useMutation({
-    onSuccess: () => {
-      toast.success("Cooperative added.");
-      setName("");
-      setCoopLocation("");
-      utils.admin.overview.invalidate();
-      utils.cooperatives.list.invalidate();
-    },
-    onError: error => toast.error(error.message),
-  });
   const updateUser = trpc.admin.updateUser.useMutation({
     onSuccess: () => {
       toast.success("User settings saved.");
@@ -1442,20 +1615,7 @@ function AdminDashboard() {
                   </div>
                 </div>
                 <div className="space-y-8">
-                  {user?.role === "superadmin" && (
-                    <form
-                      onSubmit={event => {
-                        event.preventDefault();
-                        createCooperative.mutate({ name, location: coopLocation });
-                      }}
-                      className="agri-card p-5 sm:p-6"
-                    >
-                      <h2 className="font-display text-2xl font-bold text-[#264f37]">Add a cooperative</h2>
-                      <label className="field-label mt-4">Cooperative name<input required className="field-control" value={name} onChange={e => setName(e.target.value)} /></label>
-                      <label className="field-label mt-4">Location<input required className="field-control" value={coopLocation} onChange={e => setCoopLocation(e.target.value)} placeholder="City, Province" /></label>
-                      <button className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16} /> Create cooperative</button>
-                    </form>
-                  )}
+                  {(user?.role === "admin" || user?.role === "superadmin") && <CooperativesAdminPanel />}
                 </div>
               </section>
             ),

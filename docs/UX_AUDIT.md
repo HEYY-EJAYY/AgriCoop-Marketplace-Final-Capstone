@@ -380,3 +380,7 @@ For capstone documentation, treat remaining “fix needed” rows as **prioritiz
 - Auth self-heal: `server/db.ts` (`getUserByVerifiedAuthId`)
 - Role reconciliation API: `trpc.admin.listRoleConflicts`, `trpc.admin.reconcileRole` (UI in `RoleConflictsPanel`)
 - Schema: `orders.demoSeedKey` — `supabase/migrations/20261117150000_orders_demo_seed_key.sql`
+## Cooperative UX (2026-11-18)
+- Shared CooperativeSelect combobox on Auth, Add account, Coop Admin application, Profile (seller association), Seller association panel, Admin cooperatives manager.
+- Soft delete/restore with usage counts; duplicate notices exact vs similar.
+

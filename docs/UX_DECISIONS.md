@@ -168,3 +168,9 @@ This supersedes the earlier assumption that checkout online payment uses the sel
 
 ### Buyer order archive
 - Per-user `threadStates` channel `order`. Archiving never changes seller/admin views, order status, payment, or history. Orders are never deleted.
+
+## Cooperative picker + soft delete (2026-11-18)
+
+- One ARIA combobox labeled **Cooperative** (placeholder \"Choose a cooperative\"); no separate search field; no \"(optional)\" in the label. Required for Seller and Cooperative Admin applicants; optional for Buyers.
+- Add-new collects **Address** (street/barangay) and **Location** (municipality/city + province). Server normalizes name+location; exact duplicate blocked; similar name prompts Yes use / No add mine with confirmation flag.
+- Soft delete (deletedAt/deletedBy) for Admin/SuperAdmin only; deleted coops leave pickers but keep historical names on sellers/listings/orders. Sellers with a deleted coop must pick another before publishing.

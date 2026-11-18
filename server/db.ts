@@ -452,7 +452,10 @@ export async function getUserByVerifiedAuthId(
 export async function getCooperatives() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(cooperatives).where(eq(cooperatives.status, "active")).orderBy(asc(cooperatives.name));
+  return db.select().from(cooperatives).where(and(
+    eq(cooperatives.status, "active"),
+    isNull(cooperatives.deletedAt),
+  )).orderBy(asc(cooperatives.name));
 }
 
 export async function getOpenOrderReservationQuantities(db: RootTransaction, productIds: number[]) {

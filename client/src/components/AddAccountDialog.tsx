@@ -1,7 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CooperativeSelect, type CooperativeSelectValue } from "@/components/CooperativeSelect";
+import { CooperativeDuplicateNotice } from "@/components/CooperativeDuplicateNotice";
+import { CooperativeSelect, emptyCooperativeSelectValue, type CooperativeSelectValue } from "@/components/CooperativeSelect";
 import { useAuth } from "@/_core/hooks/useAuth";
+import {
+  appendNewCooperativeFields,
+  confirmNormalizedNameForNewCoop,
+  cooperativeConflictFromError,
+  type CooperativeConflictUi,
+} from "@/lib/cooperativeConflict";
 import { trpc } from "@/lib/trpc";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 
@@ -10,27 +17,40 @@ type AddAccountDialogProps = {
   onClose: () => void;
 };
 
-type CoopSuggestion = {
-  id: number;
-  name: string;
-  normalizedName: string;
-  location: string;
-};
-
 export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
   const { user } = useAuth();
   const utils = trpc.useUtils();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"buyer" | "seller" | "admin">("buyer");
-  const [coop, setCoop] = useState<CooperativeSelectValue>({
-    cooperativeId: null,
-    newCooperativeName: "",
-    newCooperativeLocation: "Philippines",
-    addNew: false,
-  });
-  const [coopSuggestion, setCoopSuggestion] = useState<CoopSuggestion | null>(null);
+  const [coop, setCoop] = useState<CooperativeSelectValue>(emptyCooperativeSelectValue);
+  const [coopConflict, setCoopConflict] = useState<CooperativeConflictUi | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !coop.addNew || coop.newCooperativeName.trim().length < 3) return undefined;
+    if (!coop.newCooperativeLocation.trim() || coop.newCooperativeAddress.trim().length < 3) return undefined;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void utils.cooperatives.previewCreate
+        .fetch({
+          newCooperativeName: coop.newCooperativeName.trim(),
+          newCooperativeLocation: coop.newCooperativeLocation.trim(),
+          newCooperativeAddress: coop.newCooperativeAddress.trim(),
+        })
+        .then(() => {
+          if (!cancelled) setCoopConflict(null);
+        })
+        .catch(error => {
+          const conflict = cooperativeConflictFromError(error);
+          if (!cancelled && conflict) setCoopConflict(conflict);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, coop.addNew, coop.newCooperativeName, coop.newCooperativeLocation, coop.newCooperativeAddress, utils.cooperatives.previewCreate]);
 
   const createAccount = trpc.admin.createAccount.useMutation({
     onSuccess: data => {
@@ -39,26 +59,23 @@ export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
       if (data.inviteLink) setInviteLink(data.inviteLink);
       else onClose();
     },
-    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+    onError: error => {
+      const conflict = cooperativeConflictFromError(error);
+      if (conflict) {
+        setCoopConflict(conflict);
+        return;
+      }
+      toast.error(toUserFacingErrorMessage(error.message));
+    },
   });
 
   const buildPayload = (confirmSimilarNormalizedName?: string) => {
-    const payload: {
-      name: string;
-      email: string;
-      role: typeof role;
-      cooperativeId?: number;
-      newCooperativeName?: string;
-      newCooperativeLocation?: string;
-      confirmSimilarNormalizedName?: string;
-    } = {
+    const payload: Parameters<typeof createAccount.mutateAsync>[0] = {
       name: name.trim(),
       email: email.trim(),
       role,
-      cooperativeId: !coop.addNew ? coop.cooperativeId ?? undefined : undefined,
-      newCooperativeName: coop.addNew ? coop.newCooperativeName.trim() : undefined,
-      newCooperativeLocation: coop.addNew ? (coop.newCooperativeLocation.trim() || "Philippines") : undefined,
     };
+    appendNewCooperativeFields(payload, coop);
     if (confirmSimilarNormalizedName) {
       payload.confirmSimilarNormalizedName = confirmSimilarNormalizedName;
     }
@@ -66,27 +83,8 @@ export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
   };
 
   const runCreate = async (confirmSimilarNormalizedName?: string) => {
-    try {
-      await createAccount.mutateAsync(buildPayload(confirmSimilarNormalizedName));
-      setCoopSuggestion(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Account creation failed.";
-      const suggestionMatch = /Did you mean "([^"]+)"/i.exec(message);
-      if (suggestionMatch && coop.addNew) {
-        const list = await utils.cooperatives.listActive.fetch();
-        const found = list.find(row => row.name === suggestionMatch[1]);
-        if (found) {
-          setCoopSuggestion({
-            id: found.id,
-            name: found.name,
-            normalizedName: found.normalizedName,
-            location: found.location,
-          });
-          return;
-        }
-      }
-      throw error;
-    }
+    await createAccount.mutateAsync(buildPayload(confirmSimilarNormalizedName));
+    setCoopConflict(null);
   };
 
   if (!open) return null;
@@ -98,12 +96,7 @@ export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
         className="agri-card w-full max-w-lg space-y-4 p-6"
         onSubmit={event => {
           event.preventDefault();
-          void runCreate().catch(error => {
-            if (!(error instanceof Error)) return;
-            // mutateAsync errors after coop suggestion are already handled; avoid duplicate toasts.
-            if (/Did you mean "/i.test(error.message) && coop.addNew) return;
-            toast.error(toUserFacingErrorMessage(error.message));
-          });
+          void runCreate().catch(() => undefined);
         }}
       >
         <h2 id="add-account-title" className="font-display text-2xl font-bold text-[#264f37]">Add account</h2>
@@ -139,45 +132,26 @@ export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
             value={coop}
             onChange={next => {
               setCoop(next);
-              setCoopSuggestion(null);
+              setCoopConflict(null);
             }}
             required
           />
         )}
-        {coopSuggestion && (
-          <section role="alertdialog" aria-labelledby="add-account-coop-did-you-mean-title" className="rounded-xl border border-[#e2c48a] bg-[#fff8ea] p-4">
-            <h2 id="add-account-coop-did-you-mean-title" className="font-bold text-[#6a4e16]">Did you mean…?</h2>
-            <p className="mt-2 text-sm text-[#6a4e16]">
-              A similar cooperative already exists: <strong>{coopSuggestion.name}</strong> ({coopSuggestion.location}).
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="agri-button text-sm"
-                disabled={createAccount.isPending}
-                onClick={() => {
-                  void runCreate(coopSuggestion.normalizedName).catch(error =>
-                    toast.error(error instanceof Error ? error.message : "Account creation failed."),
-                  );
-                }}
-              >
-                Use {coopSuggestion.name}
-              </button>
-              <button
-                type="button"
-                className="agri-ghost text-sm"
-                disabled={createAccount.isPending}
-                onClick={() => {
-                  const normalized = coop.newCooperativeName.trim().toLowerCase().replace(/[^a-z0-9]+/gi, "");
-                  void runCreate(normalized || coopSuggestion.normalizedName).catch(error =>
-                    toast.error(error instanceof Error ? error.message : "Account creation failed."),
-                  );
-                }}
-              >
-                Create mine anyway
-              </button>
-            </div>
-          </section>
+        {coopConflict && (
+          <CooperativeDuplicateNotice
+            {...(coopConflict.mode === "exact"
+              ? {
+                  mode: "exact" as const,
+                  match: coopConflict.match,
+                  onUse: match => void runCreate(match.normalizedName),
+                }
+              : {
+                  mode: "similar" as const,
+                  matches: coopConflict.matches,
+                  onUse: match => void runCreate(match.normalizedName),
+                  onAddMine: () => void runCreate(confirmNormalizedNameForNewCoop(coop)),
+                })}
+          />
         )}
         <div className="flex justify-end gap-2">
           <button type="button" className="agri-ghost min-h-11" onClick={onClose}>Close</button>

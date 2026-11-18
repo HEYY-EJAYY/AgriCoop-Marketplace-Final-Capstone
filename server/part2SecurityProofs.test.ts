@@ -240,7 +240,9 @@ describe("Part 2 security proofs", () => {
               id: 3,
               name: "Sutafaco Cooperative",
               normalizedName: "sutafacocooperative",
-              location: "Butuan City",
+              location: "Butuan City, Agusan del Norte",
+              normalizedLocation: "butuancityagusandelnorte",
+              address: "Poblacion",
             }],
           }),
         }),
@@ -248,8 +250,10 @@ describe("Part 2 security proofs", () => {
     };
     return previewUserCooperativeSelection(db as never, {
       newCooperativeName: "SUTAFACO Cooperative",
+      newCooperativeLocation: "Butuan City, Agusan del Norte",
+      newCooperativeAddress: "Poblacion",
     }).then(result => {
-      expect(result.kind).toBe("needs_confirmation");
+      expect(result.kind).toBe("exact_duplicate");
     });
   });
 });

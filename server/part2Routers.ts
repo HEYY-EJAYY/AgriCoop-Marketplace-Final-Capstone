@@ -25,7 +25,8 @@ import { countBuyerOrderInboxStates, getBuyerOrders, getDb, syncProfileRoleToApp
 import { assertBuyerOwnsOrders } from "./orderArchive";
 import { normalizeCooperativeName } from "./cooperativeNames";
 import { isDuplicateSignupError, RegistrationRateLimitError, registrationRateLimiter } from "./registration";
-import { resolveUserCooperativeSelection } from "./userCooperatives";
+import { resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
+import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
 import { protectedProcedure, router } from "./_core/trpc";
 import { storageCreateSignedUploadUrl, storageGetSignedUrl } from "./storage";
 import { randomUUID } from "node:crypto";
@@ -34,6 +35,20 @@ async function dbOrThrow() {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
   return db;
+}
+
+function throwIfCooperativeResolveConflict(
+  resolved: ResolveUserCooperativeResult | { kind: "ok_to_create"; normalizedName: string },
+) {
+  if (resolved.kind === "exact_duplicate") {
+    throw new TRPCError({ code: "CONFLICT", message: formatExactDuplicateConflict(resolved.match) });
+  }
+  if (resolved.kind === "similar_matches") {
+    throw new TRPCError({ code: "CONFLICT", message: formatSimilarMatchesConflict(resolved.matches) });
+  }
+  if (resolved.kind === "needs_confirmation") {
+    throw new TRPCError({ code: "CONFLICT", message: formatSimilarMatchesConflict([resolved.suggestion]) });
+  }
 }
 
 async function recordAuditLog(
@@ -143,6 +158,7 @@ export const officerApplicationsRouter = router({
       cooperativeId: z.number().int().positive().optional(),
       newCooperativeName: z.string().trim().min(3).max(180).optional(),
       newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
+      newCooperativeAddress: z.string().trim().min(3).max(255).optional(),
       confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
       idDocumentPath: z.string().min(1).max(1000),
       proofDocumentPath: z.string().min(1).max(1000),
@@ -173,6 +189,7 @@ export const officerApplicationsRouter = router({
           const resolved = await resolveUserCooperativeSelection(tx as any, {
             newCooperativeName: input.newCooperativeName,
             newCooperativeLocation: input.newCooperativeLocation,
+            newCooperativeAddress: input.newCooperativeAddress,
             confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
             rateLimitEmail: rateLimitKey,
             consumeRateLimit: () => {
@@ -186,12 +203,9 @@ export const officerApplicationsRouter = router({
               }
             },
           });
-          if (resolved.kind === "needs_confirmation") {
-            throw new TRPCError({
-              code: "CONFLICT",
-              message: `Did you mean "${resolved.suggestion.name}"? Confirm the existing cooperative or confirm creating a new one.`,
-              cause: { code: "COOP_NEEDS_CONFIRMATION", suggestion: resolved.suggestion },
-            });
+          throwIfCooperativeResolveConflict(resolved);
+          if (resolved.kind !== "existing" && resolved.kind !== "created") {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid cooperative selection." });
           }
           cooperativeId = resolved.cooperativeId;
         }
@@ -414,6 +428,7 @@ export const adminAccountsRouter = router({
       cooperativeId: z.number().int().positive().optional(),
       newCooperativeName: z.string().trim().min(3).max(180).optional(),
       newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
+      newCooperativeAddress: z.string().trim().min(3).max(255).optional(),
       confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
     }).strict())
     .mutation(async ({ ctx, input }) => {
@@ -503,18 +518,16 @@ export const adminAccountsRouter = router({
               cooperativeId: input.cooperativeId,
               newCooperativeName: input.newCooperativeName,
               newCooperativeLocation: input.newCooperativeLocation,
+              newCooperativeAddress: input.newCooperativeAddress,
               confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
               rateLimitEmail: input.email,
               consumeRateLimit: () => {
                 registrationRateLimiter.consume("create_cooperative", undefined, input.email);
               },
             });
-            if (resolved.kind === "needs_confirmation") {
-              throw new TRPCError({
-                code: "CONFLICT",
-                message: `Did you mean "${resolved.suggestion.name}"?`,
-                cause: { code: "COOP_NEEDS_CONFIRMATION", suggestion: resolved.suggestion },
-              });
+            throwIfCooperativeResolveConflict(resolved);
+            if (resolved.kind !== "existing" && resolved.kind !== "created") {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid cooperative selection." });
             }
             cooperativeId = resolved.cooperativeId;
             await db.execute(sql`

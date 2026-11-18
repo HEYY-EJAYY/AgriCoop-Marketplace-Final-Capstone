@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, ne, or, sql } from "drizzle-orm";
 // isNull used by conversation inbox filters
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
@@ -30,7 +30,8 @@ import {
   withRequestDatabaseScope,
 } from "./db";
 import { conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
-import { previewUserCooperativeSelection, resolveUserCooperativeSelection } from "./userCooperatives";
+import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
+import { previewUserCooperativeSelection, resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
 import {
   defaultFulfillmentForPayment,
   fulfillmentOptionsForListings,
@@ -43,7 +44,11 @@ import {
 import { assertOrderPaidBeforeComplete, canReviewOrderPaymentProof, canViewOrder, isOnlinePaymentMethod } from "./orderAccess";
 import { createPublicAuthClient, supabaseAdmin } from "./clients";
 import { publishConversationMessage } from "./realtime";
-import { normalizeCooperativeName } from "./cooperativeNames";
+import {
+  normalizeCooperativeAddress,
+  normalizeCooperativeLocation,
+  normalizeCooperativeName,
+} from "./cooperativeNames";
 import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, PRODUCT_UNITS } from "../shared/productOptions";
 import { isProfileImageSizeAllowed, MAX_PROFILE_IMAGE_SIZE_BYTES } from "../shared/profileImage";
 import {
@@ -86,6 +91,31 @@ import {
   systemPaymentQrPrefix,
 } from "./systemPayment";
 
+function throwIfCooperativeConflict(
+  result:
+    | ResolveUserCooperativeResult
+    | { kind: "ok_to_create"; normalizedName?: string; normalizedLocation?: string; address?: string },
+) {
+  if (result.kind === "exact_duplicate") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: formatExactDuplicateConflict(result.match),
+    });
+  }
+  if (result.kind === "similar_matches") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: formatSimilarMatchesConflict(result.matches),
+    });
+  }
+  if (result.kind === "needs_confirmation") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: formatSimilarMatchesConflict([result.suggestion]),
+    });
+  }
+}
+
 export const registrationRoleSchema = z.enum(["buyer", "seller", "coop_admin"]);
 export const publicRegistrationInputSchema = z.object({
   email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
@@ -95,6 +125,7 @@ export const publicRegistrationInputSchema = z.object({
   cooperativeId: z.number().int().positive().optional(),
   newCooperativeName: z.string().trim().min(3).max(180).optional(),
   newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
+  newCooperativeAddress: z.string().trim().min(3).max(255).optional(),
   /** When set to a suggested normalizedName, accept that existing coop; when set to the new name's normalized form, create anyway. */
   confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
 }).strict().superRefine((value, ctx) => {
@@ -114,6 +145,22 @@ export const publicRegistrationInputSchema = z.object({
       message: "Choose an existing cooperative or add a new one, not both.",
       path: ["cooperativeId"],
     });
+  }
+  if (hasNew) {
+    if (!value.newCooperativeAddress?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter a street or barangay address for the new cooperative.",
+        path: ["newCooperativeAddress"],
+      });
+    }
+    if (!value.newCooperativeLocation?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter a location (municipality/city and province).",
+        path: ["newCooperativeLocation"],
+      });
+    }
   }
 });
 const orderStatusSchema = z.enum(["confirmed", "ready", "completed", "cancelled"]);
@@ -322,15 +369,11 @@ export const appRouter = router({
               const preview = await previewUserCooperativeSelection(previewDb, {
                 cooperativeId: input.cooperativeId,
                 newCooperativeName: input.newCooperativeName,
+                newCooperativeLocation: input.newCooperativeLocation,
+                newCooperativeAddress: input.newCooperativeAddress,
                 confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
               });
-              if (preview.kind === "needs_confirmation") {
-                throw new TRPCError({
-                  code: "CONFLICT",
-                  message: `Did you mean "${preview.suggestion.name}"? Confirm the existing cooperative or confirm creating a new one.`,
-                  cause: { code: "COOP_NEEDS_CONFIRMATION", suggestion: preview.suggestion },
-                });
-              }
+              throwIfCooperativeConflict(preview);
             });
           } catch (error) {
             if (error instanceof TRPCError) throw error;
@@ -473,6 +516,7 @@ export const appRouter = router({
                   cooperativeId: input.cooperativeId,
                   newCooperativeName: input.newCooperativeName,
                   newCooperativeLocation: input.newCooperativeLocation,
+                  newCooperativeAddress: input.newCooperativeAddress,
                   confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
                   rateLimitEmail: input.email,
                   consumeRateLimit: () => {
@@ -486,10 +530,9 @@ export const appRouter = router({
                     }
                   },
                 });
-                if (resolved.kind === "needs_confirmation") {
-                  const err = new Error("COOP_NEEDS_CONFIRMATION");
-                  (err as Error & { suggestion: typeof resolved.suggestion }).suggestion = resolved.suggestion;
-                  throw err;
+                throwIfCooperativeConflict(resolved);
+                if (resolved.kind !== "existing" && resolved.kind !== "created") {
+                  throw new Error("Invalid cooperative resolution.");
                 }
                 cooperativeId = resolved.cooperativeId;
                 if (resolved.kind === "created") {
@@ -568,16 +611,6 @@ export const appRouter = router({
           }
         } catch (error) {
           if (error instanceof TRPCError) throw error;
-          if (error instanceof Error && error.message === "COOP_NEEDS_CONFIRMATION") {
-            const suggestion = (error as Error & { suggestion?: { id: number; name: string; normalizedName: string; location: string } }).suggestion;
-            throw new TRPCError({
-              code: "CONFLICT",
-              message: suggestion
-                ? `Did you mean "${suggestion.name}"? Confirm the existing cooperative or confirm creating a new one.`
-                : "A similar cooperative may already exist. Confirm your selection.",
-              cause: suggestion ? { code: "COOP_NEEDS_CONFIRMATION", suggestion } : undefined,
-            });
-          }
           const cleanupFailed = error instanceof RegistrationCleanupError;
           const cause = error instanceof Error ? error.cause : undefined;
           const nestedCause = cause instanceof Error ? cause.cause : undefined;
@@ -1117,13 +1150,57 @@ export const appRouter = router({
   cooperatives: router({
     list: publicProcedure.query(() => getCooperatives()),
     listActive: publicProcedure.query(() => getCooperatives()),
+    previewCreate: publicProcedure
+      .input(z.object({
+        cooperativeId: z.number().int().positive().optional(),
+        newCooperativeName: z.string().trim().min(1).max(180).optional(),
+        newCooperativeLocation: z.string().trim().min(1).max(180).optional(),
+        newCooperativeAddress: z.string().trim().min(1).max(255).optional(),
+        confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
+      }).strict())
+      .query(async ({ input }) => {
+        try {
+          const preview = await previewUserCooperativeSelection(await dbOrThrow(), input);
+          if (preview.kind === "exact_duplicate" || preview.kind === "similar_matches" || preview.kind === "needs_confirmation") {
+            throwIfCooperativeConflict(preview);
+          }
+          return { ok: true as const, kind: preview.kind };
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Invalid cooperative selection.",
+          });
+        }
+      }),
+    manageList: protectedProcedure.query(async ({ ctx }) => {
+      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      const rows = await db.select().from(cooperatives).orderBy(asc(cooperatives.name));
+      const usage = await Promise.all(rows.map(async row => {
+        const [sellers] = await db.select({ count: sql<number>`count(*)::int` }).from(users)
+          .where(and(eq(users.cooperativeId, row.id), eq(users.role, "seller")));
+        const [listings] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
+          .where(eq(products.cooperativeId, row.id));
+        return {
+          ...row,
+          sellerCount: Number(sellers?.count ?? 0),
+          listingCount: Number(listings?.count ?? 0),
+        };
+      }));
+      return usage;
+    }),
     bySlug: publicProcedure
       .input(z.object({ slug: z.string().trim().min(1).max(200) }))
       .query(async ({ input }) => {
         const db = await dbOrThrow();
         const slug = decodeURIComponent(input.slug).trim().toLowerCase();
         const [cooperative] = await db.select().from(cooperatives)
-          .where(and(eq(cooperatives.normalizedName, slug), eq(cooperatives.status, "active")))
+          .where(and(
+            eq(cooperatives.normalizedName, slug),
+            eq(cooperatives.status, "active"),
+            isNull(cooperatives.deletedAt),
+          ))
           .limit(1);
         if (!cooperative) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
@@ -1147,6 +1224,7 @@ export const appRouter = router({
           cooperative: {
             id: cooperative.id,
             name: cooperative.name,
+            address: cooperative.address,
             location: cooperative.location,
             description: cooperative.description,
             status: cooperative.status,
@@ -1156,19 +1234,53 @@ export const appRouter = router({
         };
       }),
     create: protectedProcedure
-      .input(z.object({ name: z.string().min(3).max(180), location: z.string().min(3).max(180), description: z.string().max(600).optional() }))
+      .input(z.object({
+        name: z.string().min(3).max(180),
+        location: z.string().min(3).max(180),
+        address: z.string().min(3).max(255),
+        description: z.string().max(600).optional(),
+        confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
+      }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
-        const normalized = normalizeCooperativeName(input.name);
-        await db.insert(cooperatives).values({
-          name: normalized.displayName,
-          normalizedName: normalized.normalizedName,
-          location: input.location,
-          description: input.description,
-          source: "staff",
-          createdBy: actor.id,
+        const preview = await previewUserCooperativeSelection(db, {
+          newCooperativeName: input.name,
+          newCooperativeLocation: input.location,
+          newCooperativeAddress: input.address,
+          confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
         });
+        throwIfCooperativeConflict(preview);
+        const normalized = normalizeCooperativeName(input.name);
+        const location = normalizeCooperativeLocation(input.location);
+        const address = normalizeCooperativeAddress(input.address);
+        try {
+          await db.insert(cooperatives).values({
+            name: normalized.displayName,
+            normalizedName: normalized.normalizedName,
+            location: location.displayLocation,
+            normalizedLocation: location.normalizedLocation,
+            address,
+            description: input.description,
+            source: "staff",
+            createdBy: actor.id,
+          });
+        } catch (error) {
+          const code = String((error as { code?: string })?.code ?? "");
+          if (code === "23505") {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: formatExactDuplicateConflict({
+                id: 0,
+                name: normalized.displayName,
+                normalizedName: normalized.normalizedName,
+                address,
+                location: location.displayLocation,
+              }),
+            });
+          }
+          throw error;
+        }
         return { success: true };
       }),
     update: protectedProcedure
@@ -1176,18 +1288,55 @@ export const appRouter = router({
         id: z.number().int().positive(),
         name: z.string().min(3).max(180).optional(),
         location: z.string().min(3).max(180).optional(),
+        address: z.string().min(3).max(255).optional(),
         description: z.string().max(600).nullable().optional(),
+        confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
+        const [existing] = await db.select().from(cooperatives).where(eq(cooperatives.id, input.id)).limit(1);
+        if (!existing || existing.deletedAt) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
+        }
+        const nextName = input.name ?? existing.name;
+        const nextLocation = input.location ?? existing.location;
+        const nextAddress = input.address ?? existing.address;
+        if (input.name !== undefined || input.location !== undefined || input.address !== undefined) {
+          const preview = await previewUserCooperativeSelection(db, {
+            newCooperativeName: nextName,
+            newCooperativeLocation: nextLocation,
+            newCooperativeAddress: nextAddress,
+            confirmSimilarNormalizedName: input.confirmSimilarNormalizedName,
+          });
+          if (
+            (preview.kind === "exact_duplicate" || preview.kind === "similar_matches")
+            && !(preview.kind === "exact_duplicate" && preview.match.id === input.id)
+            && !(preview.kind === "similar_matches" && preview.matches.every(m => m.id === input.id))
+          ) {
+            if (preview.kind === "exact_duplicate" && preview.match.id !== input.id) {
+              throwIfCooperativeConflict(preview);
+            }
+            if (preview.kind === "similar_matches") {
+              const others = preview.matches.filter(m => m.id !== input.id);
+              if (others.length && input.confirmSimilarNormalizedName !== normalizeCooperativeName(nextName).normalizedName) {
+                throwIfCooperativeConflict({ kind: "similar_matches", matches: others, message: preview.message });
+              }
+            }
+          }
+        }
         const patch: Partial<typeof cooperatives.$inferInsert> = {};
         if (input.name !== undefined) {
           const normalized = normalizeCooperativeName(input.name);
           patch.name = normalized.displayName;
           patch.normalizedName = normalized.normalizedName;
         }
-        if (input.location !== undefined) patch.location = input.location;
+        if (input.location !== undefined) {
+          const location = normalizeCooperativeLocation(input.location);
+          patch.location = location.displayLocation;
+          patch.normalizedLocation = location.normalizedLocation;
+        }
+        if (input.address !== undefined) patch.address = normalizeCooperativeAddress(input.address);
         if (input.description !== undefined) patch.description = input.description;
         if (!Object.keys(patch).length) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Provide at least one cooperative field to update." });
@@ -1204,17 +1353,86 @@ export const appRouter = router({
         });
         return { success: true };
       }),
+    softDelete: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [row] = await db.select().from(cooperatives).where(eq(cooperatives.id, input.id)).limit(1);
+        if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
+        if (row.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This cooperative is already deleted." });
+        const [sellers] = await db.select({ count: sql<number>`count(*)::int` }).from(users)
+          .where(and(eq(users.cooperativeId, input.id), eq(users.role, "seller")));
+        const [listings] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
+          .where(eq(products.cooperativeId, input.id));
+        await db.update(cooperatives).set({
+          deletedAt: new Date(),
+          deletedBy: actor.id,
+          status: "inactive",
+        }).where(eq(cooperatives.id, input.id));
+        await recordAuditLog(db, {
+          actorUserId: actor.id,
+          action: "cooperative_soft_deleted",
+          entityType: "cooperative",
+          entityId: input.id,
+          cooperativeId: input.id,
+          metadata: {
+            sellerCount: Number(sellers?.count ?? 0),
+            listingCount: Number(listings?.count ?? 0),
+          },
+        });
+        return {
+          success: true,
+          sellerCount: Number(sellers?.count ?? 0),
+          listingCount: Number(listings?.count ?? 0),
+        };
+      }),
+    restore: protectedProcedure
+      .input(z.object({ id: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [row] = await db.select().from(cooperatives).where(eq(cooperatives.id, input.id)).limit(1);
+        if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
+        if (!row.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This cooperative is not deleted." });
+        // Race: another active coop with same name+location
+        const [clash] = await db.select({ id: cooperatives.id }).from(cooperatives).where(and(
+          eq(cooperatives.normalizedName, row.normalizedName),
+          eq(cooperatives.normalizedLocation, row.normalizedLocation),
+          isNull(cooperatives.deletedAt),
+          ne(cooperatives.id, row.id),
+        )).limit(1);
+        if (clash) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Another active cooperative already uses this name and location.",
+          });
+        }
+        await db.update(cooperatives).set({
+          deletedAt: null,
+          deletedBy: null,
+          status: "active",
+        }).where(eq(cooperatives.id, input.id));
+        await recordAuditLog(db, {
+          actorUserId: actor.id,
+          action: "cooperative_restored",
+          entityType: "cooperative",
+          entityId: input.id,
+          cooperativeId: input.id,
+        });
+        return { success: true };
+      }),
     setStatus: protectedProcedure
       .input(z.object({
         id: z.number().int().positive(),
         status: z.enum(["active", "inactive"]),
       }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         const updated = await db.update(cooperatives)
           .set({ status: input.status })
-          .where(eq(cooperatives.id, input.id))
+          .where(and(eq(cooperatives.id, input.id), isNull(cooperatives.deletedAt)))
           .returning({ id: cooperatives.id });
         if (!updated.length) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
         await recordAuditLog(db, {

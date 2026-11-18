@@ -60,13 +60,19 @@ export const cooperatives = appSchema.table("cooperatives", {
   normalizedName: varchar("normalizedName", { length: 180 }).notNull(),
   description: text("description"),
   location: varchar("location", { length: 180 }).notNull(),
+  address: varchar("address", { length: 255 }).notNull().default(""),
+  normalizedLocation: varchar("normalizedLocation", { length: 180 }).notNull().default(""),
   status: cooperativeStatus("status").default("active").notNull(),
   createdBy: integer("createdBy").references((): AnyPgColumn => users.id),
   source: varchar("source", { length: 32 }).notNull().default("seed"),
+  deletedAt: timestamp("deletedAt", { mode: "date" }),
+  deletedBy: integer("deletedBy").references((): AnyPgColumn => users.id),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
 }, table => [
-  uniqueIndex("cooperatives_normalized_name_idx").on(table.normalizedName),
+  uniqueIndex("cooperatives_normalized_name_location_uidx")
+    .on(table.normalizedName, table.normalizedLocation),
   index("cooperatives_created_by_idx").on(table.createdBy),
+  index("cooperatives_deleted_at_idx").on(table.deletedAt),
 ]);
 
 export const coopAdminApplicationStatus = appSchema.enum("coop_admin_application_status", [

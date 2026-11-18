@@ -4052,3 +4052,9 @@ BEGIN
   END IF;
 END $$;
 ```
+
+## BLOCK 25: `20261118150000_cooperative_address_soft_delete_duplicates.sql`
+
+**Purpose:** `address`, `normalizedLocation`, soft-delete (`deletedAt`/`deletedBy`), unique index on (normalizedName, normalizedLocation) WHERE deletedAt IS NULL, staff write policy, `create_user_cooperative` 6-arg overload, audit actions `cooperative_soft_deleted` / `cooperative_restored`.
+
+Apply via ordered migrations or Supabase MCP. Existing cooperatives keep location; address defaults to empty string until Admin/SuperAdmin edits.
