@@ -420,3 +420,20 @@ Live privilege check (2026-11-17): anon SELECT on account name/number/label = **
 | 7c Two skipped tests | With `TEST_DATABASE_URL` unset: (1) `connects only after localhost guard`, (2) `prevents buyer from reading another buyer's orders under authenticated role` — both under `describe.skipIf(!testDatabaseUrl)`. |
 | 8 Removed cash sentence | Exact sentence appears **only** in `Checkout.cashCopy.test.tsx` (asserting absence). Live checkout e2e asserts UI absence. No production UI source contains it. |
 | 9 Access audit + logs + axe | Vitest procedure/grant/security suites pass. Vercel runtime logs window: no new entries. Unauthenticated checkout/order axe: **pass** (payment-coop-orders 8/8). Payments-tab axe: needs Admin login (skipped). |
+
+---
+
+## Part 2 — registration cooperatives, Coop Admin applications, Add account, order archive (2026-11-18)
+
+| Item | Status |
+|------|--------|
+| A Cooperative select + add-new at signup | Done — required Seller/Coop Admin; optional Buyer; Part 1 normalize / Did you mean / rate limit / `source=user` / `createdBy`; anon cannot INSERT |
+| B Cooperative Admin applications | Done — signup → buyer + `requestedRole=admin` + awaiting docs; private `coop-admin-applications` bucket; SuperAdmin Applications tab; approve/reject + in-app notify; **no product email path** beyond Supabase Auth |
+| C Add account | Done — Admin: Buyer/Seller; SuperAdmin: also Officer Admin; confirmed Auth user + set-password invite; one-time copyable link if email fails; audit |
+| D Buyer order archive | Done — `/activity` Active/Archived; `threadStates` channel `order`; ownership proven in `orderArchive.test.ts` |
+| Migrations | `20261118120000_part2_registration_applications_order_archive.sql` + `20261118121000_buyer_order_archive_channel.sql` applied on production Supabase |
+| Security proofs | Signup cannot set admin/status/approval (`part2Access`); pending applicant no admin (`trpcProcedureAccess`); Officer Admin cannot read/approve apps; Admin cannot create Admin/SuperAdmin (`canCreateManagedAccountRole`) |
+| Vitest | **376 passed**, 6 skipped (local without Docker) |
+| Thesis docs / PDF | Updated + regenerated |
+| QA_* signed-in Playwright | Still **MISSING** env vars — authenticated axe/QA create-cleanup deferred |
+| Email for application decisions | **Not implemented** — no app transactional mailer; Auth emails only |

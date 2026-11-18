@@ -480,7 +480,7 @@ export const appRouter = router({
                 }
               }
 
-              if (identity.applicationRole === "seller" && cooperativeId) {
+              if (cooperativeId && (identity.applicationRole === "seller" || identity.registrationChoice === "buyer")) {
                 await db.execute(sql`
                   update agricoop_app.users
                   set "cooperativeId" = ${cooperativeId}

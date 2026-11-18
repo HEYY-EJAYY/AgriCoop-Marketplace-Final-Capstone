@@ -20,19 +20,37 @@ describe("user registration upsert plan", () => {
       role: "buyer",
       approvalStatus: "approved",
       cooperativeId: null,
+      requestedRole: null,
     });
   });
 
-  it("inserts a Seller with the trusted pending status", () => {
+  it("inserts a Seller with the trusted pending status and optional cooperative", () => {
     const plan = buildUserUpsertPlan(userInput({
       role: "seller",
       approvalStatus: "pending",
-    }));
+      cooperativeId: 12,
+    }), { intent: "seller" });
     expect(plan.values).toMatchObject({
       role: "seller",
       approvalStatus: "pending",
+      cooperativeId: 12,
+      requestedRole: null,
+    });
+  });
+
+  it("inserts Cooperative Admin applicants as buyers with requestedRole admin", () => {
+    const plan = buildUserUpsertPlan(userInput({
+      role: "buyer",
+      approvalStatus: "approved",
+      requestedRole: "admin",
+    }), { intent: "cooperative_admin" });
+    expect(plan.values).toMatchObject({
+      role: "buyer",
+      approvalStatus: "approved",
+      requestedRole: "admin",
       cooperativeId: null,
     });
+    expect(plan.identity.registrationChoice).toBe("coop_admin");
   });
 
   it("does not rewrite an existing account role, approval status, or cooperative", () => {
@@ -52,12 +70,19 @@ describe("user registration upsert plan", () => {
     ["superadmin", "approved", null],
     ["seller", "approved", null],
     ["buyer", "pending", null],
-    ["seller", "pending", 12],
   ] as const)("rejects an untrusted registration assignment (%s, %s, %s)", (role, approvalStatus, cooperativeId) => {
     expect(() => buildUserUpsertPlan(userInput({
       role,
       approvalStatus,
       cooperativeId,
-    }))).toThrow("verified Buyer or Seller");
+    }))).toThrow(/verified public registration identity/i);
+  });
+
+  it("rejects buyer cooperativeId at signup", () => {
+    expect(() => buildUserUpsertPlan(userInput({
+      role: "buyer",
+      approvalStatus: "approved",
+      cooperativeId: 9,
+    }))).toThrow(/Only Seller registration may set cooperativeId/i);
   });
 });

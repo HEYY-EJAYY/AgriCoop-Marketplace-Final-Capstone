@@ -25,7 +25,7 @@ describe("login application-user lookup contract", () => {
     expect(end).toBeGreaterThan(start);
     const upsert = dbSource.slice(start, end);
     expect(upsert).toContain("insert into agricoop_app.users");
-    expect(upsert).toContain('"openId", name, email, "loginMethod", role, "approvalStatus", "cooperativeId", "lastSignedIn"');
+    expect(upsert).toContain('"openId", name, email, "loginMethod", role, "requestedRole", "approvalStatus", "cooperativeId", "lastSignedIn"');
     const sqlOnly = upsert.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(sqlOnly).not.toMatch(/onlinePayment/);
   });

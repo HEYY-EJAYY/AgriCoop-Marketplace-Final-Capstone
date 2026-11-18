@@ -169,6 +169,8 @@ export function buildUserUpsertPlan(
   ) {
     throw new Error("User upsert requires a verified public registration identity.");
   }
+  // Cooperative assignment is applied after upsert for buyers / coop-admin applicants;
+  // only seller registration may carry cooperativeId through the upsert plan itself.
   if (resolved.applicationRole !== "seller" && user.cooperativeId != null) {
     throw new Error("Only Seller registration may set cooperativeId at signup.");
   }

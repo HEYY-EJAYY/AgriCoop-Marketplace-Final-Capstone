@@ -27,6 +27,7 @@
 | `/messages` | `Messages` | `PageFrame` when logged out; `WorkspaceHeader` when logged in |
 | `/activity` | `Activity` | `WorkspaceHeader` |
 | `/dashboard` | `Dashboard` (role branch) | `WorkspaceHeader` / `AuthGate` |
+| `/applications/cooperative-admin` | `CoopAdminApplication` | `WorkspaceHeader` |
 | `/support` | `Support` | `PageFrame` + `.agri-marketing-shell` |
 | `/support-tickets` | `SupportTickets` | `WorkspaceHeader` |
 | `/reports` | `Reports` | `WorkspaceHeader` |
@@ -34,6 +35,16 @@
 | `/admin/audit-logs` | `AuditLogs` | `WorkspaceHeader` |
 
 There is **no** `/cart` route; basket state lives on `/marketplace` in the `#order` aside panel and in `sessionStorage` for checkout.
+
+### Part 2 UX (2026-11-18)
+
+| Surface | Pattern |
+|---------|---------|
+| Signup | Role: Buyer / Seller / Cooperative Admin; searchable cooperative select + add-new; cooperative required for Seller and Cooperative Admin |
+| Coop Admin apply | `/applications/cooperative-admin` + buyer dashboard banner until approved |
+| SuperAdmin Applications | Dashboard body tab `?tab=applications` (not main nav) |
+| Add account | Users tab button (Admin/SuperAdmin); role limits per `canCreateManagedAccountRole` |
+| My Orders archive | `/activity` Active/Archived ARIA tabs with `?tab=`; per-user only |
 
 ---
 
