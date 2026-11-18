@@ -180,3 +180,7 @@ This supersedes the earlier assumption that checkout online payment uses the sel
 - **Cart persistence:** Marketplace "Your order" was client `useState` only; refresh cleared it. Now `cart.mine` / `setQuantity` / `add` / `merge` / `remove` use `cartItems`. Checkout reads the same server cart. Local leftovers merge once at login via `agricoop-local-cart-leftovers`.
 - **Cart icon:** Buyer basket icon hidden on `/marketplace` (order card present). Mobile marketplace keeps a floating "Your order" button + sheet.
 - **Auth mode:** Login/Join driven by URL (`/auth` vs `/auth?register=1`) so same-route links switch modes; browser Back works.
+
+## Group 2 (2026-11-18)
+- Confirm dialogs: `AlertDialogContent` now uses opaque white + dark text (`bg-background` was unset → nearly invisible). Overlay dimmed `#102c1e/55`. Radix still traps focus and Esc closes.
+- Cooperatives manager column already labels `Listings` (CSS uppercase → LISTINGS) beside `Sellers`; no `SellerListing` string found in source.
