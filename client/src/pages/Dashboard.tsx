@@ -286,7 +286,7 @@ function SellerAssociationRequestPanel() {
 
   return <section className="mt-6 rounded-xl border border-[#dce4d6] bg-[#f5f8f2] p-4 text-left">
     <h2 className="font-display text-xl font-bold text-[#264f37]">Request cooperative association</h2>
-    <p className="mt-1 text-sm leading-6 text-[#65766b]">An authorized cooperative Admin must review your request. Approval assigns the cooperative; account approval remains a separate step.</p>
+    <p className="mt-1 text-sm leading-6 text-[#65766b]">An authorized cooperative Admin must review your request. Include a reason; approval changes your cooperative assignment, while account approval remains a separate step.</p>
     {(cooperativesError || requestsError) && <p role="alert" className="mt-3 text-sm text-[#a34838]">{cooperativesError?.message || requestsError?.message}</p>}
     {(cooperativesLoading || requestsLoading) && <p className="mt-3 text-sm text-[#65766b]">Loading cooperative options…</p>}
     {requests.map(({ request: row, cooperativeName }) => <div key={row.id} className="mt-3 rounded-lg bg-white p-3 text-sm">
@@ -296,11 +296,11 @@ function SellerAssociationRequestPanel() {
     </div>)}
     {!pendingRequest && !cooperativesLoading && !cooperativesError && <form className="mt-4 space-y-3" onSubmit={event => {
       event.preventDefault();
-      if (coop.cooperativeId) request.mutate({ cooperativeId: coop.cooperativeId, message: message.trim() || undefined });
+      if (coop.cooperativeId) request.mutate({ cooperativeId: coop.cooperativeId, message: message.trim() });
     }}>
       <CooperativeSelect value={coop} onChange={setCoop} allowAddNew={false} required label="Choose a cooperative" />
-      <label className="field-label">Message for the Admin (optional)<textarea maxLength={600} className="field-control min-h-20" value={message} onChange={event => setMessage(event.target.value)}/></label>
-      <button className="agri-button text-sm" disabled={request.isPending || !coop.cooperativeId || !cooperatives.length}>Submit association request</button>
+      <label className="field-label">Reason for this cooperative request<textarea required maxLength={600} className="field-control min-h-20" value={message} onChange={event => setMessage(event.target.value)}/></label>
+      <button className="agri-button text-sm" disabled={request.isPending || !coop.cooperativeId || !cooperatives.length || !message.trim()}>Submit association request</button>
     </form>}
     {!cooperativesLoading && !cooperativesError && !cooperatives.length && <p className="mt-3 text-sm text-[#65766b]">No active cooperatives are currently accepting requests.</p>}
   </section>;
@@ -308,6 +308,8 @@ function SellerAssociationRequestPanel() {
 
 function AssociationRequestsManager() {
   const utils = trpc.useUtils();
+  const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
+  const [moveListings, setMoveListings] = useState<Record<number, boolean>>({});
   const { data: requests = [], isLoading, error } = trpc.cooperativeAdmin.associationRequests.useQuery();
   const review = trpc.cooperativeAdmin.reviewAssociationRequest.useMutation({
     onSuccess: async () => {
@@ -322,7 +324,7 @@ function AssociationRequestsManager() {
 
   return <section className="mt-8 agri-card p-5 sm:p-6">
     <h2 className="font-display text-2xl font-bold text-[#264f37]">Seller cooperative requests</h2>
-    <p className="mt-1 text-sm text-[#6a796e]">Approving assigns the cooperative only. Review the Seller's account approval separately.</p>
+    <p className="mt-1 text-sm text-[#6a796e]">Add a review note for every decision. On approval, choose whether to also move the Seller's existing listings; account approval remains separate.</p>
     {isLoading && <p className="mt-4 text-sm text-[#65766b]">Loading requests…</p>}
     {error && <p role="alert" className="mt-4 text-sm text-[#a34838]">{error.message}</p>}
     {!isLoading && !error && !requests.length && <p className="mt-4 text-sm text-[#65766b]">No pending association requests.</p>}
@@ -330,11 +332,37 @@ function AssociationRequestsManager() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="font-bold text-[#315640]">{sellerName || "Seller"} · {cooperativeName}</p><p className="text-xs text-[#718074]">{sellerEmail || "No email"} · Request #{row.id}</p></div>
         <div className="flex gap-2">
-          <button className="agri-button px-3 py-2 text-xs" disabled={review.isPending} onClick={() => review.mutate({ requestId: row.id, decision: "approved" })}>Approve association</button>
-          <button className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={review.isPending} onClick={() => review.mutate({ requestId: row.id, decision: "rejected" })}>Reject</button>
+          <button
+            className="agri-button px-3 py-2 text-xs"
+            disabled={review.isPending || !reviewNotes[row.id]?.trim()}
+            onClick={() => review.mutate({
+              requestId: row.id,
+              decision: "approved",
+              reviewNote: reviewNotes[row.id]?.trim() ?? "",
+              moveExistingListings: moveListings[row.id] ?? false,
+            })}
+          >
+            Approve association
+          </button>
+          <button
+            className="agri-ghost px-3 py-2 text-xs text-[#a34838]"
+            disabled={review.isPending || !reviewNotes[row.id]?.trim()}
+            onClick={() => review.mutate({
+              requestId: row.id,
+              decision: "rejected",
+              reviewNote: reviewNotes[row.id]?.trim() ?? "",
+            })}
+          >
+            Reject
+          </button>
         </div>
       </div>
       {row.message && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#65766b]">{row.message}</p>}
+      <label className="field-label mt-3">Review note (required)<textarea required maxLength={600} className="field-control min-h-16" value={reviewNotes[row.id] ?? ""} onChange={event => setReviewNotes(current => ({ ...current, [row.id]: event.target.value }))}/></label>
+      <label className="mt-3 flex items-center gap-2 text-sm text-[#315640]">
+        <input type="checkbox" checked={moveListings[row.id] ?? false} onChange={event => setMoveListings(current => ({ ...current, [row.id]: event.target.checked }))}/>
+        Also move this Seller's existing listings to {cooperativeName}
+      </label>
     </article>)}</div>
   </section>;
 }
@@ -1338,6 +1366,7 @@ function CooperativesAdminPanel() {
   const [coopLocation, setCoopLocation] = useState("");
   const [coopAddress, setCoopAddress] = useState("");
   const [coopConflict, setCoopConflict] = useState<CooperativeConflictUi | null>(null);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: number;
     name: string;
@@ -1391,6 +1420,8 @@ function CooperativesAdminPanel() {
       confirmSimilarNormalizedName,
     });
   };
+  const deletedCount = manageQuery.data?.filter(row => Boolean(row.deletedAt)).length ?? 0;
+  const visibleCooperatives = manageQuery.data?.filter(row => showDeleted || !row.deletedAt) ?? [];
 
   return (
   <div className="space-y-8">
@@ -1431,7 +1462,17 @@ function CooperativesAdminPanel() {
     </form>
 
     <section className="agri-card overflow-hidden p-5 sm:p-6">
-      <h2 className="font-display text-2xl font-bold text-[#264f37]">Cooperatives</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-display text-2xl font-bold text-[#264f37]">Cooperatives</h2>
+        <button
+          type="button"
+          className="agri-ghost min-h-11 px-3 py-2 text-sm"
+          aria-pressed={showDeleted}
+          onClick={() => setShowDeleted(value => !value)}
+        >
+          {showDeleted ? "Hide deleted" : `Show deleted (${deletedCount})`}
+        </button>
+      </div>
       {manageQuery.isLoading && <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]" />}
       {manageQuery.error && <p role="alert" className="mt-3 text-sm text-[#a34838]">{manageQuery.error.message}</p>}
       <div className="mt-4 overflow-x-auto">
@@ -1440,18 +1481,18 @@ function CooperativesAdminPanel() {
             <tr>
               <th className="pb-2">Name</th>
               <th className="pb-2">Location</th>
-              <th className="pb-2">Sellers</th>
-              <th className="pb-2">Listings</th>
+              <th scope="col" className="min-w-[120px] px-4 pb-2 text-center">Sellers</th>
+              <th scope="col" className="min-w-[120px] px-4 pb-2 text-center">Listings</th>
               <th className="pb-2" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
-            {manageQuery.data?.map(row => (
+            {visibleCooperatives.map(row => (
               <tr key={row.id} className={`border-t border-[#edf0e9] ${row.deletedAt ? "opacity-70" : ""}`}>
                 <td className="py-2 font-semibold text-[#315640]">{row.name}{row.deletedAt ? " (deleted)" : ""}</td>
                 <td className="py-2 text-[#65766b]">{[row.address, row.location].filter(Boolean).join(" · ")}</td>
-                <td className="py-2">{row.sellerCount}</td>
-                <td className="py-2">{row.listingCount}</td>
+                <td className="px-4 py-2 text-center">{row.sellerCount}</td>
+                <td className="px-4 py-2 text-center">{row.listingCount}</td>
                 <td className="py-2 text-right">
                   {row.deletedAt ? (
                     <button type="button" className="agri-ghost px-2 py-1 text-xs" disabled={restore.isPending} onClick={() => restore.mutate({ id: row.id })}>Restore</button>
@@ -1474,8 +1515,8 @@ function CooperativesAdminPanel() {
             ))}
           </tbody>
         </table>
-        {!manageQuery.isLoading && !manageQuery.data?.length && (
-          <p className="py-4 text-sm text-[#6d7d70]">No cooperatives yet.</p>
+        {!manageQuery.isLoading && !visibleCooperatives.length && (
+          <p className="py-4 text-sm text-[#6d7d70]">{showDeleted ? "No cooperatives to show." : "No active cooperatives yet."}</p>
         )}
       </div>
     </section>
@@ -1539,6 +1580,14 @@ function AdminDashboard() {
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
+  const hideListing = trpc.admin.hideListing.useMutation({
+    onSuccess: () => {
+      toast.success("Listing hidden from the marketplace.");
+      void utils.admin.overview.invalidate();
+      void utils.marketplace.list.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
 
   const [addAccountOpen, setAddAccountOpen] = useState(false);
   const [usersFilter, setUsersFilter] = useState<"active" | "deleted">("active");
@@ -1570,8 +1619,8 @@ function AdminDashboard() {
     { enabled: Boolean(deleteUserTarget?.id) },
   );
   const adminTabs: AdminWorkspaceTabId[] = user?.role === "superadmin"
-    ? ["moderation", "orders", "payments", "users", "applications"]
-    : ["moderation", "orders", "payments", "users"];
+    ? ["moderation", "orders", "quotations", "payments", "users", "applications"]
+    : ["moderation", "orders", "quotations", "payments", "users"];
   if (sellerMode) return <SellerDashboard onExitSellerMode={() => setSellerMode(false)} />;
   if (isLoading) return <LoadingWorkspace />;
   if (overviewQuery.error) {
@@ -1592,8 +1641,8 @@ function AdminDashboard() {
     );
   }
 
-  const pendingProducts = overview?.products.filter(product => product.verificationStatus === "pending") ?? [];
-  const managedListings = overview?.products.filter(product => !product.deletedAt) ?? [];
+  const pendingProducts = overview?.products.filter(product => product.verificationStatus === "pending" && !product.deletedAt) ?? [];
+  const managedListings = overview?.products ?? [];
   const openOrders = overview?.orders.filter(order => order.status !== "completed" && order.status !== "cancelled") ?? [];
 
   return (
@@ -1637,7 +1686,7 @@ function AdminDashboard() {
               <section className="agri-card overflow-hidden" data-testid="admin-moderation-content">
                 <div className="p-5 sm:p-6">
                   <h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2>
-                  <p className="mt-1 text-sm text-[#6a796e]">Approve Seller submissions before buyer visibility is enabled.</p>
+                  <p className="mt-1 text-sm text-[#6a796e]">Scope: {user?.role === "admin" ? "My cooperative" : "All cooperatives"}. Approve Seller submissions before buyer visibility is enabled.</p>
                 </div>
                 <div className="grid gap-3 border-t border-[#e3e9de] p-5 sm:grid-cols-2 lg:grid-cols-3">
                   {pendingProducts.map(product => (
@@ -1670,24 +1719,40 @@ function AdminDashboard() {
                 </div>
                 <div className="border-t border-[#e3e9de] p-5 sm:p-6">
                   <h3 className="font-display text-xl font-bold text-[#264f37]">All listings</h3>
-                  <p className="mt-1 text-sm text-[#6a796e]">Admin and SuperAdmin can soft-delete any listing in scope.</p>
+                  <p className="mt-1 text-sm text-[#6a796e]">All listing statuses in {user?.role === "admin" ? "My cooperative" : "the platform"} are shown here. Listings can be hidden from buyers or soft-deleted.</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {managedListings.map(product => (
                       <div key={`manage-${product.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-[#e2e9dd] p-4">
                         <div>
                           <p className="font-bold text-[#315640]">{product.name}</p>
-                          <p className="text-xs text-[#6d7d70]">{product.status} · {product.verificationStatus}</p>
+                          <p className="text-xs text-[#6d7d70]">{product.status} · {product.verificationStatus} · {product.deletedAt ? "deleted" : product.visibility}</p>
                         </div>
-                        <button
-                          type="button"
-                          className="text-xs font-bold text-[#a34838]"
-                          disabled={deleteListing.isPending}
-                          onClick={() => {
-                            if (window.confirm(`Delete “${product.name}”?`)) deleteListing.mutate({ productId: product.id });
-                          }}
-                        >
-                          Delete
-                        </button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {!product.deletedAt && product.visibility !== "hidden" && (
+                            <button
+                              type="button"
+                              className="agri-ghost px-2 py-1 text-xs"
+                              disabled={hideListing.isPending}
+                              onClick={() => hideListing.mutate({ productId: product.id })}
+                            >
+                              Hide
+                            </button>
+                          )}
+                          {product.deletedAt ? (
+                            <span className="text-xs font-bold text-[#6d7d70]">Deleted</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-xs font-bold text-[#a34838]"
+                              disabled={deleteListing.isPending}
+                              onClick={() => {
+                                if (window.confirm(`Delete “${product.name}”?`)) deleteListing.mutate({ productId: product.id });
+                              }}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                     {!managedListings.length && <p className="col-span-full py-4 text-center text-sm text-[#6d7d70]">No listings to manage.</p>}
@@ -1705,9 +1770,9 @@ function AdminDashboard() {
                   {!openOrders.length && <p className="py-5 text-center text-sm text-[#6d7d70]">No orders are waiting for fulfillment.</p>}
                 </div>
                 <div className="mt-8 border-t border-[#e3e9de] pt-6">
-                  <h3 className="font-display text-xl font-bold text-[#264f37]">Recent activity</h3>
+                  <h3 className="font-display text-xl font-bold text-[#264f37]">All order activity · {user?.role === "admin" ? "My cooperative" : "All cooperatives"}</h3>
                   <div className="mt-4 space-y-3">
-                    {overview?.orders.slice(0, 5).map(order => (
+                    {overview?.orders.map(order => (
                       <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}>
                         <div>
                           <p className="font-bold text-[#315640]">Order #{order.id}</p>
@@ -1718,6 +1783,31 @@ function AdminDashboard() {
                     ))}
                     {!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}
                   </div>
+                </div>
+              </section>
+            ),
+            quotations: (
+              <section className="agri-card p-5 sm:p-6" data-testid="admin-quotations-content">
+                <h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2>
+                <p className="mt-1 text-sm text-[#6a796e]">Scope: {user?.role === "admin" ? "My cooperative" : "All cooperatives"}.</p>
+                <div className="mt-5 space-y-3">
+                  {overview?.quotations.map(row => (
+                    <article key={row.quotation.id} className="rounded-xl bg-[#f2f6ef] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-bold text-[#315640]">{row.productName}</p>
+                          <p className="mt-1 text-xs text-[#6d7d70]">
+                            {row.quotation.requestedQty} {row.unit} · {row.buyerName || "Buyer"} · Request #{row.quotation.id}
+                          </p>
+                        </div>
+                        <Status value={row.quotation.status}/>
+                      </div>
+                      {row.quotation.quotedPriceCents != null && (
+                        <p className="mt-2 text-sm font-bold text-[#315640]">{peso(row.quotation.quotedPriceCents)} per {row.unit}</p>
+                      )}
+                    </article>
+                  ))}
+                  {!overview?.quotations.length && <p className="py-5 text-center text-sm text-[#6d7d70]">No quotation requests are recorded for this scope.</p>}
                 </div>
               </section>
             ),

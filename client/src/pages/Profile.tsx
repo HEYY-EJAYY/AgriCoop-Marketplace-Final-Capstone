@@ -30,11 +30,13 @@ export default function Profile() {
   const associationRequest = trpc.cooperativeAssociations.request.useMutation({
     onSuccess: () => {
       toast.success("Cooperative association request submitted.");
+      setAssociationReason("");
       void associationMine.refetch();
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const [sellerCoop, setSellerCoop] = useState<CooperativeSelectValue>(emptyCooperativeSelectValue);
+  const [associationReason, setAssociationReason] = useState("");
 
   useEffect(() => {
     if (!user) return;
@@ -219,21 +221,36 @@ export default function Profile() {
                     required={false}
                     label="Request cooperative"
                   />
+                  <label className="field-label">Reason for joining or changing cooperatives<textarea required maxLength={600} className="field-control min-h-20" value={associationReason} onChange={event => setAssociationReason(event.target.value)} /></label>
                   {pendingAssociation && (
                     <p className="text-sm text-[#65766b]" role="status">
-                      Pending request: {pendingAssociation.cooperativeName} ({pendingAssociation.request.status})
+                      You already have a pending request for {pendingAssociation.cooperativeName}. Wait for a decision before submitting another.
                     </p>
+                  )}
+                  {user.approvalStatus === "suspended" && (
+                    <p className="text-sm text-[#a34838]" role="alert">Suspended Sellers cannot request a cooperative change. Contact an Admin for help.</p>
+                  )}
+                  {sellerCoop.cooperativeId === user.cooperativeId && user.cooperativeId != null && !pendingAssociation && (
+                    <p className="text-sm text-[#65766b]" role="status">You are already assigned to this cooperative. Choose a different active cooperative.</p>
                   )}
                   <button
                     type="button"
                     className="agri-button text-sm"
-                    disabled={associationRequest.isPending || !sellerCoop.cooperativeId || sellerCoop.cooperativeId === user.cooperativeId || Boolean(pendingAssociation)}
+                    disabled={associationRequest.isPending
+                      || !sellerCoop.cooperativeId
+                      || sellerCoop.cooperativeId === user.cooperativeId
+                      || Boolean(pendingAssociation)
+                      || user.approvalStatus === "suspended"
+                      || !associationReason.trim()}
                     onClick={() => {
                       if (!sellerCoop.cooperativeId) return;
-                      associationRequest.mutate({ cooperativeId: sellerCoop.cooperativeId });
+                      associationRequest.mutate({
+                        cooperativeId: sellerCoop.cooperativeId,
+                        message: associationReason.trim(),
+                      });
                     }}
                   >
-                    Submit association request
+                    {user.cooperativeId ? "Request cooperative change" : "Request to join a cooperative"}
                   </button>
                 </div>
               ) : (

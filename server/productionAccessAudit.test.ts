@@ -209,6 +209,7 @@ describe("production access audit matrix", () => {
       add("products.unarchive", role, role === "seller" || role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.products.unarchive({ id: 1 }));
       add("products.softDelete", role, role === "seller" || role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.products.softDelete({ id: 1 }));
       add("admin.deleteListing", role, role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.admin.deleteListing({ productId: 1 }));
+      add("admin.hideListing", role, role === "admin" || role === "superadmin" ? "allow" : role === "anon" ? "unauthorized" : "forbidden", () => caller.admin.hideListing({ productId: 1 }));
     }
 
     const outcomes: Array<{ ok: boolean; code?: string; detail?: string }> = [];

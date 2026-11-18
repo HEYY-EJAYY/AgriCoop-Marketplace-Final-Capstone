@@ -146,6 +146,7 @@ export const cooperativeAssociationRequests = appSchema.table("cooperativeAssoci
   message: text("message"),
   reviewNote: text("reviewNote"),
   reviewedBy: integer("reviewedBy").references(() => users.id),
+  moveExistingListings: boolean("moveExistingListings").default(false).notNull(),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   reviewedAt: timestamp("reviewedAt", { mode: "date" }),
 }, table => [

@@ -17,6 +17,7 @@ describe("parseAdminWorkspaceTab", () => {
   it("defaults to moderation and accepts known tabs", () => {
     expect(parseAdminWorkspaceTab("")).toBe("moderation");
     expect(parseAdminWorkspaceTab("?tab=orders")).toBe("orders");
+    expect(parseAdminWorkspaceTab("?tab=quotations")).toBe("quotations");
     expect(parseAdminWorkspaceTab("tab=users")).toBe("users");
     expect(parseAdminWorkspaceTab("?tab=payments")).toBe("payments");
     expect(parseAdminWorkspaceTab("?tab=nope")).toBe("moderation");
@@ -31,6 +32,7 @@ describe("AdminWorkspaceTabs", () => {
         panels: {
           moderation: React.createElement("div", null, "Moderation body"),
           orders: React.createElement("div", null, "Orders body"),
+          quotations: React.createElement("div", null, "Quotations body"),
           payments: React.createElement("div", null, "Payments body"),
           users: React.createElement("div", null, "Users body"),
         },
@@ -43,6 +45,7 @@ describe("AdminWorkspaceTabs", () => {
     expect(markup).toContain("Moderation body");
     expect(markup).toContain('data-testid="admin-tab-moderation"');
     expect(markup).toContain('data-testid="admin-tab-orders"');
+    expect(markup).toContain('data-testid="admin-tab-quotations"');
     expect(markup).toContain('data-testid="admin-tab-users"');
     expect(markup).not.toContain("Orders body");
   });
@@ -54,6 +57,7 @@ describe("AdminWorkspaceTabs", () => {
         panels: {
           moderation: React.createElement("div", null, "Moderation body"),
           orders: React.createElement("div", null, "Orders body"),
+          quotations: React.createElement("div", null, "Quotations body"),
           payments: React.createElement("div", null, "Payments body"),
           users: React.createElement("div", null, "Users body"),
         },
@@ -64,6 +68,23 @@ describe("AdminWorkspaceTabs", () => {
     expect(markup).toContain('data-testid="admin-panel-orders"');
   });
 
+  it("shows the cooperative quotations panel when ?tab=quotations is in the URL", () => {
+    locationState.search = "?tab=quotations";
+    const markup = renderToStaticMarkup(
+      React.createElement(AdminWorkspaceTabs, {
+        panels: {
+          moderation: React.createElement("div", null, "Moderation body"),
+          orders: React.createElement("div", null, "Orders body"),
+          quotations: React.createElement("div", null, "Quotations body"),
+          payments: React.createElement("div", null, "Payments body"),
+          users: React.createElement("div", null, "Users body"),
+        },
+      }),
+    );
+    expect(markup).toContain("Quotations body");
+    expect(markup).toContain('data-testid="admin-panel-quotations"');
+  });
+
   it("shows the users panel when ?tab=users is in the URL", () => {
     locationState.search = "?tab=users";
     const markup = renderToStaticMarkup(
@@ -71,6 +92,7 @@ describe("AdminWorkspaceTabs", () => {
         panels: {
           moderation: React.createElement("div", null, "Moderation body"),
           orders: React.createElement("div", null, "Orders body"),
+          quotations: React.createElement("div", null, "Quotations body"),
           payments: React.createElement("div", null, "Payments body"),
           users: React.createElement("div", null, "Users body"),
         },

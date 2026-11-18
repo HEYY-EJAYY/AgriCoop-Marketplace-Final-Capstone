@@ -120,6 +120,27 @@ function productUpdateChain(returning: unknown[]) {
   };
 }
 
+function listingActionDatabase(target: Record<string, unknown>, updated: unknown[]) {
+  const update = vi.fn(() => ({
+    set: () => ({
+      where: () => ({
+        returning: async () => updated,
+      }),
+    }),
+  }));
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => [target],
+        }),
+      }),
+    }),
+    update,
+    execute: vi.fn(async () => []),
+  };
+}
+
 describe("Part 2 security proofs", () => {
   beforeEach(() => {
     mocks.getDb.mockReset().mockResolvedValue(chain([]));
@@ -223,7 +244,58 @@ describe("Part 2 security proofs", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     await caller("admin").admin.overview();
-    expect(mocks.getAdminOverview).toHaveBeenCalled();
+    expect(mocks.getAdminOverview).toHaveBeenCalledWith(2);
+    await caller("superadmin").admin.overview();
+    expect(mocks.getAdminOverview).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("limits Officer listing hide to their cooperative while preserving SuperAdmin scope", async () => {
+    const sameCoopDb = listingActionDatabase({
+      id: 8,
+      cooperativeId: 2,
+      deletedAt: null,
+      visibility: "public",
+    }, [{ id: 8 }]);
+    mocks.getDb.mockResolvedValue(sameCoopDb as never);
+    await expect(caller("admin").admin.hideListing({ productId: 8 }))
+      .resolves.toMatchObject({ success: true, alreadyHidden: false });
+    expect(sameCoopDb.update).toHaveBeenCalledTimes(1);
+
+    const otherCoopDb = listingActionDatabase({
+      id: 9,
+      cooperativeId: 3,
+      deletedAt: null,
+      visibility: "public",
+    }, []);
+    mocks.getDb.mockResolvedValue(otherCoopDb as never);
+    await expect(caller("admin").admin.hideListing({ productId: 9 }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(otherCoopDb.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps cooperative requests visible when the linked Seller is outside staff user-read scope", async () => {
+    const associationRows = [{
+      request: { id: 12, sellerId: 20, cooperativeId: 2, status: "pending" },
+      sellerName: null,
+      sellerEmail: null,
+      cooperativeName: "Local Cooperative",
+    }];
+    const query: Record<string, unknown> = {};
+    const leftJoin = vi.fn(() => query);
+    const innerJoin = vi.fn(() => query);
+    Object.assign(query, {
+      from: () => query,
+      leftJoin,
+      innerJoin,
+      where: () => query,
+      orderBy: async () => associationRows,
+    });
+    mocks.getDb.mockResolvedValue({ select: () => query } as never);
+
+    await expect(caller("admin").cooperativeAdmin.associationRequests())
+      .resolves.toEqual(associationRows);
+    expect(leftJoin).toHaveBeenCalledTimes(1);
+    expect(innerJoin).toHaveBeenCalledTimes(1);
   });
 
   it("seller cannot archive another seller's listing", async () => {

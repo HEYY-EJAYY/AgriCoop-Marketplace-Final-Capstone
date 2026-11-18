@@ -1061,10 +1061,10 @@ export async function getAdminOverview(cooperativeId?: number | null) {
   const scoped = cooperativeId !== undefined;
   const userScope = !scoped ? undefined : cooperativeId === null ? eq(users.id, -1) : eq(users.cooperativeId, cooperativeId);
   const productScope = !scoped
-    ? isNull(products.deletedAt)
+    ? undefined
     : cooperativeId === null
       ? eq(products.id, -1)
-      : and(eq(products.cooperativeId, cooperativeId), isNull(products.deletedAt));
+      : eq(products.cooperativeId, cooperativeId);
   const orderScope = !scoped ? undefined : cooperativeId === null ? eq(orders.id, -1) : eq(orders.cooperativeId, cooperativeId);
   const memberRows = await db
     .select({
@@ -1087,7 +1087,16 @@ export async function getAdminOverview(cooperativeId?: number | null) {
     db.select().from(cooperatives).where(!scoped ? undefined : cooperativeId === null ? eq(cooperatives.id, -1) : eq(cooperatives.id, cooperativeId)).orderBy(asc(cooperatives.name)),
     db.select().from(products).where(productScope).orderBy(desc(products.createdAt)),
     db.select().from(orders).where(orderScope).orderBy(desc(orders.createdAt)),
-    db.select({ quotation: quotations, unit: products.unit }).from(quotations).innerJoin(products, eq(quotations.productId, products.id)).where(productScope).orderBy(desc(quotations.createdAt)),
+    db.select({
+      quotation: quotations,
+      productName: products.name,
+      unit: products.unit,
+      buyerName: users.name,
+    }).from(quotations)
+      .innerJoin(products, eq(quotations.productId, products.id))
+      .innerJoin(users, eq(quotations.buyerId, users.id))
+      .where(productScope)
+      .orderBy(desc(quotations.createdAt)),
     db.select().from(transactions).where(!scoped ? undefined : cooperativeId === null ? eq(transactions.orderId, -1) : inArray(transactions.orderId, db.select({ id: orders.id }).from(orders).where(eq(orders.cooperativeId, cooperativeId)))).orderBy(desc(transactions.completedAt)),
   ]);
   return { users: memberRows, cooperatives: cooperativeRows, products: listingRows, orders: orderRows, quotations: quotationRows, transactions: transactionRows };

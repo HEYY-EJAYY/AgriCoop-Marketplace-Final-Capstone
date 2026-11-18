@@ -282,6 +282,28 @@ describe("PostgreSQL identity lookup schema", () => {
     expect(query.sql).not.toContain("`");
   });
 
+  it("limits cooperative reassignment and optional listing moves to the approved association workflow", () => {
+    const migration = readFileSync(fileURLToPath(
+      new URL("../supabase/migrations/20261118220000_cooperative_association_listing_move.sql", import.meta.url),
+    ), "utf8");
+    const existingProductsPolicy = readFileSync(fileURLToPath(
+      new URL("../supabase/migrations/20261117131000_marketplace_rls_grants.sql", import.meta.url),
+    ), "utf8");
+
+    expect(cooperativeAssociationRequests.moveExistingListings.name).toBe("moveExistingListings");
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS "moveExistingListings" boolean NOT NULL DEFAULT false');
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION agricoop_app.approve_cooperative_association_request");
+    expect(migration).toContain("actor_role = 'admin'");
+    expect(migration).toContain("actor_cooperative_id <> target_cooperative_id");
+    expect(migration).toContain('request."status" = \'approved\'');
+    expect(migration).toContain('request."reviewedBy" = actor_id');
+    expect(migration).toContain('request."reviewedAt" = transaction_timestamp()');
+    expect(migration).toContain("IF p_move_existing_listings THEN");
+    expect(migration).not.toMatch(/\bDROP\s+(TABLE|COLUMN)\b/i);
+    expect(migration).not.toMatch(/\bCREATE\s+POLICY\b/i);
+    expect(existingProductsPolicy).toContain('agricoop_app.shares_cooperative("cooperativeId")');
+  });
+
   it("uses the qualified support ticket message table and mixed-case columns", () => {
     const query = new PgDialect().sqlToQuery(sql`
       select ${supportTicketMessages.ticketId}, ${supportTicketMessages.senderId}

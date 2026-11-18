@@ -61,7 +61,7 @@ import {
 import { isStorageKeyWithinPrefix, isStoragePublicUrlWithinPrefix, storageCreateSignedUploadUrl, storageDeleteObject, storageDeletePublicUrl, storageDownloadPrivateObject, storageDownloadPrivateProof, storageGet, storageGetSignedUrl, storageKeyFromPublicUrlWithinPrefix, storagePut } from "./storage";
 import { quotationResponseInputSchema } from "../shared/quotation";
 import { findAuthUserByEmail, getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupabaseEmail, RegistrationCleanupError, RegistrationRateLimitError, registrationRateLimiter, provisionAuthAccount } from "./registration";
-import { canRequestCooperativeAssociation, canReviewCooperativeAssociation } from "./cooperativeAssociations";
+import { canRequestCooperativeAssociation, canReviewCooperativeAssociation, cooperativeAssociationRequestBlock } from "./cooperativeAssociations";
 import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
 import {
   assertBuyerOwnsReceiptPath,
@@ -3627,13 +3627,14 @@ export const appRouter = router({
 
   cooperativeAssociations: router({
     activeCooperatives: protectedProcedure.query(async ({ ctx }) => {
-      if (!canRequestCooperativeAssociation(ctx.user)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only an unassigned Seller can request a cooperative association." });
+      const requestBlock = cooperativeAssociationRequestBlock(ctx.user);
+      if (requestBlock) {
+        throw new TRPCError(requestBlock);
       }
       const db = await dbOrThrow();
       return db.select({ id: cooperatives.id, name: cooperatives.name })
         .from(cooperatives)
-        .where(eq(cooperatives.status, "active"))
+        .where(and(eq(cooperatives.status, "active"), isNull(cooperatives.deletedAt)))
         .orderBy(asc(cooperatives.name));
     }),
     mine: protectedProcedure.query(async ({ ctx }) => {
@@ -3650,7 +3651,7 @@ export const appRouter = router({
     request: protectedProcedure
       .input(z.object({
         cooperativeId: z.number().int().positive(),
-        message: z.string().trim().max(600).optional(),
+        message: z.string().trim().min(1).max(600),
       }).strict())
       .mutation(async ({ ctx, input }) => {
         const db = await dbOrThrow();
@@ -3665,11 +3666,26 @@ export const appRouter = router({
             .for("update")
             .limit(1);
           if (!seller || !canRequestCooperativeAssociation(seller)) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "Only an unassigned, non-suspended Seller can request a cooperative association." });
+            const requestBlock = cooperativeAssociationRequestBlock(
+              seller ?? { role: ctx.user.role, approvalStatus: ctx.user.approvalStatus, cooperativeId: ctx.user.cooperativeId },
+              input.cooperativeId,
+            );
+            throw new TRPCError(requestBlock ?? {
+              code: "FORBIDDEN",
+              message: "This account cannot request a cooperative association.",
+            });
+          }
+          const sameCooperativeBlock = cooperativeAssociationRequestBlock(seller, input.cooperativeId);
+          if (sameCooperativeBlock) {
+            throw new TRPCError(sameCooperativeBlock);
           }
           const [cooperative] = await tx.select({ id: cooperatives.id })
             .from(cooperatives)
-            .where(and(eq(cooperatives.id, input.cooperativeId), eq(cooperatives.status, "active")))
+            .where(and(
+              eq(cooperatives.id, input.cooperativeId),
+              eq(cooperatives.status, "active"),
+              isNull(cooperatives.deletedAt),
+            ))
             .for("share")
             .limit(1);
           if (!cooperative) throw new TRPCError({ code: "NOT_FOUND", message: "This cooperative is not available for association requests." });
@@ -3680,11 +3696,12 @@ export const appRouter = router({
               eq(cooperativeAssociationRequests.status, "pending"),
             ))
             .limit(1);
-          if (pendingRequest) throw new TRPCError({ code: "CONFLICT", message: "You already have a pending cooperative association request." });
+          const pendingBlock = cooperativeAssociationRequestBlock(seller, input.cooperativeId, Boolean(pendingRequest));
+          if (pendingBlock) throw new TRPCError(pendingBlock);
           const [created] = await tx.insert(cooperativeAssociationRequests).values({
             sellerId: seller.id,
             cooperativeId: cooperative.id,
-            message: input.message || null,
+            message: input.message,
           }).returning({ id: cooperativeAssociationRequests.id });
           if (!created) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The association request was not saved." });
           await recordAuditLog(tx, {
@@ -3729,7 +3746,7 @@ export const appRouter = router({
         sellerEmail: users.email,
         cooperativeName: cooperatives.name,
       }).from(cooperativeAssociationRequests)
-        .innerJoin(users, eq(cooperativeAssociationRequests.sellerId, users.id))
+        .leftJoin(users, eq(cooperativeAssociationRequests.sellerId, users.id))
         .innerJoin(cooperatives, eq(cooperativeAssociationRequests.cooperativeId, cooperatives.id))
         .where(and(...conditions))
         .orderBy(asc(cooperativeAssociationRequests.createdAt));
@@ -3738,7 +3755,8 @@ export const appRouter = router({
       .input(z.object({
         requestId: z.number().int().positive(),
         decision: z.enum(["approved", "rejected"]),
-        reviewNote: z.string().trim().max(600).optional(),
+        reviewNote: z.string().trim().min(1).max(600),
+        moveExistingListings: z.boolean().default(false),
       }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
@@ -3756,45 +3774,33 @@ export const appRouter = router({
           }
           const [cooperative] = await tx.select({
             name: cooperatives.name,
-            status: cooperatives.status,
           }).from(cooperatives)
             .where(eq(cooperatives.id, request.cooperativeId))
             .for("share")
             .limit(1);
           if (!cooperative) throw new TRPCError({ code: "CONFLICT", message: "The requested cooperative is no longer available." });
-          if (input.decision === "approved" && cooperative.status !== "active") {
-            throw new TRPCError({ code: "CONFLICT", message: "An inactive cooperative cannot accept new Sellers." });
-          }
-          const [seller] = await tx.select({
-            id: users.id,
-            role: users.role,
-            approvalStatus: users.approvalStatus,
-            cooperativeId: users.cooperativeId,
-          }).from(users)
-            .where(eq(users.id, request.sellerId))
-            .for("update")
-            .limit(1);
-          if (!seller || seller.role !== "seller" || seller.cooperativeId !== null || seller.approvalStatus === "suspended") {
-            throw new TRPCError({ code: "CONFLICT", message: "The Seller's account changed and this request can no longer be reviewed." });
-          }
           if (input.decision === "approved") {
-            const assigned = await tx.update(users)
-              .set({ cooperativeId: request.cooperativeId })
-              .where(and(eq(users.id, seller.id), isNull(users.cooperativeId), eq(users.role, "seller")))
-              .returning({ id: users.id });
-            if (!assigned.length) throw new TRPCError({ code: "CONFLICT", message: "The Seller was assigned to a cooperative before this request completed." });
-          }
-          const reviewed = await tx.update(cooperativeAssociationRequests).set({
-            status: input.decision,
-            reviewedBy: actor.id,
-            reviewNote: input.reviewNote || null,
-            reviewedAt: new Date(),
-          }).where(and(
-            eq(cooperativeAssociationRequests.id, request.id),
-            eq(cooperativeAssociationRequests.status, "pending"),
-          )).returning({ id: cooperativeAssociationRequests.id });
-          if (reviewed.length !== 1) {
-            throw new TRPCError({ code: "CONFLICT", message: "This association request changed while being reviewed." });
+            await tx.execute(sql`
+              select agricoop_app.approve_cooperative_association_request(
+                ${request.id},
+                ${input.reviewNote},
+                ${input.moveExistingListings}
+              )
+            `);
+          } else {
+            const reviewed = await tx.update(cooperativeAssociationRequests).set({
+              status: "rejected",
+              reviewedBy: actor.id,
+              reviewNote: input.reviewNote,
+              moveExistingListings: false,
+              reviewedAt: new Date(),
+            }).where(and(
+              eq(cooperativeAssociationRequests.id, request.id),
+              eq(cooperativeAssociationRequests.status, "pending"),
+            )).returning({ id: cooperativeAssociationRequests.id });
+            if (reviewed.length !== 1) {
+              throw new TRPCError({ code: "CONFLICT", message: "This association request changed while being reviewed." });
+            }
           }
           await recordAuditLog(tx, {
             actorUserId: actor.id,
@@ -3802,13 +3808,17 @@ export const appRouter = router({
             entityType: "cooperative_association_request",
             entityId: request.id,
             cooperativeId: request.cooperativeId,
+            metadata: {
+              moveExistingListings: input.decision === "approved" && input.moveExistingListings,
+              reviewNote: input.reviewNote,
+            },
           });
           await createNotification(tx, {
-            userId: seller.id,
+            userId: request.sellerId,
             type: `cooperative_association_${input.decision}`,
             title: input.decision === "approved" ? "Cooperative association approved" : "Cooperative association declined",
             content: input.decision === "approved"
-              ? `You have been assigned to ${cooperative.name}. A separate account approval step may remain.`
+              ? `You have been assigned to ${cooperative.name}.${input.moveExistingListings ? " Your existing listings were also moved to this cooperative." : ""} Admin note: ${input.reviewNote} A separate account approval step may remain.`
               : `Your request to join ${cooperative.name} was declined.${input.reviewNote ? ` Admin note: ${input.reviewNote}` : ""}`,
             link: "/dashboard",
             relatedEntityId: request.id,
@@ -4010,6 +4020,42 @@ export const appRouter = router({
           .returning({ id: products.id });
         if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
         return { success: true, alreadyDeleted: false };
+      }),
+    hideListing: protectedProcedure
+      .input(z.object({ productId: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [target] = await db.select({
+          id: products.id,
+          cooperativeId: products.cooperativeId,
+          deletedAt: products.deletedAt,
+          visibility: products.visibility,
+        }).from(products).where(eq(products.id, input.productId)).limit(1);
+        if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+        if (!canManageCooperativeResource(actor, target.cooperativeId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You cannot hide a listing outside your cooperative." });
+        }
+        if (target.deletedAt) {
+          throw new TRPCError({ code: "CONFLICT", message: "A deleted listing cannot be changed." });
+        }
+        if (target.visibility === "hidden") return { success: true, alreadyHidden: true };
+        const scope = actor.role === "superadmin"
+          ? and(eq(products.id, input.productId), isNull(products.deletedAt))
+          : and(eq(products.id, input.productId), eq(products.cooperativeId, actor.cooperativeId!), isNull(products.deletedAt));
+        const result = await db.update(products)
+          .set({ visibility: "hidden" })
+          .where(scope)
+          .returning({ id: products.id });
+        if (!result.length) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+        await recordAuditLog(db, {
+          actorUserId: actor.id,
+          action: "product_hidden",
+          entityType: "product",
+          entityId: target.id,
+          cooperativeId: target.cooperativeId,
+        });
+        return { success: true, alreadyHidden: false };
       }),
     updateUser: protectedProcedure
       .input(z.object({ userId: z.number().int().positive(), role: z.enum(APP_ROLES), approvalStatus: z.enum(["approved", "pending", "suspended"]), cooperativeId: z.number().int().positive().nullable() }))

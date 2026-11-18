@@ -4,6 +4,7 @@ import { useLocation, useSearch } from "wouter";
 export const ADMIN_WORKSPACE_TABS = [
   { id: "moderation", label: "Moderation" },
   { id: "orders", label: "Orders" },
+  { id: "quotations", label: "Quotations" },
   { id: "payments", label: "Payments" },
   { id: "users", label: "Users" },
   { id: "applications", label: "Applications" },
@@ -39,7 +40,7 @@ export function AdminWorkspaceTabs({ panels, visibleTabs }: AdminWorkspaceTabsPr
   const [location, setLocation] = useLocation();
   const tabs = useMemo(
     () => ADMIN_WORKSPACE_TABS.filter(tab =>
-      (visibleTabs ?? ["moderation", "orders", "payments", "users"] as AdminWorkspaceTabId[]).includes(tab.id),
+      (visibleTabs ?? ["moderation", "orders", "quotations", "payments", "users"] as AdminWorkspaceTabId[]).includes(tab.id),
     ),
     [visibleTabs],
   );
