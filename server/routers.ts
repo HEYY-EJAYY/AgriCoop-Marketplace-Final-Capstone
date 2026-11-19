@@ -381,19 +381,18 @@ export const appRouter = router({
         const correlationId = `reg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
         // Soft-deleted emails cannot register again (same contact-admin message as login).
-        {
+        // auth.register is excluded from the outer request scope, so open a scoped tx here.
+        await withRequestDatabaseScope(null, async () => {
           const db = await getDb();
-          if (db) {
-            const [deleted] = await db
-              .select({ id: users.id })
-              .from(users)
-              .where(and(eq(users.email, input.email.toLowerCase()), sql`${users.deletedAt} is not null`))
-              .limit(1);
-            if (deleted) {
-              throw new TRPCError({ code: "FORBIDDEN", message: accountInactiveMessage() });
-            }
+          const [deleted] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(and(eq(users.email, input.email.toLowerCase()), sql`${users.deletedAt} is not null`))
+            .limit(1);
+          if (deleted) {
+            throw new TRPCError({ code: "FORBIDDEN", message: accountInactiveMessage() });
           }
-        }
+        });
 
         // Duplicate / "Did you mean?" check before Auth createUser (no orphan accounts).
         if (input.cooperativeId || input.newCooperativeName) {
