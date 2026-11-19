@@ -179,7 +179,11 @@ export function MobileMenuOverlay({
         aria-labelledby={titleId}
         data-testid="mobile-menu-panel"
         className="fixed inset-x-0 bottom-0 z-[46] flex flex-col overflow-y-auto border-t border-[#dce4d6] bg-[#fffdf8]/96 shadow-[0_-12px_40px_rgba(22,59,42,0.12)] supports-[backdrop-filter]:bg-[#fffdf8]/88 supports-[backdrop-filter]:backdrop-blur-md"
-        style={{ top: "4rem", height: "calc(100dvh - 4rem)" }}
+        style={{
+          top: "4rem",
+          height: "calc(100dvh - 4rem)",
+          width: "calc(100vw + var(--agri-scrollbar-gap, 0px))",
+        }}
       >
         <h2 id={titleId} className="sr-only">
           Site menu

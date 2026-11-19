@@ -25,9 +25,54 @@ STABLE
 SECURITY DEFINER
 SET search_path TO ''
 AS $$
-  SELECT NULL::text
+  SELECT roles.role_name
+  FROM public.profiles
+  JOIN public.roles ON roles.role_id = profiles.role_id
+  WHERE profiles.user_id = auth.uid()
+  LIMIT 1
 $$;
 GRANT EXECUTE ON FUNCTION public.get_my_role() TO PUBLIC;
+
+CREATE POLICY "anyone can view active products"
+  ON public.products FOR SELECT TO public
+  USING (
+    status = 'active'
+    OR seller_id = auth.uid()
+    OR public.get_my_role() = ANY (ARRAY['coop_officer'::text, 'system_admin'::text])
+  );
+CREATE POLICY "sellers create own products"
+  ON public.products FOR INSERT TO public
+  WITH CHECK (seller_id = auth.uid());
+CREATE POLICY "sellers/officers update products"
+  ON public.products FOR UPDATE TO public
+  USING (
+    seller_id = auth.uid()
+    OR public.get_my_role() = ANY (ARRAY['coop_officer'::text, 'system_admin'::text])
+  );
+
+CREATE POLICY "view inventory"
+  ON public.inventory FOR SELECT TO public
+  USING (true);
+CREATE POLICY "sellers/officers manage inventory"
+  ON public.inventory FOR ALL TO public
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.products
+      WHERE products.product_id = inventory.product_id
+        AND (
+          products.seller_id = auth.uid()
+          OR public.get_my_role() = ANY (ARRAY['coop_officer'::text, 'system_admin'::text])
+        )
+    )
+  );
+
+CREATE POLICY "admin views logs"
+  ON public.activity_logs FOR SELECT TO public
+  USING (public.get_my_role() = 'system_admin');
+CREATE POLICY "system inserts logs"
+  ON public.activity_logs FOR INSERT TO public
+  WITH CHECK (true);
 
 DROP POLICY IF EXISTS "users insert own profile" ON public.profiles;
 DROP POLICY IF EXISTS "users update own profile" ON public.profiles;

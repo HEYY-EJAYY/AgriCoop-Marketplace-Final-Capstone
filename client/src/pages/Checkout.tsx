@@ -35,7 +35,7 @@ import { Link, useLocation } from "wouter";
 type SellerGroupChoice = {
   paymentMethod: PaymentMethod;
   fulfillmentMethod: FulfillmentMethod;
-  receiptStoragePath?: string;
+  receiptUploadIntent?: string;
 };
 
 type CheckoutOnlineDetails = {
@@ -122,7 +122,7 @@ function SellerCheckoutGroup({
           allowsDelivery: flags.every(f => f.allowsDelivery),
           acceptsOnlinePayment: flags.every(f => f.acceptsOnlinePayment),
         }) ?? fulfillmentOptions[0] ?? "pickup";
-      onChoiceChange({ paymentMethod, fulfillmentMethod: fulfillment, receiptStoragePath: undefined });
+      onChoiceChange({ paymentMethod, fulfillmentMethod: fulfillment, receiptUploadIntent: undefined });
     }
   }, [methods, choice.paymentMethod, flags, fulfillmentOptions, onChoiceChange]);
 
@@ -140,7 +140,7 @@ function SellerCheckoutGroup({
     onChoiceChange({
       paymentMethod,
       fulfillmentMethod: fulfillment,
-      receiptStoragePath: paymentMethod === "online" ? choice.receiptStoragePath : undefined,
+      receiptUploadIntent: paymentMethod === "online" ? choice.receiptUploadIntent : undefined,
     });
     if (paymentMethod !== "online") {
       setReceiptFile(null);
@@ -170,13 +170,13 @@ function SellerCheckoutGroup({
         sellerId,
         uploadIntent: authorization.uploadIntent,
       });
-      onChoiceChange({ ...choice, receiptStoragePath: finalized.receiptStoragePath });
+      onChoiceChange({ ...choice, receiptUploadIntent: finalized.receiptUploadIntent });
       toast.success("Receipt uploaded for this seller group.");
     } catch (problem) {
       const message = toUserFacingErrorMessage(problem instanceof Error ? problem.message : "Upload failed.");
       setReceiptError(message);
       toast.error(message);
-      onChoiceChange({ ...choice, receiptStoragePath: undefined });
+      onChoiceChange({ ...choice, receiptUploadIntent: undefined });
     } finally {
       setReceiptBusy(false);
     }
@@ -190,7 +190,7 @@ function SellerCheckoutGroup({
     ) {
       setReceiptError("Choose a JPEG, PNG, or WebP receipt up to 5 MiB.");
       setReceiptFile(null);
-      onChoiceChange({ ...choice, receiptStoragePath: undefined });
+      onChoiceChange({ ...choice, receiptUploadIntent: undefined });
       return;
     }
     setReceiptError("");
@@ -334,7 +334,7 @@ function SellerCheckoutGroup({
                   {receiptError}
                 </p>
               )}
-              {choice.receiptStoragePath && (
+              {choice.receiptUploadIntent && (
                 <p className="mt-2 text-xs font-bold text-[#387047]">Receipt ready for order placement.</p>
               )}
               {receiptPreview && (
@@ -444,7 +444,7 @@ export default function Checkout() {
 
   const allOnlineHaveReceipt = useMemo(() => {
     return Array.from(choices.values()).every(
-      choice => choice.paymentMethod !== "online" || Boolean(choice.receiptStoragePath),
+      choice => choice.paymentMethod !== "online" || Boolean(choice.receiptUploadIntent),
     );
   }, [choices]);
 
@@ -479,14 +479,14 @@ export default function Checkout() {
       for (const [sellerId, items] of Array.from(sellerMap.entries())) {
         const choice = choices.get(sellerId);
         if (!choice) throw new Error("Choose payment for every seller group.");
-        if (choice.paymentMethod === "online" && !choice.receiptStoragePath) {
+        if (choice.paymentMethod === "online" && !choice.receiptUploadIntent) {
           throw new Error("Upload a payment receipt for each online payment group.");
         }
         const result = await createOrder.mutateAsync({
           items: items.map((item: CheckoutCartItem) => ({ productId: item.productId, quantity: item.quantity })),
           paymentMethod: choice.paymentMethod,
           fulfillmentMethod: choice.fulfillmentMethod,
-          receiptStoragePath: choice.receiptStoragePath,
+          receiptUploadIntent: choice.receiptUploadIntent,
           buyerNote:
             choice.paymentMethod === "online"
               ? "Buyer paid via the AgriCoop QR; receipt attached at checkout."

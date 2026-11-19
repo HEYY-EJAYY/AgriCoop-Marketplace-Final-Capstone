@@ -23,7 +23,13 @@ import {
 import { getProductImageUrl } from "@/lib/productImages";
 import { formatCombinedEnumLabels, formatEnumLabel } from "@shared/enumLabels";
 import { paymentMethodLabel } from "@shared/paymentMethods";
-import { toUserFacingErrorMessage, USER_FACING_LOAD_ERROR, USER_FACING_SAVE_ERROR } from "@shared/userFacingErrors";
+import {
+  toUserFacingErrorMessage,
+  USER_FACING_DELETE_COOPERATIVE_ERROR,
+  USER_FACING_DELETE_USER_ERROR,
+  USER_FACING_LOAD_ERROR,
+  USER_FACING_SAVE_ERROR,
+} from "@shared/userFacingErrors";
 import { getProductVarieties, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, moveProductImage, PRODUCT_UNITS } from "../../../shared/productOptions";
 import { PAYMENT_PROOF_BUCKET, PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../../../shared/paymentProofs";
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../../../shared/profileVerification";
@@ -900,7 +906,7 @@ function AdminUserRow({
         <select className="rounded border border-[#d5e0d1] bg-white p-1.5" value={role} disabled={isDeleted} onChange={e => setRole(e.target.value)}>
           <option value="buyer">Buyer</option>
           <option value="seller">Seller</option>
-          <option value="admin">Officer</option>
+          <option value="admin" disabled={currentUserRole !== "superadmin" && user.role !== "admin"}>Officer</option>
           {canAssignSuperAdmin && <option value="superadmin">SuperAdmin</option>}
         </select>
       </td>
@@ -1362,7 +1368,7 @@ function RoleConflictsPanel() {
   </section>;
 }
 
-function CooperativesAdminPanel() {
+function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative: boolean }) {
   const utils = trpc.useUtils();
   const manageQuery = trpc.cooperatives.manageList.useQuery();
   const [name, setName] = useState("");
@@ -1404,7 +1410,7 @@ function CooperativesAdminPanel() {
       void manageQuery.refetch();
       void utils.cooperatives.list.invalidate();
     },
-    onError: error => toast.error(error.message),
+    onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_DELETE_COOPERATIVE_ERROR)),
   });
   const restore = trpc.cooperatives.restore.useMutation({
     onSuccess: () => {
@@ -1428,7 +1434,7 @@ function CooperativesAdminPanel() {
 
   return (
   <div className="space-y-8">
-    <form
+    {canCreateCooperative && <form
       className="agri-card p-5 sm:p-6"
       onSubmit={event => {
         event.preventDefault();
@@ -1462,7 +1468,7 @@ function CooperativesAdminPanel() {
         />
       )}
       <button type="submit" className="agri-button mt-5 text-sm" disabled={createCooperative.isPending}><Plus size={16} /> Create cooperative</button>
-    </form>
+    </form>}
 
     <section className="agri-card overflow-hidden p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1608,7 +1614,7 @@ function AdminDashboard() {
       setDeleteUserTarget(null);
       void utils.admin.overview.invalidate();
     },
-    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+    onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_DELETE_USER_ERROR)),
   });
   const restoreUser = trpc.admin.restoreUser.useMutation({
     onSuccess: () => {
@@ -1877,7 +1883,9 @@ function AdminDashboard() {
                   </div>
                 </div>
                 <div className="space-y-8">
-                  {(user?.role === "admin" || user?.role === "superadmin") && <CooperativesAdminPanel />}
+                  {(user?.role === "admin" || user?.role === "superadmin") && (
+                    <CooperativesAdminPanel canCreateCooperative={user.role === "superadmin"} />
+                  )}
                 </div>
                 <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
                   <AlertDialogContent>

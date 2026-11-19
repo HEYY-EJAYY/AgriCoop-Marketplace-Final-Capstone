@@ -50,7 +50,7 @@ flowchart LR
 | Cooperative association | `client/src/pages/Profile.tsx` | `cooperativeAssociations.request`, `cooperativeAdmin.reviewAssociationRequest` | Active target, pending uniqueness, reason/note, move-listings choice |
 | Cooperative/Admin moderation | `client/src/pages/Dashboard.tsx` | `admin.overview`, `admin.reviewProduct`, `admin.hideListing`, `admin.deleteListing` | Officer cooperative scope and SuperAdmin scope |
 | Buyer order/quotation view | `client/src/pages/Activity.tsx` | `orderArchiveProcedures`, `quotationArchiveProcedures` in `server/part2Routers.ts` | Acting-user state and dedicated `order`, `seller_order`, `quotation` channels |
-| Payment proof review | `client/src/pages/Dashboard.tsx` | `payments.uploadCheckoutReceipt`, `payments.reviewProof` | Buyer ownership, assigned-cooperative reviewer, private bucket and status transition |
+| Checkout receipt and review | `client/src/pages/Checkout.tsx` | `payments.uploadCheckoutReceipt`, `payments.finalizeCheckoutReceipt`, `orders.create`, `payments.reviewProof` | Buyer/seller-bound receipt intent, byte-size and image-signature checks, assigned-cooperative reviewer, private bucket |
 | System online-payment settings | `client/src/pages/PaymentOptions.tsx` | `systemPayment.*` in `server/routers.ts` | Admin/SuperAdmin authorization, active account, signed QR URL |
 | Cooperative Admin application | `client/src/pages/CoopAdminApplication.tsx` | `officerApplications.*` in `server/part2Routers.ts` | Applicant ownership, private documents, approval state and notifications |
 | Notifications | `client/src/components/NotificationBell.tsx` | `notifications.mine`, `notifications.markRead` | User scoping, authorized notification creation, invalidation |

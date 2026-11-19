@@ -1,5 +1,7 @@
 # Production PostgreSQL Reconciliation and Migration Plan
 
+> **HISTORICAL / SUPERSEDED.** The catalog assumptions below predate the latest read-only production inspection and are no longer current. Do not execute this document. See [`PRODUCTION_SQL_RELEASE_PLAN.md`](./PRODUCTION_SQL_RELEASE_PLAN.md) for the current candidate sequence and blockers.
+
 ## Status and safety
 
 **Local preparation only. No SQL, migration, seed, grant, Storage change, or data change was executed. No database or Supabase service was contacted during this work.** The target is the existing production Supabase project; no staging or duplicate project is required.

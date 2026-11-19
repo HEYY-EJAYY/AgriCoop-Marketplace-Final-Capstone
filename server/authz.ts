@@ -240,7 +240,8 @@ export function canUpdateCooperativeUser(
     && actor.cooperativeId === targetCooperativeId
     && actor.cooperativeId === requestedCooperativeId
     && targetRole !== "superadmin"
-    && requestedRole !== "superadmin";
+    && requestedRole !== "superadmin"
+    && (requestedRole !== "admin" || targetRole === "admin");
 }
 
 /** Admin Add-account UI: Admin may create buyer/seller; SuperAdmin may also create Officer Admin (admin). Nobody creates superadmin. */

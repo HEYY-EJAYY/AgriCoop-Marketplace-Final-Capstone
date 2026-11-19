@@ -35,6 +35,7 @@ try {
   for (const file of migrationFiles) {
     await runFile(join(migrationDir, file));
   }
+  await runFile(join(root, "supabase", "storage", "profile_verification_bucket.sql"));
   console.log("Harness setup complete.");
 } catch (error) {
   console.error("Harness setup failed:", error);

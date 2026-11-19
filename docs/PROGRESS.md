@@ -84,10 +84,10 @@
 - **Fixes:** Narrowed Officer application user reads to `id` and `openId`. Soft-deleted identities are now rejected before role-mapping self-heal, and tombstone lookup failures propagate instead of silently continuing. Added additive database guards for user tombstone actor/target rules and cooperative request inserts; both have read-only previews and exact generated blocks (32 and 33).
 - **User-query audit:** Runtime application imports `server/routers.ts`, not `server/routers.fixed.ts`. The runtime server has no full-row `users` query selecting revoked payment columns. The unimported stale duplicate contains three full-row reads (`routers.fixed.ts` near its member-review and order-detail routes); left intact as required and listed for awareness. All relevant runtime user reads use explicit projections.
 - **Database-scope audit:** `server/nestedDatabaseScope.test.ts` inventories runtime scopes: the tRPC outer scope excludes registration/resend/admin-create, auth context is sequential before middleware, the two Express routes each open one scope, and the remaining registration/admin provisioning scopes are isolated. No new nested scope was introduced.
-- **Security review:** The designated read-only security reviewer found no vulnerabilities in the reviewed Stage 5 changes.
+- **Security review:** The original Stage 5 review scope found no vulnerabilities in those changes. A later cooperative-management review found a cross-cooperative Admin scope gap; see the security follow-up below.
 - **Verified:** Node 22.23.5; `pnpm check`; full `pnpm test` (431 passed, 14 skipped); `pnpm build` (passed with the existing >500 KB chunk warning); `git diff --check`.
 - **Not verified:** `TEST_DATABASE_URL` is unavailable in this run, so the 14 real-Postgres assertions—including the new product, payment, user, archive, and association cases—were skipped. The new SQL migrations were not executed. No live database, Supabase, or external service was accessed.
-- **Manual action:** In CI, run the RLS harness against the disposable localhost Postgres container after applying migration blocks in order: 30, 31, 32, 33 (the generated manual file also contains the separate Storage setup draft). Do not apply to production until a local catalog preview matches. Review the security-review result before treating Stage 5 as complete.
+- **Manual action:** In CI, run the RLS harness against the disposable localhost Postgres container after applying migration blocks in order: 30, 31, 32, 33, 34 (the generated manual file also contains the separate Storage setup draft). Do not apply to production until a local catalog preview matches. Review the security-review result before treating Stage 5 as complete.
 
 ## Stage 6 — Browser tests
 
@@ -120,3 +120,16 @@
 - **Verified:** Source references point to current code and repository docs; question/challenge counts match the requested minimum; final report remains under 40 lines.
 - **Not verified:** Production data, effective database role/RLS, Storage policies, Auth/Vercel configuration, payment processing, accessibility conformance, and real-user outcomes.
 - **Manual action:** Use the guide for discussion, but describe the listed verification gaps honestly and complete release gates in an approved test environment.
+
+## Security follow-up — Cooperative Admin scope
+
+**Status:** IMPLEMENTED LOCALLY; database migration unapplied and unverified
+
+- **Finding:** Officer Admins could list and mutate cooperatives outside their assignment through the management routes. The existing cooperative RLS policy also allowed all staff rows, so an authenticated client could bypass route checks.
+- **Fix:** `manageList` is scoped to the Admin's assigned cooperative; update, soft-delete, restore, and status mutations enforce the same scope. Creating platform cooperatives is SuperAdmin-only, and the Admin UI no longer shows the unavailable create form. Added a regression test for cross-cooperative route denies and query scoping.
+- **Database fix:** Added `20261118240000_cooperative_admin_scope.sql` / BLOCK 34, with read-only policy/helper previews and a preflight guard. It keeps public active-cooperative reads and scopes authenticated staff reads/writes through `shares_cooperative(id)`. Added a real-Postgres harness case for Admin own-coop update, cross-coop deny, and SuperAdmin access.
+- **Checkout receipt integrity:** Order creation no longer trusts a caller-supplied buyer-folder path. It requires the HMAC intent bound to the buyer and derived seller, then rechecks expiry, exact byte size, and image signature before attaching the receipt. Finalization returns that intent; the checkout UI submits it with the order.
+- **Verified:** Node 22.23.5; `pnpm check`, `pnpm test` (438 passed; 15 Postgres tests skipped), and `pnpm build` passed; existing >500 KB chunk warning remains.
+- **Not verified:** The Postgres harness and migration were not run against a database. The cross-cooperative database fix is effective only after BLOCK 34 is reviewed and applied.
+- **Remaining security caveat:** The registration-guard GUC finding remains conditional; no authenticated-client path that can set it was confirmed in this work.
+- **Manual action:** Review BLOCK 34's preview, then apply only in the approved database workflow after earlier blocks. Run the harness in CI; do not apply SQL here.

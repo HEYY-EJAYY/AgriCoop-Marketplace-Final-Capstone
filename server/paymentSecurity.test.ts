@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  assertBuyerOwnsReceiptPath,
   canViewSellerOnlinePaymentDetails,
   isCheckoutReceiptStorageKey,
   isPaymentProofStorageKey,
@@ -69,18 +68,14 @@ describe("seller online payment secrecy", () => {
 });
 
 describe("receipt path ownership", () => {
-  it("rejects online checkout without a receipt at order create", () => {
+  it("requires a seller-bound verified upload intent at order create", () => {
     const routers = readFileSync(fileURLToPath(new URL("./routers.ts", import.meta.url)), "utf8");
-    expect(routers).toContain('if (!input.receiptStoragePath)');
+    expect(routers).toContain('if (!input.receiptUploadIntent)');
     expect(routers).toContain("Upload your payment receipt before placing an online payment order.");
-    expect(routers).toContain("assertBuyerOwnsReceiptPath(input.receiptStoragePath, buyer.id)");
-  });
-
-  it("accepts checkout and order-scoped buyer paths only", () => {
-    expect(() => assertBuyerOwnsReceiptPath("payment-proofs/7/checkout/receipt.png", 7)).not.toThrow();
-    expect(() => assertBuyerOwnsReceiptPath("payment-proofs/7/19/receipt.png", 7, 19)).not.toThrow();
-    expect(() => assertBuyerOwnsReceiptPath("payment-proofs/8/checkout/receipt.png", 7)).toThrow(/own storage folder/i);
-    expect(() => assertBuyerOwnsReceiptPath("payment-proofs/8/19/receipt.png", 7, 19)).toThrow(/own storage folder/i);
+    expect(routers).toContain("verifyCheckoutReceiptUploadIntent(");
+    expect(routers).toContain("currentOrder.sellerId");
+    expect(routers).toContain("checkoutReceiptBytes.length !== checkoutReceipt.fileSizeBytes");
+    expect(routers).toContain("matchesImageContentTypeSignature(checkoutReceiptBytes, checkoutReceipt.mimeType)");
   });
 
   it("rejects cross-buyer payment proof keys", () => {

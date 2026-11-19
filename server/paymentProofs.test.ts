@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createCheckoutReceiptUploadIntent,
   createPaymentProofUploadIntent,
+  isCheckoutReceiptStorageKey,
   isPaymentProofStorageKey,
   sanitizePaymentProofFileName,
+  verifyCheckoutReceiptUploadIntent,
   verifyPaymentProofUploadIntent,
 } from "./paymentProofs";
 import { PAYMENT_PROOF_MAX_BYTES } from "../shared/paymentProofs";
@@ -57,5 +60,29 @@ describe("payment proof storage keys", () => {
     const [payload, signature] = token.split(".");
     const tamperedPayload = `${payload.slice(0, -1)}${payload.endsWith("A") ? "B" : "A"}`;
     expect(verifyPaymentProofUploadIntent(`${tamperedPayload}.${signature}`, 7, 19, now + 1)).toBeNull();
+  });
+
+  it("binds checkout receipt intents to buyer, seller, metadata, file size, and expiry", () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "unit-test-key");
+    const now = 1_800_000_000_000;
+    const token = createCheckoutReceiptUploadIntent({
+      buyerId: 7,
+      sellerId: 19,
+      storagePath: "payment-proofs/7/checkout/receipt.png",
+      originalFileName: "receipt.png",
+      mimeType: "image/png",
+      fileSizeBytes: 128,
+    }, now);
+
+    expect(verifyCheckoutReceiptUploadIntent(token, 7, 19, now + 1)).toMatchObject({
+      storagePath: "payment-proofs/7/checkout/receipt.png",
+      mimeType: "image/png",
+      fileSizeBytes: 128,
+    });
+    expect(verifyCheckoutReceiptUploadIntent(token, 8, 19, now + 1)).toBeNull();
+    expect(verifyCheckoutReceiptUploadIntent(token, 7, 20, now + 1)).toBeNull();
+    expect(verifyCheckoutReceiptUploadIntent(token, 7, 19, now + 10 * 60 * 1000)).toBeNull();
+    expect(isCheckoutReceiptStorageKey("payment-proofs/7/checkout/receipt.png", 7)).toBe(true);
+    expect(isCheckoutReceiptStorageKey("payment-proofs/8/checkout/receipt.png", 7)).toBe(false);
   });
 });

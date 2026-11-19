@@ -6,6 +6,48 @@ import { describe, expect, it } from "vitest";
 import { cooperativeAssociationRequests, orders, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, profiles, roles, supportTicketMessages, transactions, users } from "../drizzle/pg-schema";
 
 describe("PostgreSQL identity lookup schema", () => {
+  it("revokes association-request UPDATE before exposing approval in one migration transaction", () => {
+    const migration = readFileSync(fileURLToPath(
+      new URL("../supabase/migrations/20261118220000_cooperative_association_listing_move.sql", import.meta.url),
+    ), "utf8");
+    const begin = migration.indexOf("BEGIN;");
+    const revoke = migration.indexOf(
+      'REVOKE UPDATE ON TABLE agricoop_app."cooperativeAssociationRequests"',
+    );
+    const approvalGrant = migration.indexOf(
+      "GRANT EXECUTE ON FUNCTION agricoop_app.approve_cooperative_association_request",
+    );
+    const commit = migration.indexOf("COMMIT;");
+
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(revoke).toBeGreaterThan(begin);
+    expect(approvalGrant).toBeGreaterThan(revoke);
+    expect(commit).toBeGreaterThan(approvalGrant);
+    expect(migration.slice(revoke, approvalGrant)).toContain("FROM PUBLIC, anon, authenticated");
+  });
+
+  it("scopes audit RPC writes to the application server transaction", () => {
+    const auditMigration = readFileSync(fileURLToPath(
+      new URL("../supabase/migrations/20261118290000_server_only_audit_writer.sql", import.meta.url),
+    ), "utf8");
+    const routerSources = [
+      readFileSync(fileURLToPath(new URL("./routers.ts", import.meta.url)), "utf8"),
+      readFileSync(fileURLToPath(new URL("./part2Routers.ts", import.meta.url)), "utf8"),
+    ];
+
+    expect(auditMigration).toContain(
+      "current_setting('agricoop.server_audit_write', true) IS DISTINCT FROM 'on'",
+    );
+    expect(auditMigration).toContain(
+      "REVOKE ALL ON FUNCTION agricoop_app.write_audit_log(varchar, varchar, integer, integer, text)",
+    );
+    for (const source of routerSources) {
+      expect(source).toContain(
+        "set_config('agricoop.server_audit_write', 'on', true)",
+      );
+    }
+  });
+
   it("uses only the user-confirmed production enum labels for marketplace payment/order fields", () => {
     expect(users.role.enumValues).toEqual(["buyer", "seller", "admin", "superadmin"]);
     expect(users.approvalStatus.enumValues).toEqual(["approved", "pending", "suspended"]);

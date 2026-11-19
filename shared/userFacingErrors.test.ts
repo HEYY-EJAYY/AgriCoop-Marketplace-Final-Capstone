@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mutationFailureFallback, toUserFacingErrorMessage } from "./userFacingErrors";
+import {
+  mutationFailureFallback,
+  toUserFacingErrorMessage,
+  USER_FACING_DELETE_COOPERATIVE_ERROR,
+  USER_FACING_DELETE_USER_ERROR,
+  USER_FACING_LOAD_ERROR,
+} from "./userFacingErrors";
 
 describe("toUserFacingErrorMessage", () => {
   it("replaces Failed query SQL payloads", () => {
@@ -18,5 +24,14 @@ describe("toUserFacingErrorMessage", () => {
       .toBe("We couldn't delete that order. Please try again. (ref: a1b2c3d4)");
     expect(mutationFailureFallback("admin.softDeleteUser", {}, "e5f6g7h8"))
       .toBe("We couldn't delete that user. Please try again. (ref: e5f6g7h8)");
+    expect(mutationFailureFallback("cooperatives.softDelete", { id: 8 }, "1234abcd"))
+      .toBe("We couldn't delete that cooperative. Please try again. (ref: 1234abcd)");
+  });
+
+  it("replaces the generic load toast with the relevant deletion message", () => {
+    expect(toUserFacingErrorMessage(USER_FACING_LOAD_ERROR, USER_FACING_DELETE_USER_ERROR))
+      .toBe(USER_FACING_DELETE_USER_ERROR);
+    expect(toUserFacingErrorMessage("Failed query: update agricoop_app.cooperatives", USER_FACING_DELETE_COOPERATIVE_ERROR))
+      .toBe(USER_FACING_DELETE_COOPERATIVE_ERROR);
   });
 });

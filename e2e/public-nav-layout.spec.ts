@@ -66,6 +66,9 @@ test.describe("logged-out public nav identity", () => {
     for (const route of PUBLIC_ROUTES) {
       await page.goto(route);
       await expect(page.getByTestId("site-header")).toBeVisible();
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+      });
 
       const { center, headerBox, isDesktopNav } = await readLoggedOutNav(page);
       expect(center.map(c => c.label)).toEqual(EXPECTED_CENTER.map(c => c.label));
@@ -128,6 +131,11 @@ test.describe("marketing boxed layout", () => {
 
       const marketingShell = page.locator("main.agri-marketing-shell, main .agri-marketing-shell").first();
       await expect(marketingShell).toBeVisible();
+      await expect.poll(() => marketingShell.evaluate(el => {
+        const styles = getComputedStyle(el);
+        return [styles.paddingLeft, styles.paddingRight, styles.maxWidth]
+          .every(value => Number.isFinite(Number.parseFloat(value)));
+      })).toBe(true);
 
       const metrics = await marketingShell.evaluate(el => {
         const styles = getComputedStyle(el);

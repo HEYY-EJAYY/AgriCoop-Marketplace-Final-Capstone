@@ -39,8 +39,8 @@ test.describe("public marketplace journeys", () => {
     await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
 
-    const isMobile = testInfo.project.name.startsWith("mobile");
-    if (isMobile) {
+    const usesCompactFilters = (page.viewportSize()?.width ?? 1024) < 1024;
+    if (usesCompactFilters) {
       await page.getByRole("button", { name: /Filters & sort/i }).click();
       await expect(page.getByRole("heading", { name: /^Filters$/i })).toBeVisible();
     }
@@ -86,7 +86,11 @@ test.describe("public marketplace journeys", () => {
   test("two marketplace listings use distinct non-hero image sources", async ({ page }) => {
     await page.goto("/marketplace");
     await expect(page.getByRole("heading", { name: /Find harvests/i })).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[aria-label="Loading listings"]')).toHaveCount(0, { timeout: 30_000 });
     const images = page.locator('[data-testid="product-image"]');
+    if ((await images.count()) < 2) {
+      test.skip(true, "At least two active public listings are required for image-source validation.");
+    }
     await expect(images.first()).toBeVisible({ timeout: 30_000 });
     await expect(images.nth(1)).toBeVisible({ timeout: 30_000 });
     const srcA = await images.nth(0).getAttribute("data-image-src");

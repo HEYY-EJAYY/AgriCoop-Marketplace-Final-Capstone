@@ -56,7 +56,7 @@ test.describe("public Stage 4 controls", () => {
   test("login and registration password visibility is keyboard-operable without shifting", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop-1280", "Runs once on desktop-1280.");
     await page.goto("/auth");
-    const password = page.getByLabel("Password");
+    const password = page.getByLabel("Password", { exact: true });
     const before = await password.boundingBox();
     expect(before).not.toBeNull();
     await page.getByRole("button", { name: "Show password" }).focus();
@@ -70,7 +70,7 @@ test.describe("public Stage 4 controls", () => {
     expect(after?.height).toBe(before?.height);
 
     await page.getByTestId("nav-join").click();
-    const registerPassword = page.getByLabel("Password");
+    const registerPassword = page.getByLabel("Password", { exact: true });
     const visibilityButton = page.getByRole("button", { name: /Show password|Hide password/ });
     if (await visibilityButton.getAttribute("aria-pressed") === "true") await visibilityButton.click();
     await expect(registerPassword).toHaveAttribute("type", "password");
@@ -211,7 +211,7 @@ test.describe("buyer Stage 6 flows", () => {
     await page.goto("/profile");
     await expect(page.getByRole("heading", { name: "Change password" })).toBeVisible({ timeout: 30_000 });
     for (const label of ["New password", "Confirm new password"]) {
-      const input = page.getByLabel(label);
+      const input = page.getByLabel(label, { exact: true });
       const wrapper = input.locator("xpath=..");
       const show = wrapper.getByRole("button", { name: "Show password" });
       await show.click();

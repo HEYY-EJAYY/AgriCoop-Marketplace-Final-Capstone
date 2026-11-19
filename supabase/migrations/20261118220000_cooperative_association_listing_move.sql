@@ -1,14 +1,54 @@
 -- PURPOSE: Persist the reviewer's opt-in for moving a Seller's existing listings.
 -- Adds a narrowly scoped SECURITY DEFINER helper for that approved request only.
 -- ADDITIVE AND IDEMPOTENT. No existing product rows are rewritten by this migration.
+--
+-- READ-ONLY PREVIEW:
+-- SELECT
+--   to_regprocedure('agricoop_app.guard_users_protected_columns()') AS guard_function,
+--   CASE
+--     WHEN to_regprocedure('agricoop_app.guard_users_protected_columns()') IS NULL THEN false
+--     ELSE position(
+--       'allow_registration_coop_assign'
+--       IN pg_get_functiondef(to_regprocedure('agricoop_app.guard_users_protected_columns()'))
+--     ) > 0
+--   END AS registration_assignment_guard_present,
+--   to_regclass('agricoop_app."cooperativeAssociationRequests"') AS requests_table,
+--   to_regclass('agricoop_app.users') AS users_table,
+--   to_regclass('agricoop_app.products') AS products_table;
 
 BEGIN;
 
 DO $preflight$
+DECLARE
+  guard_definition text;
 BEGIN
   IF to_regclass('agricoop_app."cooperativeAssociationRequests"') IS NULL
      OR to_regclass('agricoop_app.users') IS NULL
      OR to_regclass('agricoop_app.products') IS NULL
+     OR (
+       SELECT count(*)
+       FROM information_schema.columns
+       WHERE table_schema = 'agricoop_app'
+         AND table_name = 'cooperativeAssociationRequests'
+         AND column_name IN (
+           'id', 'sellerId', 'cooperativeId', 'status', 'message',
+           'reviewNote', 'reviewedBy', 'createdAt', 'reviewedAt'
+         )
+     ) <> 9
+     OR (
+       SELECT count(*)
+       FROM information_schema.columns
+       WHERE table_schema = 'agricoop_app'
+         AND table_name = 'users'
+         AND column_name IN ('role', 'approvalStatus', 'cooperativeId', 'deletedAt')
+     ) <> 4
+     OR NOT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'agricoop_app'
+         AND table_name = 'products'
+         AND column_name = 'cooperativeId'
+     )
      OR to_regprocedure('agricoop_app.guard_users_protected_columns()') IS NULL
      OR NOT EXISTS (
        SELECT 1
@@ -19,11 +59,41 @@ BEGIN
      ) THEN
     RAISE EXCEPTION 'Association approval migration precondition failed: expected protected users trigger and marketplace tables';
   END IF;
+
+  SELECT pg_get_functiondef(p.oid)
+  INTO guard_definition
+  FROM pg_proc AS p
+  WHERE p.oid = to_regprocedure('agricoop_app.guard_users_protected_columns()');
+
+  IF guard_definition IS NULL
+     OR position('allow_registration_coop_assign' IN guard_definition) = 0 THEN
+    RAISE EXCEPTION 'Association approval migration stopped: current users guard does not contain allow_registration_coop_assign';
+  END IF;
 END;
 $preflight$;
 
 ALTER TABLE agricoop_app."cooperativeAssociationRequests"
   ADD COLUMN IF NOT EXISTS "moveExistingListings" boolean NOT NULL DEFAULT false;
+
+-- Association review writes must go through the scoped SECURITY DEFINER functions.
+-- Keep only the columns required to submit a pending request directly.
+REVOKE UPDATE ON TABLE agricoop_app."cooperativeAssociationRequests"
+  FROM PUBLIC, anon, authenticated;
+REVOKE UPDATE (
+  id, "sellerId", "cooperativeId", status, message, "reviewNote",
+  "reviewedBy", "createdAt", "reviewedAt", "moveExistingListings"
+) ON TABLE agricoop_app."cooperativeAssociationRequests"
+  FROM PUBLIC, anon, authenticated;
+REVOKE INSERT ON TABLE agricoop_app."cooperativeAssociationRequests"
+  FROM PUBLIC, anon, authenticated;
+REVOKE INSERT (
+  id, "sellerId", "cooperativeId", status, message, "reviewNote",
+  "reviewedBy", "createdAt", "reviewedAt", "moveExistingListings"
+) ON TABLE agricoop_app."cooperativeAssociationRequests"
+  FROM PUBLIC, anon, authenticated;
+GRANT INSERT ("sellerId", "cooperativeId", message)
+  ON TABLE agricoop_app."cooperativeAssociationRequests"
+  TO authenticated;
 
 CREATE OR REPLACE FUNCTION agricoop_app.guard_users_protected_columns()
 RETURNS trigger
@@ -34,6 +104,7 @@ AS $fn$
 DECLARE
   actor_id integer := agricoop_app.current_app_user_id();
   actor_role text := agricoop_app.current_app_role();
+  allow_reg_coop text := nullif(current_setting('agricoop.allow_registration_coop_assign', true), '');
 BEGIN
   IF NEW."role" IS DISTINCT FROM OLD."role"
      OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus"
@@ -46,9 +117,19 @@ BEGIN
     END IF;
     IF actor_id = OLD.id THEN
       IF NEW."role" IS DISTINCT FROM OLD."role"
-         OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus"
-         OR NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
+         OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus" THEN
         RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
+      END IF;
+      IF NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
+        IF NOT (
+          allow_reg_coop = '1'
+          AND OLD."cooperativeId" IS NULL
+          AND NEW."cooperativeId" IS NOT NULL
+          AND NEW."role" IS NOT DISTINCT FROM OLD."role"
+          AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus"
+        ) THEN
+          RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
+        END IF;
       END IF;
     ELSIF actor_role NOT IN ('admin', 'superadmin') THEN
       RAISE EXCEPTION 'Only Admin or SuperAdmin can change protected user fields';
@@ -58,8 +139,9 @@ BEGIN
             OR NEW."cooperativeId" IS DISTINCT FROM agricoop_app.current_app_cooperative_id()
             OR NEW."role" = 'superadmin'
             OR OLD."role" = 'superadmin'
-          )
-          AND NOT (
+            OR (NEW."role" = 'admin' AND OLD."role" IS DISTINCT FROM 'admin')
+          ) THEN
+      IF NOT (
             OLD."role" = 'seller'
             AND NEW."role" = 'seller'
             AND OLD."approvalStatus" IS NOT DISTINCT FROM NEW."approvalStatus"
@@ -78,11 +160,12 @@ BEGIN
                 AND request."reviewedAt" = transaction_timestamp()
             )
           ) THEN
-      RAISE EXCEPTION 'Admin cannot change users outside their cooperative or promote SuperAdmin';
+        RAISE EXCEPTION 'Admin cannot change users outside their cooperative or promote SuperAdmin';
+      END IF;
     END IF;
   END IF;
   RETURN NEW;
-END
+END;
 $fn$;
 
 CREATE OR REPLACE FUNCTION agricoop_app.approve_cooperative_association_request(
@@ -114,7 +197,7 @@ BEGIN
   actor_role := agricoop_app.current_app_role();
   actor_cooperative_id := agricoop_app.current_app_cooperative_id();
 
-  IF actor_id IS NULL OR actor_role NOT IN ('admin', 'superadmin') THEN
+  IF actor_id IS NULL OR actor_role IS NULL OR actor_role NOT IN ('admin', 'superadmin') THEN
     RAISE EXCEPTION 'Only Admin or SuperAdmin can approve an association request'
       USING ERRCODE = '42501';
   END IF;
@@ -213,7 +296,35 @@ BEGIN
       AND column_name = 'moveExistingListings'
       AND data_type = 'boolean'
       AND is_nullable = 'NO'
-  ) OR to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)') IS NULL THEN
+  ) OR to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)') IS NULL
+     OR to_regprocedure('agricoop_app.guard_users_protected_columns()') IS NULL
+     OR position(
+       'allow_registration_coop_assign'
+       IN pg_get_functiondef(to_regprocedure('agricoop_app.guard_users_protected_columns()'))
+     ) = 0
+     OR has_table_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'status',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'status',
+       'INSERT'
+     )
+     OR NOT has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'message',
+       'INSERT'
+     ) THEN
     RAISE EXCEPTION 'Association listing move migration verification failed';
   END IF;
 END;

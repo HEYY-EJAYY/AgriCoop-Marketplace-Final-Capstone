@@ -1,5 +1,7 @@
 # Production Migration Runbook
 
+> **SUPERSEDED / DO NOT EXECUTE.** This historical runbook predates the latest production catalog and migration-history reconciliation. Its baseline and migration order are stale. Use [`PRODUCTION_SQL_RELEASE_PLAN.md`](./PRODUCTION_SQL_RELEASE_PLAN.md) for current local preparation; production SQL still requires explicit approval.
+
 **Local preparation only. You (owner) run all SQL in the Supabase SQL Editor.**  
 Confirm a Supabase backup / PITR restore point exists before any migration.
 

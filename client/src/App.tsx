@@ -28,7 +28,7 @@ const CooperativePage = lazy(() => import("@/pages/CooperativePage"));
 
 const LazyFallback = (
   <PageFrame>
-    <main className={`${marketingShellClass} grid min-h-[40vh] place-items-center py-16 text-sm text-[#647568]`}>
+    <main className={`${marketingShellClass} grid min-h-[40vh] place-items-center py-16 text-sm text-[#5f7063]`}>
       Loading AgriCoop…
     </main>
   </PageFrame>

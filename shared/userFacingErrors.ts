@@ -1,5 +1,7 @@
 export const USER_FACING_LOAD_ERROR = "We could not load this data right now. Please try again.";
 export const USER_FACING_SAVE_ERROR = "We could not save your changes right now. Please try again.";
+export const USER_FACING_DELETE_USER_ERROR = "We couldn't delete that user. Please try again.";
+export const USER_FACING_DELETE_COOPERATIVE_ERROR = "We couldn't delete that cooperative. Please try again.";
 
 /** Strip internal SQL / driver detail from messages shown in the UI. */
 export function toUserFacingErrorMessage(
@@ -8,6 +10,7 @@ export function toUserFacingErrorMessage(
 ): string {
   const raw = (message ?? "").trim();
   if (!raw) return fallback;
+  if (raw === USER_FACING_LOAD_ERROR && fallback !== USER_FACING_LOAD_ERROR) return fallback;
   if (/^Failed query:/i.test(raw)) {
     return fallback;
   }
@@ -34,7 +37,10 @@ export function mutationFailureFallback(path: string | undefined, input: unknown
     return `We couldn't delete that quotation request. Please try again. (ref: ${reference})`;
   }
   if (path === "admin.softDeleteUser") {
-    return `We couldn't delete that user. Please try again. (ref: ${reference})`;
+    return `${USER_FACING_DELETE_USER_ERROR} (ref: ${reference})`;
+  }
+  if (path === "cooperatives.softDelete") {
+    return `${USER_FACING_DELETE_COOPERATIVE_ERROR} (ref: ${reference})`;
   }
   return `We couldn't save your changes. Please try again. (ref: ${reference})`;
 }

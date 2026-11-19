@@ -22,6 +22,18 @@ function boxesIntersect(
 }
 
 test.describe("home hero layout and width", () => {
+  test("marketplace does not preload the homepage hero image", async ({ page }) => {
+    await page.goto("/marketplace");
+
+    const heroImageRequests = await page.evaluate(() =>
+      performance
+        .getEntriesByType("resource")
+        .map(entry => entry.name)
+        .filter(name => /\/images\/hero-banner-(800|1200)\.webp/.test(name)),
+    );
+    expect(heroImageRequests).toEqual([]);
+  });
+
   test("balanced hero, no overflow, glass badge placement", async ({ page }, testInfo) => {
     await page.goto("/");
     const hero = page.getByTestId("home-hero");

@@ -22,6 +22,33 @@ CREATE TABLE public.profiles (
   created_at timestamptz DEFAULT now()
 );
 
+CREATE TABLE public.products (
+  product_id uuid PRIMARY KEY,
+  seller_id uuid NOT NULL,
+  status text NOT NULL
+);
+
+CREATE TABLE public.inventory (
+  inventory_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id uuid NOT NULL REFERENCES public.products(product_id),
+  stock_quantity numeric NOT NULL,
+  last_updated timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE public.activity_logs (
+  log_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid,
+  action_performed text NOT NULL,
+  log_date timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.products TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.inventory TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.activity_logs TO anon, authenticated;
+
 DO $$ BEGIN
   CREATE TYPE agricoop_app.cooperative_status AS ENUM ('active', 'inactive');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;

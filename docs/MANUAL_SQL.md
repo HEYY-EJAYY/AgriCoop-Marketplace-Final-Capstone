@@ -1,10 +1,10 @@
 # MANUAL SQL — paste into Supabase SQL Editor
 
-**Agent does not execute this against production.** Run after backup/PITR confirmation.
+**Do not apply this snapshot to production.** Its baseline below is stale and does not reflect the later read-only catalog review, which found a materially different migration history and RLS catalog. Local migrations are proposals only; production SQL or migration execution requires a fresh reconciliation and explicit approval.
 
 Project: AgriCoop Marketplace (`adxprwseqawqrwuijata`)
 
-Live baseline (read-only, 2026-11-17):
+Previously recorded live baseline (read-only; superseded by later catalog review):
 - Migration history: `20261016115411`, `20261016120149` only
 - 12 `agricoop_app` tables, RLS enabled, **0 policies**
 - Missing: cooperativeAssociationRequests, productImages, payments, paymentEvents, notifications, supportTickets, supportTicketMessages, auditLogs, profileVerificationSubmissions
@@ -13,7 +13,12 @@ Live baseline (read-only, 2026-11-17):
 - Buckets: product-images (public), payment-proofs (private); profile-verification-documents **missing**
 - `authenticated` lacks USAGE on `agricoop_app` and SELECT on users (blocks app after SET ROLE)
 
-Run **one block at a time**. Stop on any RAISE EXCEPTION and reconcile before continuing.
+Local-only authorization remediation now also includes:
+- `20261118220000_cooperative_association_listing_move.sql` limits association-request inserts and revokes direct updates.
+- `20261118260000_authz_helper_hardening.sql` binds profile role lookups to an active application account.
+- `20261118280000_public_legacy_rls_hardening.sql` removes client audit-log inserts and scopes legacy inventory reads.
+
+These local changes have not been applied to production. Reconcile each migration against a fresh production catalog and obtain explicit approval before any execution.
 
 ---
 
@@ -5008,10 +5013,26 @@ COMMIT;
 -- PURPOSE: Persist the reviewer's opt-in for moving a Seller's existing listings.
 -- Adds a narrowly scoped SECURITY DEFINER helper for that approved request only.
 -- ADDITIVE AND IDEMPOTENT. No existing product rows are rewritten by this migration.
+--
+-- READ-ONLY PREVIEW:
+-- SELECT
+--   to_regprocedure('agricoop_app.guard_users_protected_columns()') AS guard_function,
+--   CASE
+--     WHEN to_regprocedure('agricoop_app.guard_users_protected_columns()') IS NULL THEN false
+--     ELSE position(
+--       'allow_registration_coop_assign'
+--       IN pg_get_functiondef(to_regprocedure('agricoop_app.guard_users_protected_columns()'))
+--     ) > 0
+--   END AS registration_assignment_guard_present,
+--   to_regclass('agricoop_app."cooperativeAssociationRequests"') AS requests_table,
+--   to_regclass('agricoop_app.users') AS users_table,
+--   to_regclass('agricoop_app.products') AS products_table;
 
 BEGIN;
 
 DO $preflight$
+DECLARE
+  guard_definition text;
 BEGIN
   IF to_regclass('agricoop_app."cooperativeAssociationRequests"') IS NULL
      OR to_regclass('agricoop_app.users') IS NULL
@@ -5025,6 +5046,16 @@ BEGIN
          AND NOT tgisinternal
      ) THEN
     RAISE EXCEPTION 'Association approval migration precondition failed: expected protected users trigger and marketplace tables';
+  END IF;
+
+  SELECT pg_get_functiondef(p.oid)
+  INTO guard_definition
+  FROM pg_proc AS p
+  WHERE p.oid = to_regprocedure('agricoop_app.guard_users_protected_columns()');
+
+  IF guard_definition IS NULL
+     OR position('allow_registration_coop_assign' IN guard_definition) = 0 THEN
+    RAISE EXCEPTION 'Association approval migration stopped: current users guard does not contain allow_registration_coop_assign';
   END IF;
 END;
 $preflight$;
@@ -5041,6 +5072,7 @@ AS $fn$
 DECLARE
   actor_id integer := agricoop_app.current_app_user_id();
   actor_role text := agricoop_app.current_app_role();
+  allow_reg_coop text := nullif(current_setting('agricoop.allow_registration_coop_assign', true), '');
 BEGIN
   IF NEW."role" IS DISTINCT FROM OLD."role"
      OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus"
@@ -5053,9 +5085,19 @@ BEGIN
     END IF;
     IF actor_id = OLD.id THEN
       IF NEW."role" IS DISTINCT FROM OLD."role"
-         OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus"
-         OR NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
+         OR NEW."approvalStatus" IS DISTINCT FROM OLD."approvalStatus" THEN
         RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
+      END IF;
+      IF NEW."cooperativeId" IS DISTINCT FROM OLD."cooperativeId" THEN
+        IF NOT (
+          allow_reg_coop = '1'
+          AND OLD."cooperativeId" IS NULL
+          AND NEW."cooperativeId" IS NOT NULL
+          AND NEW."role" IS NOT DISTINCT FROM OLD."role"
+          AND NEW."approvalStatus" IS NOT DISTINCT FROM OLD."approvalStatus"
+        ) THEN
+          RAISE EXCEPTION 'Users cannot change their own role, approval status, or cooperative';
+        END IF;
       END IF;
     ELSIF actor_role NOT IN ('admin', 'superadmin') THEN
       RAISE EXCEPTION 'Only Admin or SuperAdmin can change protected user fields';
@@ -5065,8 +5107,9 @@ BEGIN
             OR NEW."cooperativeId" IS DISTINCT FROM agricoop_app.current_app_cooperative_id()
             OR NEW."role" = 'superadmin'
             OR OLD."role" = 'superadmin'
-          )
-          AND NOT (
+            OR (NEW."role" = 'admin' AND OLD."role" IS DISTINCT FROM 'admin')
+          ) THEN
+      IF NOT (
             OLD."role" = 'seller'
             AND NEW."role" = 'seller'
             AND OLD."approvalStatus" IS NOT DISTINCT FROM NEW."approvalStatus"
@@ -5085,11 +5128,12 @@ BEGIN
                 AND request."reviewedAt" = transaction_timestamp()
             )
           ) THEN
-      RAISE EXCEPTION 'Admin cannot change users outside their cooperative or promote SuperAdmin';
+        RAISE EXCEPTION 'Admin cannot change users outside their cooperative or promote SuperAdmin';
+      END IF;
     END IF;
   END IF;
   RETURN NEW;
-END
+END;
 $fn$;
 
 CREATE OR REPLACE FUNCTION agricoop_app.approve_cooperative_association_request(
@@ -5121,7 +5165,7 @@ BEGIN
   actor_role := agricoop_app.current_app_role();
   actor_cooperative_id := agricoop_app.current_app_cooperative_id();
 
-  IF actor_id IS NULL OR actor_role NOT IN ('admin', 'superadmin') THEN
+  IF actor_id IS NULL OR actor_role IS NULL OR actor_role NOT IN ('admin', 'superadmin') THEN
     RAISE EXCEPTION 'Only Admin or SuperAdmin can approve an association request'
       USING ERRCODE = '42501';
   END IF;
@@ -5220,7 +5264,12 @@ BEGIN
       AND column_name = 'moveExistingListings'
       AND data_type = 'boolean'
       AND is_nullable = 'NO'
-  ) OR to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)') IS NULL THEN
+  ) OR to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)') IS NULL
+     OR to_regprocedure('agricoop_app.guard_users_protected_columns()') IS NULL
+     OR position(
+       'allow_registration_coop_assign'
+       IN pg_get_functiondef(to_regprocedure('agricoop_app.guard_users_protected_columns()'))
+     ) = 0 THEN
     RAISE EXCEPTION 'Association listing move migration verification failed';
   END IF;
 END;
@@ -5521,7 +5570,426 @@ COMMIT;
 
 ---
 
-## BLOCK 34: `supabase/storage/profile_verification_bucket.sql` (Storage)
+## BLOCK 34: `20261118240000_cooperative_admin_scope.sql`
+
+```sql
+-- BLOCK 34: Scope cooperative staff visibility and mutations by cooperative.
+-- Additive and idempotent. Do not execute against production without approval.
+
+-- Read-only preflight preview:
+SELECT policyname, roles, cmd, qual, with_check
+FROM pg_policies
+WHERE schemaname = 'agricoop_app'
+  AND tablename = 'cooperatives'
+  AND policyname IN (
+    'agricoop_mkt_cooperatives_anon_read',
+    'agricoop_mkt_cooperatives_staff_write'
+  )
+ORDER BY policyname;
+
+SELECT to_regprocedure('agricoop_app.shares_cooperative(integer)') AS cooperative_scope_helper;
+
+DO $preflight$
+BEGIN
+  IF to_regprocedure('agricoop_app.shares_cooperative(integer)') IS NULL THEN
+    RAISE EXCEPTION
+      'BLOCK 34 stopped: agricoop_app.shares_cooperative(integer) is missing; reconcile the security helper migration before changing cooperative policies';
+  END IF;
+END
+$preflight$;
+
+BEGIN;
+
+DROP POLICY IF EXISTS agricoop_mkt_cooperatives_anon_read ON agricoop_app.cooperatives;
+CREATE POLICY agricoop_mkt_cooperatives_anon_read
+  ON agricoop_app.cooperatives FOR SELECT TO anon, authenticated
+  USING ("deletedAt" IS NULL AND status = 'active');
+
+DROP POLICY IF EXISTS agricoop_mkt_cooperatives_staff_write ON agricoop_app.cooperatives;
+CREATE POLICY agricoop_mkt_cooperatives_staff_write
+  ON agricoop_app.cooperatives FOR ALL TO authenticated
+  USING (agricoop_app.shares_cooperative(id))
+  WITH CHECK (agricoop_app.shares_cooperative(id));
+
+COMMIT;
+```
+
+---
+
+## BLOCK 35: `20261118250000_cooperative_association_review_security.sql`
+
+```sql
+-- BLOCK 35: Prevent direct request-state edits and route rejection through a scoped function.
+-- Adds no data rows and preserves SELECT/INSERT permissions for authenticated users.
+--
+-- Read-only preview:
+SELECT
+  to_regclass('agricoop_app."cooperativeAssociationRequests"') AS requests_table,
+  has_table_privilege(
+    'authenticated',
+    'agricoop_app."cooperativeAssociationRequests"',
+    'UPDATE'
+  ) AS authenticated_can_update_requests,
+  to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)')
+    AS approval_function,
+  to_regprocedure('agricoop_app.current_app_user_id()') AS actor_id_helper,
+  to_regprocedure('agricoop_app.current_app_role()') AS actor_role_helper,
+  to_regprocedure('agricoop_app.current_app_cooperative_id()') AS actor_cooperative_helper;
+
+BEGIN;
+
+DO $preflight$
+BEGIN
+  IF to_regclass('agricoop_app."cooperativeAssociationRequests"') IS NULL
+     OR to_regprocedure('agricoop_app.approve_cooperative_association_request(integer,text,boolean)') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_user_id()') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_role()') IS NULL
+     OR to_regprocedure('agricoop_app.current_app_cooperative_id()') IS NULL
+     OR NOT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'agricoop_app'
+         AND table_name = 'cooperativeAssociationRequests'
+         AND column_name IN ('status', 'reviewedBy', 'reviewNote', 'reviewedAt', 'moveExistingListings')
+       GROUP BY table_schema, table_name
+       HAVING count(*) = 5
+     ) THEN
+    RAISE EXCEPTION
+      'Association review security migration stopped: expected request columns, approval function, and actor helpers';
+  END IF;
+END;
+$preflight$;
+
+CREATE OR REPLACE FUNCTION agricoop_app.reject_cooperative_association_request(
+  p_request_id integer,
+  p_review_note text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  actor_id integer;
+  actor_role text;
+  actor_cooperative_id integer;
+  target_cooperative_id integer;
+  request_status text;
+  changed_count integer;
+BEGIN
+  actor_id := agricoop_app.current_app_user_id();
+  actor_role := agricoop_app.current_app_role();
+  actor_cooperative_id := agricoop_app.current_app_cooperative_id();
+
+  IF actor_id IS NULL OR actor_role IS NULL OR actor_role NOT IN ('admin', 'superadmin') THEN
+    RAISE EXCEPTION 'Only Admin or SuperAdmin can reject an association request'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_review_note IS NULL OR length(btrim(p_review_note)) = 0 OR length(btrim(p_review_note)) > 600 THEN
+    RAISE EXCEPTION 'A review note of 1 to 600 characters is required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT request."cooperativeId", request.status::text
+  INTO target_cooperative_id, request_status
+  FROM agricoop_app."cooperativeAssociationRequests" AS request
+  WHERE request.id = p_request_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR request_status <> 'pending' THEN
+    RAISE EXCEPTION 'This association request is no longer pending'
+      USING ERRCODE = '23514';
+  END IF;
+  IF actor_role = 'admin'
+     AND (actor_cooperative_id IS NULL OR actor_cooperative_id <> target_cooperative_id) THEN
+    RAISE EXCEPTION 'Admin cannot reject requests for another cooperative'
+      USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE agricoop_app."cooperativeAssociationRequests"
+  SET status = 'rejected',
+      "reviewedBy" = actor_id,
+      "reviewNote" = btrim(p_review_note),
+      "moveExistingListings" = false,
+      "reviewedAt" = transaction_timestamp()
+  WHERE id = p_request_id AND status = 'pending';
+  GET DIAGNOSTICS changed_count = ROW_COUNT;
+  IF changed_count <> 1 THEN
+    RAISE EXCEPTION 'This association request changed while being reviewed'
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION agricoop_app.reject_cooperative_association_request(integer, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION agricoop_app.reject_cooperative_association_request(integer, text)
+  TO authenticated;
+
+REVOKE UPDATE ON TABLE agricoop_app."cooperativeAssociationRequests" FROM authenticated;
+
+DO $postflight$
+BEGIN
+  IF has_table_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'status',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'reviewedBy',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'reviewedAt',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'reviewNote',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'moveExistingListings',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'sellerId',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'cooperativeId',
+       'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated',
+       'agricoop_app."cooperativeAssociationRequests"',
+       'message',
+       'UPDATE'
+     )
+     OR to_regprocedure('agricoop_app.reject_cooperative_association_request(integer,text)') IS NULL
+     OR NOT has_function_privilege(
+       'authenticated',
+       'agricoop_app.reject_cooperative_association_request(integer,text)',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'Association review security migration verification failed';
+  END IF;
+END;
+$postflight$;
+
+COMMIT;
+```
+
+---
+
+## BLOCK 36: `20261118260000_authz_helper_hardening.sql`
+
+```sql
+-- BLOCK 36: Disable non-operational staff identities and close public role-sync RPC access.
+-- Staff roles are valid only for approved, non-deleted accounts. Keep the profile
+-- role-sync RPC available to the server's authenticated DB scope, but bind it to
+-- the application's role source and caller identity/scope.
+
+BEGIN;
+
+CREATE OR REPLACE FUNCTION agricoop_app.current_app_role()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+  SELECT CASE
+    WHEN user_row.role::text IN ('admin', 'superadmin')
+      AND (
+        user_row."approvalStatus" IS DISTINCT FROM 'approved'::agricoop_app.user_approval_status
+        OR user_row."deletedAt" IS NOT NULL
+      )
+      THEN NULL
+    ELSE user_row.role::text
+  END
+  FROM agricoop_app.users AS user_row
+  WHERE user_row.id = agricoop_app.current_app_user_id()
+  LIMIT 1
+$function$;
+
+REVOKE ALL ON FUNCTION agricoop_app.sync_profile_role_from_app(text, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION agricoop_app.sync_profile_role_from_app(
+  p_auth_user_id text,
+  p_app_role text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  actor_id integer := agricoop_app.current_app_user_id();
+  actor_role text := agricoop_app.current_app_role();
+  actor_cooperative_id integer := agricoop_app.current_app_cooperative_id();
+  target_id integer;
+  target_role text;
+  target_cooperative_id integer;
+  target_approval_status text;
+  target_deleted boolean;
+  canonical_role_name text;
+  canonical_role_id integer;
+BEGIN
+  IF p_auth_user_id IS NULL OR length(btrim(p_auth_user_id)) = 0 THEN
+    RAISE EXCEPTION 'auth user id is required' USING ERRCODE = '22023';
+  END IF;
+
+  canonical_role_name := CASE p_app_role
+    WHEN 'buyer' THEN 'buyer'
+    WHEN 'seller' THEN 'seller'
+    WHEN 'admin' THEN 'coop_officer'
+    WHEN 'superadmin' THEN 'system_admin'
+    ELSE NULL
+  END;
+  IF canonical_role_name IS NULL THEN
+    RAISE EXCEPTION 'unsupported application role: %', p_app_role USING ERRCODE = '22023';
+  END IF;
+
+  SELECT user_row.id, user_row.role::text, user_row."cooperativeId",
+         user_row."approvalStatus"::text, user_row."deletedAt" IS NOT NULL
+  INTO target_id, target_role, target_cooperative_id,
+       target_approval_status, target_deleted
+  FROM agricoop_app.users AS user_row
+  WHERE user_row."openId" = p_auth_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR target_role IS DISTINCT FROM p_app_role THEN
+    RAISE EXCEPTION 'Profile role must match the application user role'
+      USING ERRCODE = '42501';
+  END IF;
+  IF target_role IN ('admin', 'superadmin')
+     AND (target_approval_status IS DISTINCT FROM 'approved' OR target_deleted) THEN
+    RAISE EXCEPTION 'Non-operational staff cannot sync a privileged profile role'
+      USING ERRCODE = '42501';
+  END IF;
+  IF actor_id IS DISTINCT FROM target_id
+     AND actor_role IS DISTINCT FROM 'superadmin'
+     AND NOT (
+       actor_role = 'admin'
+       AND actor_cooperative_id IS NOT NULL
+       AND actor_cooperative_id = target_cooperative_id
+       AND target_role IN ('buyer', 'seller')
+     ) THEN
+    RAISE EXCEPTION 'Profile role sync is outside the acting user scope'
+      USING ERRCODE = '42501';
+  END IF;
+
+  SELECT roles.role_id INTO canonical_role_id
+  FROM public.roles
+  WHERE roles.role_name = canonical_role_name
+  LIMIT 1;
+  IF canonical_role_id IS NULL THEN
+    RAISE EXCEPTION 'canonical public role "%" is missing', canonical_role_name;
+  END IF;
+
+  UPDATE public.profiles
+  SET role_id = canonical_role_id
+  WHERE user_id::text = p_auth_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'canonical profile row is missing for this Auth identity';
+  END IF;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION agricoop_app.sync_profile_role_from_app(text, text)
+  TO authenticated;
+
+DO $postflight$
+BEGIN
+  IF NOT has_function_privilege(
+       'authenticated',
+       'agricoop_app.sync_profile_role_from_app(text,text)',
+       'EXECUTE'
+     )
+     OR position(
+       '"approvalStatus"' IN pg_get_functiondef(
+         to_regprocedure('agricoop_app.current_app_role()')
+       )
+     ) = 0
+     OR position(
+       '"deletedAt"' IN pg_get_functiondef(
+         to_regprocedure('agricoop_app.current_app_role()')
+       )
+     ) = 0 THEN
+    RAISE EXCEPTION 'Authorization helper hardening verification failed';
+  END IF;
+END;
+$postflight$;
+
+COMMIT;
+```
+
+---
+
+## BLOCK 37: `20261118270000_anon_deleted_seller_browse.sql`
+
+```sql
+-- Permit the marketplace's seller soft-delete filter without exposing deleted sellers.
+BEGIN;
+
+GRANT SELECT ("deletedAt") ON TABLE agricoop_app.users TO anon;
+
+DROP POLICY IF EXISTS agricoop_mkt_users_anon_public_seller
+  ON agricoop_app.users;
+CREATE POLICY agricoop_mkt_users_anon_public_seller
+  ON agricoop_app.users FOR SELECT TO anon
+  USING (
+    "approvalStatus" = 'approved'
+    AND "role" IN ('seller', 'admin', 'superadmin')
+    AND "deletedAt" IS NULL
+  );
+
+DO $postflight$
+BEGIN
+  IF NOT has_column_privilege(
+       'anon',
+       'agricoop_app.users',
+       'deletedAt',
+       'SELECT'
+     )
+     OR NOT EXISTS (
+       SELECT 1
+       FROM pg_policy
+       WHERE polrelid = 'agricoop_app.users'::regclass
+         AND polname = 'agricoop_mkt_users_anon_public_seller'
+         AND pg_get_expr(polqual, polrelid) LIKE '%"deletedAt" IS NULL%'
+     ) THEN
+    RAISE EXCEPTION 'Anonymous marketplace seller soft-delete access verification failed';
+  END IF;
+END
+$postflight$;
+
+COMMIT;
+```
+
+---
+
+## BLOCK 38: `supabase/storage/profile_verification_bucket.sql` (Storage)
 
 ```sql
 -- Manual setup draft for the profile-verification document bucket.

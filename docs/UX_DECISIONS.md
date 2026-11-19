@@ -132,8 +132,8 @@ Storage upload via service role could succeed, but `UPDATE agricoop_app.users SE
 
 - New orders store `cash_pickup` | `cash_delivery` | `online`. Display map: `online`/`gcash` → “Online Payment”; `f2f` → “Face-to-face (legacy)”. Never rewrite existing method values.
 - Fulfillment is separate (`pickup` | `delivery` on the order). Listing flags: `allowsPickup`, `allowsDelivery` (default true), `acceptsOnlinePayment` (default false).
-- Online Payment at checkout uses the **seller’s QR** (user columns), not coop admin QR options (those remain for admin tooling).
-- Multi-seller cart allowed; one order per seller group; payment/fulfillment chosen per group. Online groups require a receipt path at create (private `payment-proofs`, buyer-prefixed).
+- Online Payment at checkout uses the **officer-managed AgriCoop QR**; Seller `onlinePayment*` user columns are not displayed or used for buyer checkout.
+- Multi-seller cart allowed; one order per seller group; payment/fulfillment chosen per group. Online groups require a short-lived upload intent bound to the buyer and seller; the server rechecks file size and image signature at order creation (private `payment-proofs` bucket).
 - Timeline: additive `orderHistory` (+ keep `orderEvents` for stock/fulfillment). Cooperative page slug = `normalizedName`. Backfill NULL coop assignments to **SUTAFACO Cooperative** (exact name).
 - Removed cash disclaimer sentence must not return. Design freeze: soft cards / existing tokens only.
 

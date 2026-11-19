@@ -65,7 +65,6 @@ import { findAuthUserByEmail, getEmailVerificationRedirectUrl, isDuplicateSignup
 import { canRequestCooperativeAssociation, canReviewCooperativeAssociation, cooperativeAssociationRequestBlock } from "./cooperativeAssociations";
 import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
 import {
-  assertBuyerOwnsReceiptPath,
   createCheckoutReceiptUploadIntent,
   createPaymentProofUploadIntent,
   isCheckoutReceiptStorageKey,
@@ -115,6 +114,18 @@ function throwIfCooperativeConflict(
     throw new TRPCError({
       code: "CONFLICT",
       message: formatSimilarMatchesConflict([result.suggestion]),
+    });
+  }
+}
+
+function assertCooperativeManagementScope(
+  actor: Parameters<typeof canManageCooperativeResource>[0],
+  cooperativeId: number,
+) {
+  if (!canManageCooperativeResource(actor, cooperativeId)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Officer Admins can manage only their own cooperative.",
     });
   }
 }
@@ -300,6 +311,9 @@ async function recordAuditLog(db: Awaited<ReturnType<typeof dbOrThrow>>, input: 
   // Actor is pinned inside agricoop_app.write_audit_log from auth.uid(); actorUserId is retained for call-site clarity/tests.
   void input.actorUserId;
   await db.execute(sql`
+    with trusted_audit_scope as materialized (
+      select set_config('agricoop.server_audit_write', 'on', true)
+    )
     select agricoop_app.write_audit_log(
       ${input.action},
       ${input.entityType},
@@ -307,6 +321,7 @@ async function recordAuditLog(db: Awaited<ReturnType<typeof dbOrThrow>>, input: 
       ${input.cooperativeId ?? null},
       ${input.metadata ? JSON.stringify(input.metadata) : null}
     )
+    from trusted_audit_scope
   `);
 }
 
@@ -1193,9 +1208,13 @@ export const appRouter = router({
         }
       }),
     manageList: protectedProcedure.query(async ({ ctx }) => {
-      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const cooperativeScope = adminOverviewCooperativeScope(actor);
+        if (cooperativeScope === null) return [];
       const db = await dbOrThrow();
-      const rows = await db.select().from(cooperatives).orderBy(asc(cooperatives.name));
+        const rows = await db.select().from(cooperatives)
+          .where(cooperativeScope === undefined ? undefined : eq(cooperatives.id, cooperativeScope))
+          .orderBy(asc(cooperatives.name));
       const usage = await Promise.all(rows.map(async row => {
         const [sellers] = await db.select({ count: sql<number>`count(*)::int` }).from(users)
           .where(and(eq(users.cooperativeId, row.id), eq(users.role, "seller")));
@@ -1261,7 +1280,7 @@ export const appRouter = router({
         confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         const preview = await previewUserCooperativeSelection(db, {
           newCooperativeName: input.name,
@@ -1313,6 +1332,7 @@ export const appRouter = router({
       }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        assertCooperativeManagementScope(actor, input.id);
         const db = await dbOrThrow();
         const [existing] = await db.select().from(cooperatives).where(eq(cooperatives.id, input.id)).limit(1);
         if (!existing || existing.deletedAt) {
@@ -1376,40 +1396,44 @@ export const appRouter = router({
       .input(z.object({ id: z.number().int().positive() }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        assertCooperativeManagementScope(actor, input.id);
         const db = await dbOrThrow();
-        const [row] = await db.select().from(cooperatives).where(eq(cooperatives.id, input.id)).limit(1);
-        if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
-        if (row.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This cooperative is already deleted." });
-        const [sellers] = await db.select({ count: sql<number>`count(*)::int` }).from(users)
-          .where(and(eq(users.cooperativeId, input.id), eq(users.role, "seller")));
-        const [listings] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
-          .where(eq(products.cooperativeId, input.id));
-        await db.update(cooperatives).set({
-          deletedAt: new Date(),
-          deletedBy: actor.id,
-          status: "inactive",
-        }).where(eq(cooperatives.id, input.id));
-        await recordAuditLog(db, {
-          actorUserId: actor.id,
-          action: "cooperative_soft_deleted",
-          entityType: "cooperative",
-          entityId: input.id,
-          cooperativeId: input.id,
-          metadata: {
-            sellerCount: Number(sellers?.count ?? 0),
-            listingCount: Number(listings?.count ?? 0),
-          },
+        return db.transaction(async tx => {
+          const [row] = await tx.select().from(cooperatives)
+            .where(eq(cooperatives.id, input.id))
+            .for("update")
+            .limit(1);
+          if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
+          if (row.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This cooperative is already deleted." });
+          const [sellers] = await tx.select({ count: sql<number>`count(*)::int` }).from(users)
+            .where(and(eq(users.cooperativeId, input.id), eq(users.role, "seller")));
+          const [listings] = await tx.select({ count: sql<number>`count(*)::int` }).from(products)
+            .where(eq(products.cooperativeId, input.id));
+          const [updated] = await tx.update(cooperatives).set({
+            deletedAt: new Date(),
+            deletedBy: actor.id,
+            status: "inactive",
+          }).where(and(eq(cooperatives.id, input.id), isNull(cooperatives.deletedAt)))
+            .returning({ id: cooperatives.id });
+          if (!updated) throw new TRPCError({ code: "CONFLICT", message: "This cooperative was already deleted." });
+          const sellerCount = Number(sellers?.count ?? 0);
+          const listingCount = Number(listings?.count ?? 0);
+          await recordAuditLog(tx, {
+            actorUserId: actor.id,
+            action: "cooperative_soft_deleted",
+            entityType: "cooperative",
+            entityId: input.id,
+            cooperativeId: input.id,
+            metadata: { sellerCount, listingCount },
+          });
+          return { success: true, sellerCount, listingCount };
         });
-        return {
-          success: true,
-          sellerCount: Number(sellers?.count ?? 0),
-          listingCount: Number(listings?.count ?? 0),
-        };
       }),
     restore: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        assertCooperativeManagementScope(actor, input.id);
         const db = await dbOrThrow();
         const [row] = await db.select().from(cooperatives).where(eq(cooperatives.id, input.id)).limit(1);
         if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
@@ -1448,6 +1472,7 @@ export const appRouter = router({
       }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        assertCooperativeManagementScope(actor, input.id);
         const db = await dbOrThrow();
         const updated = await db.update(cooperatives)
           .set({ status: input.status })
@@ -1921,7 +1946,7 @@ export const appRouter = router({
         paymentMethod: z.enum(["cash_pickup", "cash_delivery", "online", "gcash"]).default("cash_pickup"),
         fulfillmentMethod: z.enum(["pickup", "delivery"]).optional(),
         paymentOptionId: z.number().int().positive().optional(),
-        receiptStoragePath: z.string().min(1).max(1000).optional(),
+        receiptUploadIntent: z.string().min(1).max(2048).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
@@ -1990,6 +2015,8 @@ export const appRouter = router({
             allowsDelivery: product.allowsDelivery ?? true,
             acceptsOnlinePayment: false,
           }));
+          let checkoutReceipt: ReturnType<typeof verifyCheckoutReceiptUploadIntent> = null;
+          let checkoutReceiptBytes: Buffer | null = null;
           const allowedMethods = methodsForListings(listingFlags, availability);
           if (!allowedMethods.includes(paymentMethod)) {
             throw new TRPCError({
@@ -2057,16 +2084,31 @@ export const appRouter = router({
             if (!availability.onlineEnabled || !availability.onlineAccountReady) {
               throw new TRPCError({ code: "BAD_REQUEST", message: "Online payment is not available right now." });
             }
-            if (!input.receiptStoragePath) {
+            if (!input.receiptUploadIntent) {
               throw new TRPCError({ code: "BAD_REQUEST", message: "Upload your payment receipt before placing an online payment order." });
             }
+            checkoutReceipt = verifyCheckoutReceiptUploadIntent(
+              input.receiptUploadIntent,
+              buyer.id,
+              currentOrder.sellerId,
+            );
+            if (!checkoutReceipt) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "The checkout receipt authorization is invalid or expired. Upload the receipt again." });
+            }
             try {
-              assertBuyerOwnsReceiptPath(input.receiptStoragePath, buyer.id);
-            } catch (error) {
+              checkoutReceiptBytes = await storageDownloadPrivateProof(checkoutReceipt.storagePath);
+            } catch {
               throw new TRPCError({
-                code: "FORBIDDEN",
-                message: error instanceof Error ? error.message : "The payment receipt must be uploaded to your own storage folder.",
+                code: "BAD_REQUEST",
+                message: "The payment receipt could not be found in storage. Upload it again, then place the order.",
               });
+            }
+            if (checkoutReceiptBytes.length !== checkoutReceipt.fileSizeBytes
+              || checkoutReceiptBytes.length > PAYMENT_PROOF_MAX_BYTES) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded receipt size does not match its authorization." });
+            }
+            if (!matchesImageContentTypeSignature(checkoutReceiptBytes, checkoutReceipt.mimeType)) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded receipt does not match its image format." });
             }
           }
 
@@ -2143,27 +2185,14 @@ export const appRouter = router({
             },
           ]);
 
-          if (isOnlinePaymentMethod(paymentMethod) && input.receiptStoragePath) {
-            const receiptPath = input.receiptStoragePath;
-            let receiptBytes: Buffer;
-            try {
-              receiptBytes = await storageDownloadPrivateProof(receiptPath);
-            } catch {
-              throw new TRPCError({
-                code: "BAD_REQUEST",
-                message: "The payment receipt could not be found in storage. Upload it again, then place the order.",
-              });
-            }
-            if (!receiptBytes.length || receiptBytes.length > PAYMENT_PROOF_MAX_BYTES) {
-              throw new TRPCError({ code: "BAD_REQUEST", message: "The payment receipt file size is invalid." });
-            }
-
-            const fileName = sanitizePaymentProofFileName(receiptPath.split("/").pop() || "receipt.jpg");
+          if (isOnlinePaymentMethod(paymentMethod) && checkoutReceipt && checkoutReceiptBytes) {
+            const receiptBytes = checkoutReceiptBytes;
+            const fileName = sanitizePaymentProofFileName(checkoutReceipt.originalFileName);
             const canonicalPath = `${PAYMENT_PROOF_BUCKET}/${buyer.id}/${newOrder.id}/${crypto.randomUUID()}-${fileName}`;
             const { error: copyError } = await supabaseAdmin.storage
               .from(PAYMENT_PROOF_BUCKET)
               .upload(canonicalPath, receiptBytes, {
-                contentType: "image/jpeg",
+                contentType: checkoutReceipt.mimeType,
                 upsert: false,
               });
             if (copyError) {
@@ -2193,7 +2222,7 @@ export const appRouter = router({
               uploadedBy: buyer.id,
               storagePath: canonicalPath,
               originalFileName: fileName,
-              mimeType: "image/jpeg",
+              mimeType: checkoutReceipt.mimeType,
               fileSizeBytes: receiptBytes.length,
               verificationStatus: "pending",
             });
@@ -3181,7 +3210,7 @@ export const appRouter = router({
       if (!matchesImageContentTypeSignature(bytes, intent.mimeType)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "The uploaded receipt does not match its image format." });
       }
-      return { receiptStoragePath: intent.storagePath };
+      return { receiptUploadIntent: input.uploadIntent };
     }),
     reviewProof: protectedProcedure.input(z.object({
       proofId: z.number().int().positive(),
@@ -3789,19 +3818,12 @@ export const appRouter = router({
               )
             `);
           } else {
-            const reviewed = await tx.update(cooperativeAssociationRequests).set({
-              status: "rejected",
-              reviewedBy: actor.id,
-              reviewNote: input.reviewNote,
-              moveExistingListings: false,
-              reviewedAt: new Date(),
-            }).where(and(
-              eq(cooperativeAssociationRequests.id, request.id),
-              eq(cooperativeAssociationRequests.status, "pending"),
-            )).returning({ id: cooperativeAssociationRequests.id });
-            if (reviewed.length !== 1) {
-              throw new TRPCError({ code: "CONFLICT", message: "This association request changed while being reviewed." });
-            }
+            await tx.execute(sql`
+              select agricoop_app.reject_cooperative_association_request(
+                ${request.id},
+                ${input.reviewNote}
+              )
+            `);
           }
           await recordAuditLog(tx, {
             actorUserId: actor.id,
@@ -4163,6 +4185,7 @@ export const appRouter = router({
           const [target] = await tx.select({
             id: users.id,
             openId: users.openId,
+            loginMethod: users.loginMethod,
             role: users.role,
             cooperativeId: users.cooperativeId,
             deletedAt: users.deletedAt,
@@ -4196,7 +4219,7 @@ export const appRouter = router({
             visibility: "hidden",
           }).where(and(eq(products.sellerId, target.id), isNull(products.deletedAt)));
 
-          if (target.openId) {
+          if (target.openId && target.loginMethod !== "demo") {
             const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(target.openId, {
               ban_duration: "876000h",
             });
@@ -4234,6 +4257,7 @@ export const appRouter = router({
           const [target] = await tx.select({
             id: users.id,
             openId: users.openId,
+            loginMethod: users.loginMethod,
             role: users.role,
             cooperativeId: users.cooperativeId,
             deletedAt: users.deletedAt,
@@ -4253,7 +4277,7 @@ export const appRouter = router({
             deletedByRole: null,
           }).where(eq(users.id, target.id));
 
-          if (target.openId) {
+          if (target.openId && target.loginMethod !== "demo") {
             const { error: unbanError } = await supabaseAdmin.auth.admin.updateUserById(target.openId, {
               ban_duration: "none",
             });

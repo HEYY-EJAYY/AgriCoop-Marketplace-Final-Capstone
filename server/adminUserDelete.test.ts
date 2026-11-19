@@ -56,6 +56,7 @@ describe("admin soft delete user", () => {
     const target = {
       id: 2,
       openId: "buyer-auth",
+      loginMethod: "supabase",
       role: "buyer",
       cooperativeId: 7,
       deletedAt: null,
@@ -98,6 +99,93 @@ describe("admin soft delete user", () => {
     expect(mocks.updateUserById).toHaveBeenCalledWith("buyer-auth", { ban_duration: "876000h" });
     expect(updates.some(update => "deletedAt" in update.values)).toBe(true);
     expect(tx.delete).not.toHaveBeenCalled();
+  });
+
+  it("soft-deletes seeded demo users without trying to ban their synthetic Auth IDs", async () => {
+    const target = {
+      id: 2,
+      openId: "demo-admin-001",
+      loginMethod: "demo",
+      role: "buyer",
+      cooperativeId: 7,
+      deletedAt: null,
+    };
+    const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const tx = {
+      select: (() => {
+        let selectCount = 0;
+        return () => {
+          selectCount += 1;
+          const current = selectCount;
+          const chain: Record<string, (...args: unknown[]) => unknown> = {
+            from: () => chain,
+            where: () => current === 1
+              ? chain
+              : Promise.resolve([{ count: 0 }]),
+            for: () => chain,
+            limit: async () => [target],
+          };
+          return chain;
+        };
+      })(),
+      update: (table: unknown) => ({
+        set: (values: Record<string, unknown>) => {
+          updates.push({ table, values });
+          return { where: async () => undefined };
+        },
+      }),
+      insert: () => ({ values: async () => undefined }),
+      delete: vi.fn(),
+      execute: async () => undefined,
+    };
+    mocks.getDb.mockResolvedValue({
+      transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
+    });
+
+    await expect(adminCaller().admin.softDeleteUser({ userId: 2, confirm: true }))
+      .resolves.toMatchObject({ success: true });
+
+    expect(mocks.updateUserById).not.toHaveBeenCalled();
+    expect(updates.some(update => "deletedAt" in update.values)).toBe(true);
+  });
+
+  it("restores seeded demo users without trying to unban their synthetic Auth IDs", async () => {
+    const target = {
+      id: 2,
+      openId: "demo-admin-001",
+      loginMethod: "demo",
+      role: "buyer",
+      cooperativeId: 7,
+      deletedAt: new Date(),
+    };
+    const updates: Array<Record<string, unknown>> = [];
+    const tx = {
+      select: () => {
+        const chain: Record<string, (...args: unknown[]) => unknown> = {
+          from: () => chain,
+          where: () => chain,
+          for: () => chain,
+          limit: async () => [target],
+        };
+        return chain;
+      },
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          updates.push(values);
+          return { where: async () => undefined };
+        },
+      }),
+      execute: async () => undefined,
+    };
+    mocks.getDb.mockResolvedValue({
+      transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
+    });
+
+    await expect(adminCaller().admin.restoreUser({ userId: 2 }))
+      .resolves.toEqual({ success: true });
+
+    expect(mocks.updateUserById).not.toHaveBeenCalled();
+    expect(updates).toEqual([{ deletedAt: null, deletedBy: null, deletedByRole: null }]);
   });
 
   it("does not report success when the Auth ban fails", async () => {

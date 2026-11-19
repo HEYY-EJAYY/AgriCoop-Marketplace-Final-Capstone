@@ -245,17 +245,3 @@ export function canViewSellerOnlinePaymentDetails(
   if (actor.role === "buyer") return true;
   return false;
 }
-
-/** Receipt storage path ownership: buyer folder under payment-proofs. */
-export function assertBuyerOwnsReceiptPath(
-  storagePath: string,
-  buyerId: number,
-  orderId?: number,
-): void {
-  const ownedCheckout = isCheckoutReceiptStorageKey(storagePath, buyerId);
-  const ownedOrder = orderId !== undefined && isPaymentProofStorageKey(storagePath, buyerId, orderId);
-  const ownedPrefix = storagePath.startsWith(`${PAYMENT_PROOF_BUCKET}/${buyerId}/`);
-  if (!ownedCheckout && !ownedOrder && !ownedPrefix) {
-    throw new Error("The payment receipt must be uploaded to your own storage folder.");
-  }
-}

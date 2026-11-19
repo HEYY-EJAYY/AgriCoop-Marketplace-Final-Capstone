@@ -156,13 +156,15 @@ describe("AgriCoop role authorization", () => {
     expect(adminOverviewCooperativeScope(superAdmin)).toBeUndefined();
   });
 
-  it("prevents Officers from moving users or assigning SuperAdmin", () => {
+  it("prevents Officers from moving users, promoting to Officer, or assigning SuperAdmin", () => {
     const officer = { role: "admin" as const, cooperativeId: 2 };
     expect(canUpdateCooperativeUser(officer, 2, 2, "seller")).toBe(true);
     expect(canUpdateCooperativeUser(officer, 3, 2, "seller")).toBe(false);
     expect(canUpdateCooperativeUser(officer, 2, 3, "seller")).toBe(false);
     expect(canUpdateCooperativeUser(officer, 2, 2, "superadmin")).toBe(false);
     expect(canUpdateCooperativeUser(officer, 2, 2, "seller", "superadmin")).toBe(false);
+    expect(canUpdateCooperativeUser(officer, 2, 2, "admin", "seller")).toBe(false);
+    expect(canUpdateCooperativeUser(officer, 2, 2, "admin", "admin")).toBe(true);
     expect(canUpdateCooperativeUser({ role: "superadmin", cooperativeId: null }, 3, 2, "superadmin")).toBe(true);
   });
 

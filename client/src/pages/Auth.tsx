@@ -463,7 +463,8 @@ export default function Auth() {
             )}
           </>}
           <label className="field-label">Email<input required type="email" className="field-control" value={email} onChange={event => setEmail(event.target.value)} /></label>
-          <label className="field-label">Password<PasswordVisibilityInput required minLength={6} value={password} onChange={event => setPassword(event.target.value)} autoComplete={register ? "new-password" : "current-password"} /></label>
+          <label className="field-label" htmlFor="auth-password">Password</label>
+          <PasswordVisibilityInput id="auth-password" required minLength={6} value={password} onChange={event => setPassword(event.target.value)} autoComplete={register ? "new-password" : "current-password"} />
           <button disabled={busy} className="agri-button w-full">{busy ? "Please wait…" : register ? "Create account" : "Sign in"}</button>
         </form>}
         {(verificationState === "none" || verificationState === "verified") && <button className="mt-5 w-full text-sm font-bold text-[#3c704b]" onClick={() => setRegister(!register)}>

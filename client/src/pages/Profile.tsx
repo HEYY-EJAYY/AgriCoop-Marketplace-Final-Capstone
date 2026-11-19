@@ -273,8 +273,14 @@ export default function Profile() {
               <h2 className="font-display text-xl font-bold text-[#264f37]">Change password</h2>
               <p className="mt-1 text-sm text-[#6a796e]">Leave blank to keep your current password.</p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <label className="field-label">New password<PasswordVisibilityInput minLength={8} value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" /></label>
-                <label className="field-label">Confirm new password<PasswordVisibilityInput minLength={8} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" /></label>
+                <div>
+                  <label className="field-label" htmlFor="profile-new-password">New password</label>
+                  <PasswordVisibilityInput id="profile-new-password" minLength={8} value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="profile-confirm-password">Confirm new password</label>
+                  <PasswordVisibilityInput id="profile-confirm-password" minLength={8} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+                </div>
               </div>
             </section>
           </div>

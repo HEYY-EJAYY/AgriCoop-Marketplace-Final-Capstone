@@ -77,6 +77,9 @@ async function recordAuditLog(
   },
 ) {
   await db.execute(sql`
+    with trusted_audit_scope as materialized (
+      select set_config('agricoop.server_audit_write', 'on', true)
+    )
     select agricoop_app.write_audit_log(
       ${input.action},
       ${input.entityType},
@@ -84,6 +87,7 @@ async function recordAuditLog(
       ${input.cooperativeId ?? null},
       ${input.metadata ? JSON.stringify(input.metadata) : null}
     )
+    from trusted_audit_scope
   `);
 }
 
