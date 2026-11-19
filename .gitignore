@@ -142,3 +142,6 @@ supabase/.temp/
 /blob-report/
 /playwright/.cache/
 
+
+# Local QA smoke scripts and credentials (never commit)
+/output/
