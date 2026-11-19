@@ -381,15 +381,15 @@ export const appRouter = router({
         const correlationId = `reg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
         // Soft-deleted emails cannot register again (same contact-admin message as login).
-        // auth.register is excluded from the outer request scope, so open a scoped tx here.
+        // auth.register is excluded from the outer request scope and runs as `anon`,
+        // which cannot SELECT agricoop_app.users — use the SECURITY DEFINER probe.
         await withRequestDatabaseScope(null, async () => {
           const db = await getDb();
-          const [deleted] = await db
-            .select({ id: users.id })
-            .from(users)
-            .where(and(eq(users.email, input.email.toLowerCase()), sql`${users.deletedAt} is not null`))
-            .limit(1);
-          if (deleted) {
+          const rows = await db.execute(sql`
+            select agricoop_app.email_has_deleted_user(${input.email.toLowerCase()}) as "deleted"
+          `);
+          const [row] = Array.from(rows as unknown as Array<{ deleted: boolean }>);
+          if (row?.deleted) {
             throw new TRPCError({ code: "FORBIDDEN", message: accountInactiveMessage() });
           }
         });

@@ -106,7 +106,18 @@ function registrationDb(
       })),
     })),
     insert: vi.fn(() => ({ values: vi.fn().mockResolvedValue(undefined) })),
-    execute: profileExecute,
+    execute: vi.fn(async (query: any) => {
+      let sqlText = "";
+      try {
+        sqlText = pgDialect.sqlToQuery(query).sql;
+      } catch {
+        sqlText = "";
+      }
+      if (/email_has_deleted_user/i.test(sqlText)) {
+        return [{ deleted: Boolean(options.softDeleted) }];
+      }
+      return profileExecute(query);
+    }),
   };
 }
 
@@ -347,7 +358,16 @@ describe("public registration role policy and verification", () => {
           })),
         })),
       })),
-      execute: profileExecute,
+      execute: vi.fn(async (query: any) => {
+        let sqlText = "";
+        try {
+          sqlText = pgDialect.sqlToQuery(query).sql;
+        } catch {
+          sqlText = "";
+        }
+        if (/email_has_deleted_user/i.test(sqlText)) return [{ deleted: false }];
+        return profileExecute(query);
+      }),
     };
     mocks.getDb.mockResolvedValue(orphanDb);
 
