@@ -8,7 +8,6 @@ import { logAuthDiagnostic } from "@/lib/authSession";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import AdminRefundManagement from "@/components/AdminRefundManagement";
-const DashboardAnalytics = lazy(() => import("@/components/analytics/DashboardAnalytics").then(m => ({ default: m.DashboardAnalytics })));
 import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
 import { StatusPill } from "@/components/StatusPill";
 import AdminShell from "@/components/AdminShell";
@@ -42,6 +41,7 @@ import { FormEvent, lazy, ReactNode, Suspense, useEffect, useMemo, useState } fr
 import { toast } from "sonner";
 import { Link, useLocation, useSearch } from "wouter";
 
+const DashboardAnalytics = lazy(() => import("@/components/analytics/DashboardAnalytics").then(m => ({ default: m.DashboardAnalytics })));
 const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
 const when = (value: Date | string | null) => formatDateManila(value);
 const Status = StatusPill;
