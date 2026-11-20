@@ -1,5 +1,5 @@
 import type { Session } from "@supabase/supabase-js";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 import { PageFrame, shellContainerClass } from "@/components/AgriShell";
@@ -358,8 +358,11 @@ export default function Auth() {
     }
   };
 
+  const submitInFlight = useRef(false);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
     if (!isSupabaseConfigured) {
       toast.error("Supabase Auth is not configured for this deployment. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
       return;
@@ -395,6 +398,7 @@ export default function Auth() {
       const message = error instanceof Error ? error.message : "Authentication failed.";
       toast.error(message);
     } finally {
+      submitInFlight.current = false;
       setBusy(false);
     }
   };

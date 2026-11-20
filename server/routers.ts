@@ -61,7 +61,7 @@ import {
 } from "./paymentOptions";
 import { isStorageKeyWithinPrefix, isStoragePublicUrlWithinPrefix, storageCreateSignedUploadUrl, storageDeleteObject, storageDeletePublicUrl, storageDownloadPrivateObject, storageDownloadPrivateProof, storageGet, storageGetSignedUrl, storageKeyFromPublicUrlWithinPrefix, storagePut } from "./storage";
 import { quotationResponseInputSchema } from "../shared/quotation";
-import { findAuthUserByEmail, getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupabaseEmail, RegistrationCleanupError, RegistrationRateLimitError, registrationRateLimiter, provisionAuthAccount } from "./registration";
+import { findAuthUserByEmail, getClientIp, getEmailVerificationRedirectUrl, isDuplicateSignupError, isVerifiedSupabaseEmail, RegistrationCleanupError, RegistrationRateLimitError, registrationRateLimiter, provisionAuthAccount } from "./registration";
 import { canRequestCooperativeAssociation, canReviewCooperativeAssociation, cooperativeAssociationRequestBlock } from "./cooperativeAssociations";
 import { canAccessSupportTicket, canAssignSupportTicket, canTransitionSupportTicketStatus, resolveSupportTicketCooperativeId, supportTicketStatusAfterReply } from "./supportTickets";
 import {
@@ -379,7 +379,9 @@ export const appRouter = router({
       .input(publicRegistrationInputSchema)
       .mutation(async ({ input, ctx }) => {
         try {
-          registrationRateLimiter.consume("register", ctx.req.ip, input.email);
+          // IP throttle runs early; the per-email quota is only consumed right before
+          // account creation so failed validations don't burn a legitimate user's allowance.
+          registrationRateLimiter.consume("register", getClientIp(ctx.req), undefined);
         } catch (error) {
           if (error instanceof RegistrationRateLimitError) {
             throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
@@ -439,6 +441,14 @@ export const appRouter = router({
             code: "INTERNAL_SERVER_ERROR",
             message: `Unable to start registration. Please try again later. (ref: ${correlationId})`,
           });
+        }
+        try {
+          registrationRateLimiter.consume("register", undefined, input.email);
+        } catch (error) {
+          if (error instanceof RegistrationRateLimitError) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
+          }
+          throw error;
         }
         // Prefer admin.createUser (email_confirm:false) so Auth account creation does not block on
         // SMTP delivery. Public signUp previously hung past the Vercel 30s limit under email

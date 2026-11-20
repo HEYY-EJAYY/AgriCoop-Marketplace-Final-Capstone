@@ -35,7 +35,7 @@ const rateLimits: Record<RegistrationAction, {
   emailWindowMs: number;
 }> = {
   register: {
-    ipLimit: 5,
+    ipLimit: 10,
     ipWindowMs: 15 * 60 * 1000,
     emailLimit: 3,
     emailWindowMs: 60 * 60 * 1000,
@@ -78,7 +78,7 @@ export class RegistrationRateLimiter {
   consume(
     action: RegistrationAction,
     ipAddress: string | undefined,
-    subject: string | { userId: number },
+    subject?: string | { userId: number },
   ) {
     const now = this.now();
     this.attempts.forEach((attempt, key) => {
@@ -86,13 +86,16 @@ export class RegistrationRateLimiter {
     });
 
     const limits = rateLimits[action];
-    const identifiers: Array<{ key: string; limit: number; windowMs: number }> = [
-      {
-        key: `${action}:ip:${hashRateLimitIdentifier(ipAddress?.trim() || "unknown")}`,
+    const identifiers: Array<{ key: string; limit: number; windowMs: number }> = [];
+    // Only count an IP identifier when one was actually resolved. Falling back to a
+    // shared "unknown" bucket would rate-limit every user on the platform together.
+    if (ipAddress !== undefined) {
+      identifiers.push({
+        key: `${action}:ip:${hashRateLimitIdentifier(ipAddress.trim() || "unknown")}`,
         limit: limits.ipLimit,
         windowMs: limits.ipWindowMs,
-      },
-    ];
+      });
+    }
     if (typeof subject === "string" && limits.emailLimit > 0) {
       identifiers.push({
         key: `${action}:email:${hashRateLimitIdentifier(subject.trim().toLowerCase())}`,
@@ -126,6 +129,22 @@ export class RegistrationRateLimiter {
 }
 
 export const registrationRateLimiter = new RegistrationRateLimiter();
+
+/** Resolve the client IP without trusting arbitrary client-supplied headers. */
+export function getClientIp(req: { ip?: string; headers?: Record<string, unknown> } | undefined): string | undefined {
+  const direct = req?.ip?.trim();
+  if (direct) return direct;
+  const vercelForwarded = req?.headers?.["x-vercel-forwarded-for"];
+  const first = Array.isArray(vercelForwarded) ? vercelForwarded[0] : vercelForwarded;
+  const vercelIp = typeof first === "string" ? first.split(",")[0]?.trim() : undefined;
+  if (vercelIp) return vercelIp;
+  const forwarded = req?.headers?.["x-forwarded-for"];
+  const forwardedFirst = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  const forwardedIp = typeof forwardedFirst === "string" ? forwardedFirst.split(",")[0]?.trim() : undefined;
+  if (forwardedIp) return forwardedIp;
+  const realIp = req?.headers?.["x-real-ip"];
+  return typeof realIp === "string" && realIp.trim() ? realIp.trim() : undefined;
+}
 
 export function getEmailVerificationRedirectUrl(appUrl: string | undefined) {
   if (!appUrl?.trim()) throw new Error("APP_URL is required for email verification.");
