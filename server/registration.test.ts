@@ -495,7 +495,7 @@ describe("public registration role policy and verification", () => {
     expect(() => limiter.consume("register", "192.0.2.23", "BUYER@example.test"))
       .toThrow(RegistrationRateLimitError);
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       limiter.consume("register", "192.0.2.30", `buyer-${attempt}@example.test`);
     }
     expect(() => limiter.consume("register", "192.0.2.30", "another@example.test"))
