@@ -414,3 +414,44 @@ export function transactionStatusFor(paymentReferenceNote?: string, paymentStatu
   if (paymentStatus === "awaiting_verification") return "pending" as const;
   return paymentReferenceNote ? "payment_coordinated" as const : "recorded" as const;
 }
+
+export type OfficerApprovalItem = {
+  productId: number;
+  quantity: number;
+  fulfillmentType: string | null;
+  stockQty: number;
+  name: string;
+};
+
+const SELLER_CONFIRMATION_LABELS: Record<string, string> = {
+  pending: "awaiting the seller's response",
+  available: "confirmed available",
+  partially_available: "only partially available",
+  unavailable: "reported unavailable",
+  needs_clarification: "needs clarification",
+};
+
+export function evaluateOfficerApproval(input: {
+  items: OfficerApprovalItem[];
+  reservedByOthers: Map<number, number>;
+  sellerConfirmationStatus: string | null;
+}): string | null {
+  const orderBased = input.items.filter(item => item.fulfillmentType === "order_based");
+  if (orderBased.length > 0 && input.sellerConfirmationStatus !== "available") {
+    const state = input.sellerConfirmationStatus
+      ? SELLER_CONFIRMATION_LABELS[input.sellerConfirmationStatus] ?? input.sellerConfirmationStatus
+      : "not yet requested";
+    return `This order contains made-to-order items and the seller confirmation is ${state}. Request seller confirmation and wait for an available response before approving.`;
+  }
+  const shortages = input.items
+    .filter(item => item.fulfillmentType !== "order_based")
+    .filter(item => {
+      const reserved = input.reservedByOthers.get(item.productId) ?? 0;
+      return item.stockQty - reserved < item.quantity;
+    })
+    .map(item => item.name);
+  if (shortages.length > 0) {
+    return `Insufficient available stock for: ${shortages.join(", ")}. Request seller confirmation or adjust the order before approving.`;
+  }
+  return null;
+}

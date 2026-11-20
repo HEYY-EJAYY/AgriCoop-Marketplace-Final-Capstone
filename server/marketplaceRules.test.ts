@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertPaymentConfirmed, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason, reconcilePaymentAmount, STOCK_RESERVING_ORDER_STATUSES, transactionStatusFor } from "./marketplaceRules";
+import { aggregateOrderItems, applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertPaymentConfirmed, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, evaluateOfficerApproval, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason, reconcilePaymentAmount, STOCK_RESERVING_ORDER_STATUSES, transactionStatusFor } from "./marketplaceRules";
 
 const products = [
   { id: 1, sellerId: 12, cooperativeId: 3, stockQty: 20, minOrderQty: 2, priceCents: 5500, unit: "kg", status: "published", name: "Fresh Cabbage" },
@@ -327,5 +327,68 @@ describe("quotation workflow rule", () => {
   it("prevents a farmer from creating a transaction against their own listing", () => {
     expect(() => assertNotSelfTransaction(12, 12)).toThrow("own listing");
     expect(() => assertNotSelfTransaction(12, 22)).not.toThrow();
+  });
+});
+
+describe("officer order approval gating", () => {
+  const baseItem = { productId: 1, quantity: 5, fulfillmentType: "on_hand", stockQty: 20, name: "Fresh Cabbage" };
+
+  it("allows direct approval for on-hand items with sufficient unreserved stock", () => {
+    expect(evaluateOfficerApproval({
+      items: [baseItem],
+      reservedByOthers: new Map([[1, 10]]),
+      sellerConfirmationStatus: null,
+    })).toBeNull();
+  });
+
+  it("blocks approval when on-hand stock reserved by other orders is insufficient", () => {
+    const issue = evaluateOfficerApproval({
+      items: [baseItem],
+      reservedByOthers: new Map([[1, 16]]),
+      sellerConfirmationStatus: null,
+    });
+    expect(issue).toContain("Insufficient available stock");
+    expect(issue).toContain("Fresh Cabbage");
+  });
+
+  it("blocks approval of made-to-order items until the seller confirms availability", () => {
+    const orderBased = { ...baseItem, fulfillmentType: "order_based", stockQty: 0 };
+    for (const status of [null, "pending", "partially_available", "unavailable", "needs_clarification"]) {
+      expect(evaluateOfficerApproval({
+        items: [orderBased],
+        reservedByOthers: new Map(),
+        sellerConfirmationStatus: status,
+      })).toContain("made-to-order");
+    }
+  });
+
+  it("allows approval of made-to-order items once the seller reports available", () => {
+    expect(evaluateOfficerApproval({
+      items: [{ ...baseItem, fulfillmentType: "order_based", stockQty: 0 }],
+      reservedByOthers: new Map(),
+      sellerConfirmationStatus: "available",
+    })).toBeNull();
+  });
+
+  it("requires every mixed-cart item to satisfy its own rule before approval", () => {
+    const mixed = [
+      baseItem,
+      { productId: 2, quantity: 3, fulfillmentType: "order_based", stockQty: 0, name: "Organic Honey" },
+    ];
+    expect(evaluateOfficerApproval({
+      items: mixed,
+      reservedByOthers: new Map(),
+      sellerConfirmationStatus: "pending",
+    })).toContain("made-to-order");
+    expect(evaluateOfficerApproval({
+      items: mixed,
+      reservedByOthers: new Map([[1, 18]]),
+      sellerConfirmationStatus: "available",
+    })).toContain("Insufficient available stock");
+    expect(evaluateOfficerApproval({
+      items: mixed,
+      reservedByOthers: new Map(),
+      sellerConfirmationStatus: "available",
+    })).toBeNull();
   });
 });

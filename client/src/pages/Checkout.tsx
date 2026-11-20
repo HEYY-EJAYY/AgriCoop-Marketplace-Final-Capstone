@@ -430,6 +430,15 @@ export default function Checkout() {
   }, [sellerMap, availability]);
 
   const [choices, setChoices] = useState<Map<number, SellerGroupChoice>>(initialChoices);
+  const [delivery, setDelivery] = useState({
+    recipientName: "",
+    contactNumber: "",
+    province: "",
+    city: "",
+    barangay: "",
+    streetAddress: "",
+    instructions: "",
+  });
 
   useEffect(() => {
     setChoices(initialChoices);
@@ -453,11 +462,30 @@ export default function Checkout() {
     const choice = choices.get(sellerId);
     return Boolean(choice && methodsForListings(listingFlags(items), availability).includes(choice.paymentMethod));
   });
+  const needsCodAddress = Array.from(choices.values()).some(choice => choice.paymentMethod === "cash_delivery");
+  const codAddressComplete = Boolean(
+    delivery.recipientName.trim().length >= 2
+    && delivery.contactNumber.trim().length >= 7
+    && delivery.province.trim().length >= 2
+    && delivery.city.trim().length >= 2
+    && delivery.barangay.trim().length >= 2
+    && delivery.streetAddress.trim().length >= 5,
+  );
+  const deliveryPayload = {
+    recipientName: delivery.recipientName.trim(),
+    contactNumber: delivery.contactNumber.trim(),
+    province: delivery.province.trim(),
+    city: delivery.city.trim(),
+    barangay: delivery.barangay.trim(),
+    streetAddress: delivery.streetAddress.trim(),
+    instructions: delivery.instructions.trim() || undefined,
+  };
   const canSubmit = Boolean(
     cart
     && choices.size === sellerMap.size
     && allChoicesAvailable
     && allOnlineHaveReceipt
+    && (!needsCodAddress || codAddressComplete)
     && !submitting
     && !isCartLoading,
   );
@@ -488,6 +516,7 @@ export default function Checkout() {
           paymentMethod: choice.paymentMethod,
           fulfillmentMethod: choice.fulfillmentMethod,
           receiptUploadIntent: choice.receiptUploadIntent,
+          deliveryDetails: choice.paymentMethod === "cash_delivery" ? deliveryPayload : undefined,
           buyerNote:
             choice.paymentMethod === "online"
               ? "Buyer paid via the AgriCoop QR; receipt attached at checkout."
@@ -635,6 +664,38 @@ export default function Checkout() {
               <p className="mt-3 text-xs leading-5 text-[#4d6854]">
                 You will place {sellerMap.size} separate orders—one per seller.
               </p>
+            )}
+            {needsCodAddress && (
+              <div className="mt-5 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4">
+                <h3 className="text-sm font-bold text-[#315640]">Delivery address for cash on delivery</h3>
+                <p className="mt-1 text-xs text-[#6c7c70]">Required before you can submit. This address is saved with the order.</p>
+                <div className="mt-3 grid gap-3">
+                  <label className="field-label text-xs">Recipient name
+                    <input className="field-control" value={delivery.recipientName} onChange={event => setDelivery({ ...delivery, recipientName: event.target.value })} />
+                  </label>
+                  <label className="field-label text-xs">Contact number
+                    <input className="field-control" inputMode="tel" value={delivery.contactNumber} onChange={event => setDelivery({ ...delivery, contactNumber: event.target.value })} />
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="field-label text-xs">Province / region
+                      <input className="field-control" value={delivery.province} onChange={event => setDelivery({ ...delivery, province: event.target.value })} />
+                    </label>
+                    <label className="field-label text-xs">City / municipality
+                      <input className="field-control" value={delivery.city} onChange={event => setDelivery({ ...delivery, city: event.target.value })} />
+                    </label>
+                  </div>
+                  <label className="field-label text-xs">Barangay
+                    <input className="field-control" value={delivery.barangay} onChange={event => setDelivery({ ...delivery, barangay: event.target.value })} />
+                  </label>
+                  <label className="field-label text-xs">Street, house no., subdivision
+                    <input className="field-control" value={delivery.streetAddress} onChange={event => setDelivery({ ...delivery, streetAddress: event.target.value })} />
+                  </label>
+                  <label className="field-label text-xs">Delivery instructions (optional)
+                    <input className="field-control" value={delivery.instructions} onChange={event => setDelivery({ ...delivery, instructions: event.target.value })} />
+                  </label>
+                </div>
+                {!codAddressComplete && <p className="mt-2 text-xs text-[#8c574c]">Complete all required address fields to place a cash-on-delivery order.</p>}
+              </div>
             )}
             <button
               type="button"

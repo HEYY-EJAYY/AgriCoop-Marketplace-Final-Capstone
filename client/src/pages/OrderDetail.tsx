@@ -74,6 +74,16 @@ type OrderDetailPayload = {
     fulfillmentMethod?: string | null;
     totalCents: number;
     buyerNote?: string | null;
+    sellerConfirmationStatus?: string | null;
+    deliveryDetails?: {
+      recipientName?: string;
+      contactNumber?: string;
+      province?: string;
+      city?: string;
+      barangay?: string;
+      streetAddress?: string;
+      instructions?: string;
+    } | null;
     createdAt: Date | string;
     updatedAt?: Date | string | null;
   };
@@ -237,6 +247,15 @@ export default function OrderDetail() {
   const receiptUrl = proof?.signedUrl || proof?.evidenceUrl || null;
   const paymentMethod = order.paymentMethod || payment?.paymentMethod || null;
   const paymentStatus = order.paymentStatus || payment?.status || null;
+  const deliveryDetails = order.deliveryDetails as {
+    recipientName?: string;
+    contactNumber?: string;
+    province?: string;
+    city?: string;
+    barangay?: string;
+    streetAddress?: string;
+    instructions?: string;
+  } | null;
 
   const role = user?.role;
   const isSeller = role === "seller";
@@ -354,6 +373,14 @@ export default function OrderDetail() {
             <p className="mt-4 rounded-xl bg-[#f2f6ef] p-3 text-sm text-[#45614e]">
               <span className="font-bold">Buyer note:</span> {order.buyerNote}
             </p>
+          )}
+          {deliveryDetails && (
+            <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4 text-sm text-[#45614e]">
+              <p className="font-bold text-[#315640]">Delivery address</p>
+              <p className="mt-1">{deliveryDetails.recipientName} · {deliveryDetails.contactNumber}</p>
+              <p>{[deliveryDetails.streetAddress, deliveryDetails.barangay, deliveryDetails.city, deliveryDetails.province].filter(Boolean).join(", ")}</p>
+              {deliveryDetails.instructions && <p className="mt-1 italic">Instructions: {deliveryDetails.instructions}</p>}
+            </div>
           )}
         </section>
 

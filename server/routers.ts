@@ -7,7 +7,7 @@ import { formatEnumLabel } from "../shared/enumLabels";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCashReceipt, canManageCooperativeResource, canManageRefundRecord, canRecordCashReceipt, canReviewPaymentProof, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, canVerifyPaymentRecord, isPaymentOrderConsistent, isPaymentTransactionConsistent, isSellerApproved, requireOperationalRole } from "./authz";
-import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertOrderCanAcceptPaymentProof, assertPaymentProofReadyForReview, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason } from "./marketplaceRules";
+import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertOrderCanAcceptPaymentProof, assertPaymentProofReadyForReview, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, evaluateOfficerApproval, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason } from "./marketplaceRules";
 import {
   getAdminOverview,
   getBuyerOrders,
@@ -1984,12 +1984,24 @@ export const appRouter = router({
         fulfillmentMethod: z.enum(["pickup", "delivery"]).optional(),
         paymentOptionId: z.number().int().positive().optional(),
         receiptUploadIntent: z.string().min(1).max(2048).optional(),
+        deliveryDetails: z.object({
+          recipientName: z.string().trim().min(2).max(120),
+          contactNumber: z.string().trim().min(7).max(40),
+          province: z.string().trim().min(2).max(80),
+          city: z.string().trim().min(2).max(80),
+          barangay: z.string().trim().min(2).max(80),
+          streetAddress: z.string().trim().min(5).max(300),
+          instructions: z.string().trim().max(300).optional(),
+        }).strict().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const paymentMethod = normalizePaymentMethodInput(input.paymentMethod);
         if (!paymentMethod) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a valid payment method." });
+        }
+        if (paymentMethod === "cash_delivery" && !input.deliveryDetails) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "A complete delivery address is required for cash on delivery." });
         }
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
@@ -2165,6 +2177,7 @@ export const appRouter = router({
             paymentMethod,
             fulfillmentMethod,
             paymentStatus: initialPaymentStatus,
+            deliveryDetails: paymentMethod === "cash_delivery" ? input.deliveryDetails : null,
           }).returning({ id: orders.id });
           await tx.insert(transactions).values({
             orderId: newOrder.id,
@@ -2384,6 +2397,48 @@ export const appRouter = router({
               throw new TRPCError({ code: "BAD_REQUEST", message });
             }
 
+            if (orderRow.status === "submitted" && input.status === "confirmed") {
+              if (actor.role === "seller") {
+                throw new TRPCError({ code: "FORBIDDEN", message: "Orders must be reviewed and approved by a cooperative officer before the seller can confirm fulfillment." });
+              }
+              const approvalItems = await tx.select({
+                productId: orderItems.productId,
+                quantity: orderItems.quantity,
+                fulfillmentType: orderItems.fulfillmentType,
+                stockQty: products.stockQty,
+                productFulfillmentType: products.fulfillmentType,
+                name: products.name,
+              }).from(orderItems)
+                .innerJoin(products, eq(orderItems.productId, products.id))
+                .where(eq(orderItems.orderId, input.orderId));
+              const approvalProductIds = Array.from(new Set(approvalItems.map(item => item.productId)));
+              const reservedByProduct = approvalProductIds.length
+                ? await getOpenOrderReservationQuantities(tx, approvalProductIds)
+                : new Map<number, number>();
+              const ownReserved = new Map<number, number>();
+              for (const item of approvalItems) {
+                ownReserved.set(item.productId, (ownReserved.get(item.productId) ?? 0) + item.quantity);
+              }
+              const reservedByOthers = new Map<number, number>();
+              reservedByProduct.forEach((reserved, productId) => {
+                reservedByOthers.set(productId, Math.max(0, reserved - (ownReserved.get(productId) ?? 0)));
+              });
+              const approvalIssue = evaluateOfficerApproval({
+                items: approvalItems.map(item => ({
+                  productId: item.productId,
+                  quantity: item.quantity,
+                  fulfillmentType: item.fulfillmentType ?? item.productFulfillmentType,
+                  stockQty: item.stockQty,
+                  name: item.name,
+                })),
+                reservedByOthers,
+                sellerConfirmationStatus: orderRow.sellerConfirmationStatus,
+              });
+              if (approvalIssue) {
+                throw new TRPCError({ code: "PRECONDITION_FAILED", message: approvalIssue });
+              }
+            }
+
             const previousStatus = orderRow.status;
             if (input.status === "completed") {
               const orderedItems = await tx.select().from(orderItems)
@@ -2577,6 +2632,9 @@ export const appRouter = router({
             throw new TRPCError({ code: "CONFLICT", message: "Seller availability can only be requested while the order is still open." });
           }
           const note = input.note?.trim() || null;
+          await tx.update(orders)
+            .set({ sellerConfirmationStatus: "pending" })
+            .where(eq(orders.id, order.id));
           await tx.insert(orderEvents).values({
             orderId: order.id,
             actorUserId: actor.id,
@@ -2631,6 +2689,9 @@ export const appRouter = router({
             throw new TRPCError({ code: "CONFLICT", message: "This order is already closed." });
           }
           const note = input.note?.trim() || null;
+          await tx.update(orders)
+            .set({ sellerConfirmationStatus: input.response })
+            .where(eq(orders.id, order.id));
           const detail = [
             `response=${input.response}`,
             input.availableQuantity !== undefined ? `availableQuantity=${input.availableQuantity}` : null,
@@ -4119,9 +4180,10 @@ export const appRouter = router({
     setFulfillmentClassification: protectedProcedure
       .input(z.object({
         productId: z.number().int().positive(),
-        fulfillmentType: z.enum(FULFILLMENT_TYPES),
+        fulfillmentType: z.enum(FULFILLMENT_TYPES).optional(),
         prepTimeDays: z.number().int().min(1).max(90).nullable().optional(),
         capacityNote: z.string().trim().max(300).nullable().optional(),
+        category: z.string().trim().min(1).max(80).optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
@@ -4134,19 +4196,26 @@ export const appRouter = router({
             fulfillmentType: products.fulfillmentType,
             prepTimeDays: products.prepTimeDays,
             capacityNote: products.capacityNote,
+            category: products.category,
           }).from(products).where(eq(products.id, input.productId)).for("update").limit(1);
           if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
           if (!canManageCooperativeResource(actor, product.cooperativeId)) {
             throw new TRPCError({ code: "FORBIDDEN", message: "You cannot classify a product outside your cooperative." });
           }
-          const changed = product.fulfillmentType !== input.fulfillmentType
-            || (product.prepTimeDays ?? null) !== (input.prepTimeDays ?? null)
-            || (product.capacityNote ?? null) !== (input.capacityNote?.trim() || null);
+          const nextFulfillmentType = input.fulfillmentType ?? product.fulfillmentType ?? "on_hand";
+          const nextPrepTimeDays = input.prepTimeDays !== undefined ? input.prepTimeDays : product.prepTimeDays;
+          const nextCapacityNote = input.capacityNote !== undefined ? (input.capacityNote?.trim() || null) : product.capacityNote;
+          const nextCategory = input.category !== undefined ? input.category.trim() : product.category;
+          const changed = product.fulfillmentType !== nextFulfillmentType
+            || (product.prepTimeDays ?? null) !== (nextPrepTimeDays ?? null)
+            || (product.capacityNote ?? null) !== (nextCapacityNote ?? null)
+            || product.category !== nextCategory;
           if (changed) {
             await tx.update(products).set({
-              fulfillmentType: input.fulfillmentType,
-              prepTimeDays: input.prepTimeDays ?? null,
-              capacityNote: input.capacityNote?.trim() || null,
+              fulfillmentType: nextFulfillmentType,
+              prepTimeDays: nextPrepTimeDays ?? null,
+              capacityNote: nextCapacityNote ?? null,
+              category: nextCategory,
             }).where(eq(products.id, product.id));
             await recordAuditLog(tx, {
               actorUserId: actor.id,
@@ -4156,19 +4225,22 @@ export const appRouter = router({
               cooperativeId: product.cooperativeId,
               metadata: {
                 from: product.fulfillmentType,
-                to: input.fulfillmentType,
-                prepTimeDays: input.prepTimeDays ?? null,
+                to: nextFulfillmentType,
+                prepTimeDays: nextPrepTimeDays ?? null,
+                category: { from: product.category, to: nextCategory },
               },
             });
-            await createNotification(tx, {
-              userId: product.sellerId,
-              type: "product_fulfillment_classified",
-              title: "Listing fulfillment updated",
-              content: `A cooperative officer set this listing to ${input.fulfillmentType === "order_based" ? "Order-Based (prepared after order)" : "On-Hand (ready stock)"}.`,
-              link: "/dashboard",
-              relatedEntityId: product.id,
-              relatedEntityType: "product",
-            });
+            if (product.fulfillmentType !== nextFulfillmentType) {
+              await createNotification(tx, {
+                userId: product.sellerId,
+                type: "product_fulfillment_classified",
+                title: "Listing fulfillment updated",
+                content: `A cooperative officer set this listing to ${nextFulfillmentType === "order_based" ? "Order-Based (prepared after order)" : "On-Hand (ready stock)"}.`,
+                link: "/dashboard",
+                relatedEntityId: product.id,
+                relatedEntityType: "product",
+              });
+            }
           }
           return { success: true, changed };
         });
