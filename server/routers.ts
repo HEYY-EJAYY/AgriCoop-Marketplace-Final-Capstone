@@ -2531,7 +2531,7 @@ export const appRouter = router({
       return getSystemPaymentAvailability(db);
     }),
     getSettings: protectedProcedure.query(async ({ ctx }) => {
-      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      requireOperationalRole(ctx.user, ["superadmin"]);
       const db = await dbOrThrow();
       return ensureSystemPaymentSettings(db);
     }),
@@ -2542,7 +2542,7 @@ export const appRouter = router({
         onlineEnabled: z.boolean(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         await ensureSystemPaymentSettings(db);
         await db.update(systemPaymentSettings).set({
@@ -2561,7 +2561,7 @@ export const appRouter = router({
         return { success: true };
       }),
     listAccounts: protectedProcedure.query(async ({ ctx }) => {
-      requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      requireOperationalRole(ctx.user, ["superadmin"]);
       const db = await dbOrThrow();
       const accounts = await db.select().from(systemOnlinePaymentAccounts)
         .orderBy(desc(systemOnlinePaymentAccounts.updatedAt), desc(systemOnlinePaymentAccounts.id));
@@ -2591,7 +2591,7 @@ export const appRouter = router({
         instructions: z.string().trim().max(2000).optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         const [created] = await db.insert(systemOnlinePaymentAccounts).values({
           label: input.label,
@@ -2620,7 +2620,7 @@ export const appRouter = router({
         instructions: z.string().trim().max(2000).optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         const updated = await db.update(systemOnlinePaymentAccounts).set({
           label: input.label,
@@ -2645,7 +2645,7 @@ export const appRouter = router({
     activateAccount: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         await db.transaction(async tx => {
           const [account] = await tx.select({
@@ -2683,7 +2683,7 @@ export const appRouter = router({
     archiveAccount: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         const db = await dbOrThrow();
         const archived = await db.update(systemOnlinePaymentAccounts).set({
           isActive: false,
@@ -2711,7 +2711,7 @@ export const appRouter = router({
         base64: z.string().min(1).max(Math.ceil(PAYMENT_PROOF_MAX_BYTES / 3) * 4),
       }).strict())
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["superadmin"]);
         if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "The selected QR image is invalid." });
         }

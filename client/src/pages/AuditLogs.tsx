@@ -1,4 +1,4 @@
-import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { shellContainerClass } from "@/components/AgriShell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
@@ -26,13 +26,13 @@ export default function AuditLogs() {
   if (user.role !== "admin" && user.role !== "superadmin") return <Redirect to="/dashboard" />;
 
   return <>
-    <WorkspaceHeader
-      title="Audit logs"
-      description={user.role === "superadmin"
-        ? "Platform-wide append-only activity for SuperAdmin review."
-        : "Cooperative-scoped append-only activity for your assigned cooperative."}
-    />
-    <main className={`${shellContainerClass} py-8`}>
+    <div className={`${shellContainerClass} space-y-6`}>
+      <div>
+        <h1 className="font-display text-2xl font-bold text-[#264f37]">Security &amp; audit logs</h1>
+        <p className="mt-1 text-sm text-[#6a796e]">{user.role === "superadmin"
+          ? "Platform-wide append-only activity for SuperAdmin review."
+          : "Cooperative-scoped append-only activity for your assigned cooperative."}</p>
+      </div>
       <form
         className="mb-6 flex flex-wrap gap-3 agri-card p-4"
         onSubmit={event => {
@@ -84,6 +84,6 @@ export default function AuditLogs() {
       ) : (
         <p className="agri-card p-8 text-center text-sm text-[#6d7d70]">No audit events match these filters.</p>
       )}
-    </main>
+    </div>
   </>;
 }

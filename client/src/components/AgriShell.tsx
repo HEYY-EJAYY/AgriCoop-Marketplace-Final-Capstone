@@ -113,7 +113,7 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function NotificationBell() {
+export function NotificationBell() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const utils = trpc.useUtils();
@@ -200,7 +200,7 @@ function NotificationBell() {
   );
 }
 
-function ProfileMenu({ onNavigate }: { onNavigate?: () => void }) {
+export function ProfileMenu({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [photoBroken, setPhotoBroken] = useState(false);

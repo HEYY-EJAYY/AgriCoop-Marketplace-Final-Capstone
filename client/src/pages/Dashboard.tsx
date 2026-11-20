@@ -10,7 +10,8 @@ import { trpc } from "@/lib/trpc";
 import AdminRefundManagement from "@/components/AdminRefundManagement";
 import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
 import { StatusPill } from "@/components/StatusPill";
-import { AdminWorkspaceTabs, type AdminWorkspaceTabId } from "@/components/AdminWorkspaceTabs";
+import AdminShell from "@/components/AdminShell";
+import { adminNavForRole, adminSectionFromSearch } from "@/navigation/adminNav";
 import { OfficerApplicationsPanel } from "@/components/OfficerApplicationsPanel";
 import { AddAccountDialog } from "@/components/AddAccountDialog";
 import { CooperativeDuplicateNotice } from "@/components/CooperativeDuplicateNotice";
@@ -37,7 +38,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { AlertCircle, BarChart3, Check, ClipboardList, Download, FileText, Leaf, Loader2, LucideIcon, MessageCircle, Package, Plus, Store, Users, QrCode } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 
 const peso = (cents: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
 const when = (value: Date | string | null) => formatDateManila(value);
@@ -1556,6 +1557,196 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
   );
 }
 
+function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
+  const { user } = useAuth();
+  const utils = trpc.useUtils();
+  const overviewQuery = trpc.admin.overview.useQuery();
+  const overview = overviewQuery.data;
+  const [addAccountOpen, setAddAccountOpen] = useState(false);
+  const [usersFilter, setUsersFilter] = useState<"active" | "deleted">("active");
+  const [deleteUserTarget, setDeleteUserTarget] = useState<{
+    id: number;
+    name: string | null;
+    email: string | null;
+    role: string;
+    listingCount: number;
+    openOrderCount: number;
+  } | null>(null);
+  const updateUser = trpc.admin.updateUser.useMutation({
+    onSuccess: () => {
+      toast.success("User settings saved.");
+      utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const softDeleteUser = trpc.admin.softDeleteUser.useMutation({
+    onSuccess: () => {
+      toast.success("User deleted.");
+      setDeleteUserTarget(null);
+      void utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_DELETE_USER_ERROR)),
+  });
+  const restoreUser = trpc.admin.restoreUser.useMutation({
+    onSuccess: () => {
+      toast.success("User restored.");
+      void utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const userDeletePreview = trpc.admin.userDeletePreview.useQuery(
+    { userId: deleteUserTarget?.id ?? 0 },
+    { enabled: Boolean(deleteUserTarget?.id) },
+  );
+  const isBuyer = scope === "buyer";
+  const title = isBuyer ? "Buyer management" : "Seller management";
+  const description = isBuyer
+    ? "Review and manage buyer accounts within your cooperative."
+    : "Review and manage seller accounts within your cooperative.";
+  const scopedUsers = (overview?.users ?? []).filter(row => row.user.role === scope);
+  const visibleUsers = scopedUsers.filter(row =>
+    usersFilter === "deleted" ? Boolean(row.user.deletedAt) : !row.user.deletedAt,
+  );
+  if (overviewQuery.isLoading) return <LoadingWorkspace />;
+  if (overviewQuery.error) {
+    return (
+      <QueryErrorState
+        message={overviewQuery.error.message}
+        isFetching={overviewQuery.isFetching}
+        onRetry={() => void overviewQuery.refetch()}
+      />
+    );
+  }
+  return (
+    <section className="agri-card overflow-hidden" data-testid={`member-management-${scope}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3 p-5 sm:p-6">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-[#264f37]">{title}</h2>
+          <p className="mt-1 text-sm text-[#6a796e]">{description} Scope: My cooperative.</p>
+          <div className="mt-3 flex gap-2" role="tablist" aria-label="User list filter">
+            <button type="button" role="tab" aria-selected={usersFilter === "active"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "active" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("active")}>Active</button>
+            <button type="button" role="tab" aria-selected={usersFilter === "deleted"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "deleted" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("deleted")}>Deleted</button>
+          </div>
+        </div>
+        <button type="button" className="agri-button min-h-11 text-sm" onClick={() => setAddAccountOpen(true)}>
+          Add account
+        </button>
+      </div>
+      <div className="overflow-x-auto border-t border-[#e3e9de]">
+        <table className="w-full min-w-[860px] text-left text-sm">
+          <thead className="bg-[#f1f6ee] text-xs uppercase tracking-wide text-[#718174]">
+            <tr>
+              <th className="p-3">User</th>
+              <th className="p-3">Role</th>
+              <th className="p-3">Cooperative</th>
+              <th className="p-3">Approval</th>
+              <th className="p-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {visibleUsers.map(row => (
+              <AdminUserRow
+                key={row.user.id}
+                user={row.user}
+                cooperativeName={row.cooperativeName}
+                cooperatives={overview?.cooperatives ?? []}
+                canAssignSuperAdmin={false}
+                currentUserId={user?.id}
+                currentUserRole={user?.role}
+                onSave={values => updateUser.mutate({ userId: row.user.id, ...values })}
+                onRequestDelete={target => setDeleteUserTarget({
+                  id: target.id,
+                  name: target.name,
+                  email: target.email,
+                  role: target.role,
+                  listingCount: 0,
+                  openOrderCount: 0,
+                })}
+                onRestore={userId => restoreUser.mutate({ userId })}
+              />
+            ))}
+          </tbody>
+        </table>
+        {!visibleUsers.length && (
+          <p className="p-8 text-center text-sm text-[#6d7d70]">
+            {usersFilter === "deleted" ? "No deleted users." : `No ${scope} accounts are available yet.`}
+          </p>
+        )}
+      </div>
+      <AddAccountDialog open={addAccountOpen} onClose={() => setAddAccountOpen(false)} />
+      <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteUserTarget?.name || deleteUserTarget?.email || "user"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Role: {deleteUserTarget?.role}. Listings: {userDeletePreview.data?.listingCount ?? "…"}. Open orders: {userDeletePreview.data?.openOrderCount ?? "…"}.
+              This soft-deletes the account, bans sign-in, hides their listings, and clears their cart. Orders stay intact.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#a34838]"
+              disabled={softDeleteUser.isPending || !deleteUserTarget}
+              onClick={() => {
+                if (deleteUserTarget) softDeleteUser.mutate({ userId: deleteUserTarget.id, confirm: true });
+              }}
+            >
+              Confirm delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
+function SystemHealthPanel() {
+  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  const [info, setInfo] = useState<{ status?: string; database?: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/health")
+      .then(response => response.json())
+      .then(data => {
+        if (cancelled) return;
+        setInfo(data);
+        setState("ok");
+      })
+      .catch(() => {
+        if (!cancelled) setState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return (
+    <section className="agri-card p-5 sm:p-6" data-testid="system-health-content">
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">System health</h2>
+      <p className="mt-1 text-sm text-[#6a796e]">Live status of the application API and database connection.</p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-[#f2f6ef] p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">API</p>
+          <p className={`mt-1 font-display text-xl font-bold ${state === "error" ? "text-[#a34838]" : "text-[#315640]"}`}>
+            {state === "loading" ? "Checking…" : state === "error" ? "Unreachable" : "Operational"}
+          </p>
+        </div>
+        <div className="rounded-xl bg-[#f2f6ef] p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">Database</p>
+          <p className={`mt-1 font-display text-xl font-bold ${state === "error" || info?.database !== "available" ? "text-[#a34838]" : "text-[#315640]"}`}>
+            {state === "loading" ? "Checking…" : state === "error" ? "Unknown" : info?.database === "available" ? "Available" : "Degraded"}
+          </p>
+        </div>
+      </div>
+      {state === "error" && (
+        <p className="mt-4 text-sm text-[#a34838]" role="alert">
+          The health endpoint could not be reached. Check the deployment and runtime logs.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function AdminDashboard() {
   const [sellerMode, setSellerMode] = useState(false);
   const [rejectingProductId, setRejectingProductId] = useState<number | null>(null);
@@ -1627,26 +1818,28 @@ function AdminDashboard() {
     { userId: deleteUserTarget?.id ?? 0 },
     { enabled: Boolean(deleteUserTarget?.id) },
   );
-  const adminTabs: AdminWorkspaceTabId[] = user?.role === "superadmin"
-    ? ["moderation", "orders", "quotations", "payments", "users", "applications"]
-    : ["moderation", "orders", "quotations", "payments", "users"];
+  const search = useSearch();
+  const allowedSections = useMemo(
+    () => new Set(adminNavForRole(user?.role).map(item => item.section).filter(Boolean) as string[]),
+    [user?.role],
+  );
+  const requestedSection = adminSectionFromSearch(search, user?.role);
+  const activeSection = allowedSections.has(requestedSection) ? requestedSection : "overview";
+  const [visitedSections, setVisitedSections] = useState<Set<string>>(() => new Set([activeSection]));
+  useEffect(() => {
+    setVisitedSections(prev => (prev.has(activeSection) ? prev : new Set(prev).add(activeSection)));
+  }, [activeSection]);
   if (sellerMode) return <SellerDashboard onExitSellerMode={() => setSellerMode(false)} />;
   if (isLoading) return <LoadingWorkspace />;
   if (overviewQuery.error) {
     return (
-      <>
-        <WorkspaceHeader
-          title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"}
-          description="Your authorized platform summary could not be loaded."
+      <AdminShell>
+        <QueryErrorState
+          message={overviewQuery.error.message}
+          isFetching={overviewQuery.isFetching}
+          onRetry={() => void overviewQuery.refetch()}
         />
-        <main className={`${shellContainerClass} py-8`}>
-          <QueryErrorState
-            message={overviewQuery.error.message}
-            isFetching={overviewQuery.isFetching}
-            onRetry={() => void overviewQuery.refetch()}
-          />
-        </main>
-      </>
+      </AdminShell>
     );
   }
 
@@ -1654,44 +1847,35 @@ function AdminDashboard() {
   const managedListings = overview?.products ?? [];
   const openOrders = overview?.orders.filter(order => order.status !== "completed" && order.status !== "cancelled") ?? [];
 
-  return (
-    <>
-      <WorkspaceHeader
-        title={user?.role === "superadmin" ? "System administration" : "Cooperative administration"}
-        description={
-          user?.role === "superadmin"
-            ? "Coordinate roles, cooperative assignments, and platform-wide marketplace oversight."
-            : "Manage listings and accounts within your assigned cooperative."
-        }
-      />
-      <div className={`${shellContainerClass} pt-5`}>
+  const overviewSection = (
+    <div className="space-y-6">
+      <div className="flex justify-end">
         <button className="agri-ghost text-sm" onClick={() => setSellerMode(true)}>Act as seller</button>
       </div>
-      <main className={`${shellContainerClass} py-8`}>
-        <div className="grid gap-4 md:grid-cols-4">
-          <Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users} />
-          <Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store} />
-          <Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package} />
-          <Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList} />
+      <div className="grid gap-4 md:grid-cols-4">
+        <Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users} />
+        <Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store} />
+        <Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package} />
+        <Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList} />
+      </div>
+      <section className="flex flex-wrap items-center justify-between gap-4 agri-card p-5 sm:p-6">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-[#264f37]">Payments</h2>
+          <p className="mt-1 text-sm text-[#6a796e]">Enable methods, manage the AgriCoop QR, and verify receipts in Payment Verification.</p>
         </div>
-        <section className="mt-8 flex flex-wrap items-center justify-between gap-4 agri-card p-5 sm:p-6">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-[#264f37]">Payments</h2>
-            <p className="mt-1 text-sm text-[#6a796e]">Enable methods, manage the AgriCoop QR, and verify receipts in the Payments tab.</p>
-          </div>
-          <Link href="/dashboard?tab=payments" className="agri-button text-sm no-underline">Open Payments</Link>
-        </section>
-        <AdminProfileVerificationQueue />
-        <AdminRefundManagement />
-        <AssociationRequestsManager />
-        {user?.role === "superadmin" && <RoleConflictsPanel />}
+        <Link href="/dashboard?section=payments" className="agri-button text-sm no-underline">Open Payment Verification</Link>
+      </section>
+      <AdminProfileVerificationQueue />
+      <AdminRefundManagement />
+      <AssociationRequestsManager />
+      {user?.role === "admin" && <CooperativesAdminPanel canCreateCooperative={false} />}
+      {user?.role === "superadmin" && <RoleConflictsPanel />}
+    </div>
+  );
 
-        <AddAccountDialog open={addAccountOpen} onClose={() => setAddAccountOpen(false)} />
-        <AdminWorkspaceTabs
-          visibleTabs={adminTabs}
-          panels={{
+  const panels: Record<string, ReactNode> = {
             applications: user?.role === "superadmin" ? <OfficerApplicationsPanel /> : null,
-            moderation: (
+            products: (
               <section className="agri-card overflow-hidden" data-testid="admin-moderation-content">
                 <div className="p-5 sm:p-6">
                   <h2 className="font-display text-2xl font-bold text-[#264f37]">Product verification queue</h2>
@@ -1912,10 +2096,37 @@ function AdminDashboard() {
                 </AlertDialog>
               </section>
             ),
-          }}
-        />
-      </main>
-    </>
+          };
+
+  const sectionViews: Record<string, ReactNode> = {
+    overview: overviewSection,
+    buyers: <MemberManagementPanel scope="buyer" />,
+    sellers: <MemberManagementPanel scope="seller" />,
+    users: panels.users,
+    orders: <div className="space-y-6">{panels.orders}{panels.quotations}</div>,
+    payments: user?.role === "superadmin" ? panels.payments : <AdminPaymentReviewQueue />,
+    products: panels.products,
+    applications: panels.applications,
+    cooperatives: <CooperativesAdminPanel canCreateCooperative={user?.role === "superadmin"} />,
+    settings: <AdminSystemPaymentsPanel />,
+    health: <SystemHealthPanel />,
+  };
+
+  return (
+    <AdminShell>
+      <div className="space-y-6">
+        {Array.from(visitedSections).map(sectionKey => {
+          const view = sectionViews[sectionKey];
+          if (view == null) return null;
+          return (
+            <div key={sectionKey} hidden={sectionKey !== activeSection} data-section={sectionKey}>
+              {view}
+            </div>
+          );
+        })}
+        <AddAccountDialog open={addAccountOpen} onClose={() => setAddAccountOpen(false)} />
+      </div>
+    </AdminShell>
   );
 }
 

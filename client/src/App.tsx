@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { PageFrame, marketingShellClass } from "@/components/AgriShell";
+import AdminShell from "@/components/AdminShell";
 import Home from "@/pages/Home";
 import Marketplace from "@/pages/Marketplace";
 import NotFound from "@/pages/NotFound";
@@ -54,9 +55,9 @@ function Router() {
       <Route path="/profile">{() => <LazyPage><Profile/></LazyPage>}</Route>
       <Route path="/support">{() => <LazyPage><Support/></LazyPage>}</Route>
       <Route path="/support-tickets">{() => <LazyPage><SupportTickets/></LazyPage>}</Route>
-      <Route path="/reports">{() => <LazyPage><Reports/></LazyPage>}</Route>
-      <Route path="/admin/payment-options">{() => <LazyPage><PaymentOptions/></LazyPage>}</Route>
-      <Route path="/admin/audit-logs">{() => <LazyPage><AuditLogs/></LazyPage>}</Route>
+      <Route path="/reports">{() => <LazyPage><AdminShell><Reports/></AdminShell></LazyPage>}</Route>
+      <Route path="/admin/payment-options">{() => <LazyPage><AdminShell><PaymentOptions/></AdminShell></LazyPage>}</Route>
+      <Route path="/admin/audit-logs">{() => <LazyPage><AdminShell><AuditLogs/></AdminShell></LazyPage>}</Route>
       <Route path="/dashboard">{() => <LazyPage><Dashboard/></LazyPage>}</Route>
       <Route path="/applications/cooperative-admin">{() => <LazyPage><CoopAdminApplication/></LazyPage>}</Route>
       <Route path="/404" component={NotFound}/>

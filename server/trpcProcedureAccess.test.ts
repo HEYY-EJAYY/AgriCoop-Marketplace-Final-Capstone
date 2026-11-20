@@ -169,6 +169,16 @@ describe("tRPC role × procedure access matrix", () => {
       .rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller("seller", 20).systemPayment.getSettings())
       .rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Platform payment settings/accounts are SuperAdmin-only; officers use cooperative payment options.
+    await expect(caller("admin", 12).systemPayment.getSettings())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("admin", 12).systemPayment.updateSettings({
+      cashPickupEnabled: true,
+      cashDeliveryEnabled: true,
+      onlineEnabled: false,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("superadmin").systemPayment.getSettings())
+      .resolves.toBeDefined();
   });
 
   it("lets sellers manage their own listings list", async () => {

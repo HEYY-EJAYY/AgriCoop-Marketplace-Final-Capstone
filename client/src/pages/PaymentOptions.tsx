@@ -1,6 +1,6 @@
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
+import { shellContainerClass } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, ImagePlus, Loader2, Pencil, QrCode, Trash2, Upload, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useState } from "react";
@@ -172,8 +172,7 @@ export default function PaymentOptions() {
   }
 
   return <>
-    <WorkspaceHeader title="Payment Options" description="Manage checkout instructions and QR images for your platform or cooperative."/>
-    <main className={`${shellContainerClass} py-8`}>
+    <div className={shellContainerClass}>
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link href="/dashboard" className="agri-ghost text-sm no-underline"><ArrowLeft size={16}/> Return to dashboard</Link>
         <button className="agri-button text-sm" disabled={Boolean(optionsError)} onClick={() => { setCreating(value => !value); setDraft(blankDraft()); }}>
@@ -215,7 +214,7 @@ export default function PaymentOptions() {
             <div className="flex gap-2"><button className="agri-ghost text-sm" onClick={() => setEditing({ id: option.id, methodName: option.methodName, accountName: option.accountName ?? "", accountNumber: option.accountNumber ?? "", qrImageUrl: option.qrImageUrl, instructions: option.instructions ?? "", isActive: option.isActive, cooperativeId: option.cooperativeId })}><Pencil size={15}/> Edit</button><button className="agri-ghost text-sm text-[#a34838]" disabled={deleteOption.isPending} onClick={() => setDeleteTarget({ id: option.id, methodName: option.methodName })}><Trash2 size={15}/> Delete</button></div>
           </div>}
         </article>)}</div>}
-    </main>
+    </div>
     <AlertDialog open={deleteTarget !== null} onOpenChange={open => {
       if (!open && !deleteOption.isPending) setDeleteTarget(null);
     }}>
