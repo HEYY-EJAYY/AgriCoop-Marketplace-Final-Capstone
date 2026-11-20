@@ -236,6 +236,7 @@ export const newProductSchema = z.object({
   allowsPickup: z.boolean().default(true),
   allowsDelivery: z.boolean().default(true),
   acceptsOnlinePayment: z.boolean().default(false),
+  onlinePaymentEnabled: z.boolean().default(true),
   fulfillmentType: z.enum(FULFILLMENT_TYPES).default("on_hand"),
   prepTimeDays: z.number().int().min(1).max(90).optional(),
   capacityNote: z.string().trim().max(300).optional(),
@@ -260,6 +261,7 @@ export const updateProductSchema = z.object({
   allowsPickup: z.boolean().optional(),
   allowsDelivery: z.boolean().optional(),
   acceptsOnlinePayment: z.boolean().optional(),
+  onlinePaymentEnabled: z.boolean().optional(),
   fulfillmentType: z.enum(FULFILLMENT_TYPES).optional(),
   prepTimeDays: z.number().int().min(1).max(90).nullable().optional(),
   capacityNote: z.string().trim().max(300).nullable().optional(),
@@ -1631,7 +1633,7 @@ export const appRouter = router({
                 "sellerId", "cooperativeId", name, category, variety, description, unit,
                 "priceCents", "stockQty", "minOrderQty", "qualityGrade", status,
                 "verificationStatus", visibility, "primaryImageUrl",
-                "allowsPickup", "allowsDelivery", "acceptsOnlinePayment",
+                "allowsPickup", "allowsDelivery", "acceptsOnlinePayment", "onlinePaymentEnabled",
                 "fulfillmentType", "prepTimeDays", "capacityNote"
               ) values (
                 ${seller.id},
@@ -1652,6 +1654,7 @@ export const appRouter = router({
                 ${productValues.allowsPickup},
                 ${productValues.allowsDelivery},
                 ${false},
+                ${productValues.onlinePaymentEnabled},
                 ${productValues.fulfillmentType},
                 ${productValues.prepTimeDays ?? null},
                 ${productValues.capacityNote ?? null}
@@ -2058,6 +2061,7 @@ export const appRouter = router({
             allowsPickup: product.allowsPickup ?? true,
             allowsDelivery: product.allowsDelivery ?? true,
             acceptsOnlinePayment: false,
+            onlinePaymentEnabled: product.onlinePaymentEnabled !== false,
           }));
           let checkoutReceipt: ReturnType<typeof verifyCheckoutReceiptUploadIntent> = null;
           let checkoutReceiptBytes: Buffer | null = null;
@@ -4191,6 +4195,7 @@ export const appRouter = router({
         prepTimeDays: z.number().int().min(1).max(90).nullable().optional(),
         capacityNote: z.string().trim().max(300).nullable().optional(),
         category: z.string().trim().min(1).max(80).optional(),
+        onlinePaymentEnabled: z.boolean().optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
@@ -4204,6 +4209,7 @@ export const appRouter = router({
             prepTimeDays: products.prepTimeDays,
             capacityNote: products.capacityNote,
             category: products.category,
+            onlinePaymentEnabled: products.onlinePaymentEnabled,
           }).from(products).where(eq(products.id, input.productId)).for("update").limit(1);
           if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
           if (!canManageCooperativeResource(actor, product.cooperativeId)) {
@@ -4213,16 +4219,19 @@ export const appRouter = router({
           const nextPrepTimeDays = input.prepTimeDays !== undefined ? input.prepTimeDays : product.prepTimeDays;
           const nextCapacityNote = input.capacityNote !== undefined ? (input.capacityNote?.trim() || null) : product.capacityNote;
           const nextCategory = input.category !== undefined ? input.category.trim() : product.category;
+          const nextOnlinePaymentEnabled = input.onlinePaymentEnabled ?? product.onlinePaymentEnabled ?? true;
           const changed = product.fulfillmentType !== nextFulfillmentType
             || (product.prepTimeDays ?? null) !== (nextPrepTimeDays ?? null)
             || (product.capacityNote ?? null) !== (nextCapacityNote ?? null)
-            || product.category !== nextCategory;
+            || product.category !== nextCategory
+            || (product.onlinePaymentEnabled ?? true) !== nextOnlinePaymentEnabled;
           if (changed) {
             await tx.update(products).set({
               fulfillmentType: nextFulfillmentType,
               prepTimeDays: nextPrepTimeDays ?? null,
               capacityNote: nextCapacityNote ?? null,
               category: nextCategory,
+              onlinePaymentEnabled: nextOnlinePaymentEnabled,
             }).where(eq(products.id, product.id));
             await recordAuditLog(tx, {
               actorUserId: actor.id,

@@ -67,6 +67,7 @@ function listingFlags(items: CheckoutCartItem[]) {
     allowsPickup: item.allowsPickup ?? true,
     allowsDelivery: item.allowsDelivery ?? true,
     acceptsOnlinePayment: item.acceptsOnlinePayment ?? false,
+    onlinePaymentEnabled: item.onlinePaymentEnabled !== false,
   }));
 }
 

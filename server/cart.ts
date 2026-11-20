@@ -38,6 +38,7 @@ async function loadCartRows(userId: number) {
       allowsPickup: products.allowsPickup,
       allowsDelivery: products.allowsDelivery,
       acceptsOnlinePayment: products.acceptsOnlinePayment,
+      onlinePaymentEnabled: products.onlinePaymentEnabled,
       primaryImageUrl: products.primaryImageUrl,
       status: products.status,
       verificationStatus: products.verificationStatus,
@@ -90,6 +91,7 @@ async function loadCartRows(userId: number) {
       allowsPickup: row.allowsPickup ?? true,
       allowsDelivery: row.allowsDelivery ?? true,
       acceptsOnlinePayment: row.acceptsOnlinePayment ?? false,
+      onlinePaymentEnabled: row.onlinePaymentEnabled ?? true,
       primaryImageUrl: row.primaryImageUrl ?? null,
     }));
 }

@@ -519,6 +519,7 @@ export async function getMarketplace(category?: string, sort: "asc" | "desc" = "
       allowsPickup: products.allowsPickup,
       allowsDelivery: products.allowsDelivery,
       acceptsOnlinePayment: products.acceptsOnlinePayment,
+      onlinePaymentEnabled: products.onlinePaymentEnabled,
       fulfillmentType: products.fulfillmentType,
       prepTimeDays: products.prepTimeDays,
       sellerName: users.name,

@@ -14,6 +14,8 @@ export type ListingPaymentFlags = {
   allowsDelivery: boolean;
   /** @deprecated Ignored for checkout availability; online is a system setting. Kept for legacy DTO compatibility. */
   acceptsOnlinePayment?: boolean;
+  /** Per-listing opt-out of online payment. Absent/true keeps existing behavior. */
+  onlinePaymentEnabled?: boolean;
 };
 
 /** Platform toggles + whether an active online account+QR exists. */
@@ -121,6 +123,7 @@ export function methodsForListings(
   const delivery = system.cashDeliveryEnabled && listings.every(l => l.allowsDelivery);
   const online = system.onlineEnabled
     && system.onlineAccountReady
+    && listings.every(listing => listing.onlinePaymentEnabled !== false)
     && (listings.every(listing => listing.allowsPickup) || listings.every(listing => listing.allowsDelivery));
   const methods: PaymentMethod[] = [];
   if (pickup) methods.push("cash_pickup");
@@ -152,6 +155,9 @@ export function paymentMethodAvailability(
     }
   }
   if (method === "online") {
+    if (listings.some(listing => listing.onlinePaymentEnabled === false)) {
+      return { available: false, reason: "Online payment is disabled for one or more items in this order." };
+    }
     if (!listings.every(listing => listing.allowsPickup) && !listings.every(listing => listing.allowsDelivery)) {
       return { available: false, reason: "These listings don't share a pickup or delivery option." };
     }

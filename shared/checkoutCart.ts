@@ -28,6 +28,7 @@ export const checkoutCartItemSchema = z.object({
   allowsPickup: z.boolean().default(true),
   allowsDelivery: z.boolean().default(true),
   acceptsOnlinePayment: z.boolean().default(false),
+  onlinePaymentEnabled: z.boolean().optional(),
   primaryImageUrl: z.string().nullable().optional(),
 });
 

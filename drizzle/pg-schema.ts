@@ -181,6 +181,7 @@ export const products = appSchema.table("products", {
   allowsPickup: boolean("allowsPickup").notNull().default(true),
   allowsDelivery: boolean("allowsDelivery").notNull().default(true),
   acceptsOnlinePayment: boolean("acceptsOnlinePayment").notNull().default(false),
+  onlinePaymentEnabled: boolean("onlinePaymentEnabled").notNull().default(true),
   fulfillmentType: varchar("fulfillmentType", { length: 20 }).notNull().default("on_hand"),
   prepTimeDays: integer("prepTimeDays"),
   capacityNote: text("capacityNote"),

@@ -158,6 +158,42 @@ export default function Home() {
             </div>
           </div>
         </section>
+
+        <section className={`${marketingShellClass} py-20`} data-testid="coop-recruitment">
+          <div className="agri-card grid gap-8 p-8 sm:p-10 lg:grid-cols-[1.2fr_.8fr] lg:items-center">
+            <div>
+              <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#3f5f28]">For agricultural cooperatives</p>
+              <h2 className="mt-3 font-display text-4xl font-bold tracking-tight text-[#1d4932]">
+                Bring your cooperative&apos;s harvest to more buyers.
+              </h2>
+              <p className="mt-4 max-w-2xl leading-7 text-[#58705e]">
+                Joining AgriCoop gives your cooperative a verified marketplace presence: list members&apos; produce, reach more
+                institutional and retail buyers, manage orders and payments in one place, and keep officer oversight on every
+                transaction — all while staying rooted in your community.
+              </p>
+              <ul className="mt-6 grid gap-2 text-sm text-[#4e6a59] sm:grid-cols-2">
+                <li className="flex items-center gap-2"><BadgeCheck size={16} className="text-[#3f5f28]" aria-hidden /> Verified member listings</li>
+                <li className="flex items-center gap-2"><BadgeCheck size={16} className="text-[#3f5f28]" aria-hidden /> Wider buyer reach</li>
+                <li className="flex items-center gap-2"><BadgeCheck size={16} className="text-[#3f5f28]" aria-hidden /> Order &amp; payment tools</li>
+                <li className="flex items-center gap-2"><BadgeCheck size={16} className="text-[#3f5f28]" aria-hidden /> Cooperative oversight</li>
+              </ul>
+            </div>
+            <div className="rounded-2xl border border-[#d9e5d3] bg-[#f5f9f1] p-6">
+              <h3 className="font-display text-xl font-bold text-[#214b35]">Interested in joining?</h3>
+              <p className="mt-2 text-sm leading-6 text-[#627266]">
+                Contact our team to discuss onboarding your cooperative.
+              </p>
+              <div className="mt-5 flex flex-col gap-3">
+                <a href="mailto:joanathancahiyang59@gmail.com" className="agri-button min-h-11 justify-center no-underline">
+                  Email joanathancahiyang59@gmail.com
+                </a>
+                <a href="mailto:daguinoderoll33@gmail.com" className="agri-ghost min-h-11 justify-center no-underline">
+                  Email daguinoderoll33@gmail.com
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
     </PageFrame>
   );
