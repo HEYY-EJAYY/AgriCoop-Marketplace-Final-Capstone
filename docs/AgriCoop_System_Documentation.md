@@ -109,6 +109,8 @@ Self-registration sets `seller` with `approvalStatus` **pending** until admin ap
 - Reports CSV exports: `/reports` page.
 - Audit log read (cooperative scope): `auditLogs.list` on `/admin/audit-logs`.
 - Support ticket staff workflows: `support.listAll`, `assign`, `reply`, `updateStatus`.
+- Order-specific OfficerAdmin–Seller messaging: `cooperativeAdmin.openSellerOrderThread` (Seller Confirmation request flow) and `conversations.openOfficerOrderThread` (Seller "Message Officer" action). Threads reuse the conversations table with the officer as `buyerId` participant and the seller as `sellerId`, deduplicated on the exact `(orderId, buyerId, sellerId)` triple; the real buyer cannot read these threads (`canAccessConversation` denies non-participants, verified HTTP 403).
+- Pending-activity dashboard cards (`PendingActivitySection role="officeradmin"`): orders to review, awaiting seller confirmation, payment proofs, open tickets — COUNT-only via `notifications.pendingCounts`, hidden at zero.
 
 Public signup may choose **Cooperative Admin** (displayed as Officer Admin) but that path never grants `admin` until SuperAdmin approval (§3.5). Officer Admins retain **global** Admin powers; cooperative-scoped Officer Admin is not implemented (`docs/UX_DECISIONS.md`).
 
@@ -125,6 +127,7 @@ Public signup may choose **Cooperative Admin** (displayed as Officer Admin) but 
 - Cooperative Admin applications queue: dashboard body tab `?tab=applications` → `officerApplications.pendingList` / `review` / `documentUrl` (SuperAdmin only).
 - Unscoped or platform-wide admin overview and audit where queries omit cooperative filter for superadmin.
 - Platform-scoped payment options and refund queues: `payments.refundQueue`, `recordRefund`, `updateRefundStatus`.
+- Pending-activity cards on the dashboard overview (`PendingActivitySection role="superadmin"`): product reviews, cooperative applications, profile verifications, and user approvals. Counts come from `notifications.pendingCounts` (COUNT-only, role-scoped); cards hide at zero and deep-link to the matching management section (`?section=products|applications|overview|users`).
 
 ### 3.5 Cooperative Admin application (no fifth role)
 
@@ -503,8 +506,8 @@ Root export: `appRouter` in `server/routers.ts`. All paths are invoked as `/api/
 
 | Router | Key procedures | Notes |
 |--------|----------------|-------|
-| `conversations` | `mine`, `messages`, `create`, `send` | Participant and staff access via `canAccessConversation` |
-| `notifications` | `mine`, `markRead` | User-scoped |
+| `conversations` | `mine`, `messages`, `create`, `send`, `openForOrder`, `openOfficerOrderThread` | Participant and staff access via `canAccessConversation`; order threads dedupe on exact `(orderId, buyerId, sellerId)` pair so OfficerAdmin–Seller coordination threads never collide with Buyer–Seller order chats |
+| `notifications` | `mine`, `pendingCounts`, `markRead` | User-scoped; `pendingCounts` returns separate unread notification/message/ticket counts plus role-scoped pending-activity counts used by dashboard cards and red nav badges |
 | `auditLogs` | `list` | admin/superadmin scoped |
 | `support` | ticket CRUD, assign, reply, `updateStatus` | Staff vs owner scopes |
 
@@ -671,7 +674,9 @@ Source: `docs/PERFORMANCE.md` (Lighthouse 12.6.1, Vercel region `sin1` aligned w
 | Realtime | In-process SSE broker does not scale across serverless instances | `docs/PROJECT_SUMMARY.md` |
 | Security gates | Production RLS/grants require ongoing verification | `docs/SECURITY_REVIEW.md` |
 | Performance | Mobile LCP above 2.5s lab target | `docs/PERFORMANCE.md` |
-| Component reuse | `OfficerDashboard` unused; admins share `AdminDashboard` | `docs/UX_AUDIT.md` |
+| Component reuse | `OfficerDashboard` removed (dead code); admins share `AdminDashboard` | `docs/UX_AUDIT.md` |
+| Messaging | In multi-officer cooperatives, OfficerAdmin–Seller order threads bind to the first approved admin of the cooperative | `conversations.openOfficerOrderThread` |
+| Email | No custom SMTP; Supabase Auth built-in email only — high bounce-rate warnings require dashboard/SMTP review by the project owner | Supabase Auth email logs |
 
 **Future work (documented, not implemented).** Defer Supabase client on public shell for mobile LCP; unify support IA; sanitize errors on remaining pages; optional dedicated order confirmation route.
 
