@@ -1956,6 +1956,12 @@ export const appRouter = router({
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
         const createdOrder = await db.transaction(async tx => {
+          const diag = await tx.execute(sql`
+            select current_user as role,
+                   current_setting('request.jwt.claim.sub', true) as jwt_sub,
+                   agricoop_app.current_app_user_id() as app_user_id
+          `);
+          console.error("[orders.create] scope diag", JSON.stringify(Array.from(diag as any)));
           const currentProducts = await tx.select().from(products)
             .where(inArray(products.id, productIds))
             .orderBy(asc(products.id))
