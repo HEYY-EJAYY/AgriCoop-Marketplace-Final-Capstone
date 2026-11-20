@@ -146,7 +146,7 @@ export default function Home() {
               {[
                 ["Buyers", "Discover crops, compare prices, arrange orders, and request quotations."],
                 ["Farmers", "List harvests, maintain stock, respond to quotations, and fulfill orders."],
-                ["Officer Admins", "Validate members, monitor activity, and generate a clear operational view."],
+                ["OfficerAdmins", "Validate members, monitor activity, and generate a clear operational view."],
                 ["SuperAdmins", "Manage roles, cooperative assignments, and platform-wide coordination."],
               ].map(([role, body]) => (
                 <div key={role} className="rounded-2xl border border-[#d9e5d3] bg-[#fffdf8] p-5">

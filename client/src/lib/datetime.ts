@@ -22,6 +22,21 @@ const MANILA_TIME_ONLY_FORMATTER = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
+const MANILA_DATE_ISO_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: MANILA_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const MANILA_TIME_CSV_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: MANILA_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: true,
+});
+
 const RELATIVE_FORMATTER = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
 export function parseDate(value: Date | string | number | null | undefined): Date | null {
@@ -46,6 +61,18 @@ export function formatDateTimeManila(value: Date | string | number | null | unde
   const date = parseDate(value);
   if (!date) return "—";
   return MANILA_DATE_TIME_FORMATTER.format(date);
+}
+
+export function formatDateManilaIso(value: Date | string | number | null | undefined): string {
+  const date = parseDate(value);
+  if (!date) return "";
+  return MANILA_DATE_ISO_FORMATTER.format(date);
+}
+
+export function formatTimeManilaCsv(value: Date | string | number | null | undefined): string {
+  const date = parseDate(value);
+  if (!date) return "";
+  return MANILA_TIME_CSV_FORMATTER.format(date);
 }
 
 export function formatRelativeTime(value: Date | string | number | null | undefined, now = new Date()): string {

@@ -46,7 +46,6 @@ export const SUPERADMIN_NAV: AdminNavItem[] = [
   { id: "users", label: "User Management", icon: Users, section: "users" },
   { id: "officer-admins", label: "OfficerAdmin Management", icon: ShieldCheck, section: "applications" },
   { id: "cooperatives", label: "Cooperative Management", icon: Store, section: "cooperatives" },
-  { id: "payment-options", label: "Global Payment Options", icon: QrCode, href: "/admin/payment-options" },
   { id: "settings", label: "Website & Platform Settings", icon: Settings, section: "settings" },
   { id: "health", label: "System Health", icon: HeartPulse, section: "health" },
   { id: "audit", label: "Security & Audit Logs", icon: ScrollText, href: "/admin/audit-logs" },

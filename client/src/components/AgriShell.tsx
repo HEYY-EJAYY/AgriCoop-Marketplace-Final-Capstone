@@ -2,6 +2,16 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { goToAuth } from "@/const";
 import { Button } from "@/components/ui/button";
 import { NotificationQueryError } from "@/components/NotificationQueryError";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { formatUserRoleChip, roleDisplayLabel } from "@/lib/roleLabels";
 import { trpc } from "@/lib/trpc";
 import {
@@ -145,6 +155,7 @@ export function NotificationBell() {
     onError: () => toast.error("Could not delete the selected notifications. Please try again."),
   });
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const visibleNotifications = notifications.slice(0, 12);
   const allVisibleSelected = visibleNotifications.length > 0 && visibleNotifications.every(n => selected.has(n.id));
   const toggleSelected = (id: number) => setSelected(prev => {
@@ -202,11 +213,7 @@ export function NotificationBell() {
                     type="button"
                     className="font-semibold text-[#a34838] hover:underline disabled:opacity-50"
                     disabled={removeMut.isPending}
-                    onClick={() => {
-                      if (window.confirm(`Delete ${selected.size} notification${selected.size === 1 ? "" : "s"}?`)) {
-                        removeMut.mutate({ ids: Array.from(selected) });
-                      }
-                    }}
+                    onClick={() => setConfirmDelete(true)}
                   >
                     Delete
                   </button>
@@ -275,6 +282,26 @@ export function NotificationBell() {
           )}
         </div>
       )}
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete notifications?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Delete {selected.size} selected notification{selected.size === 1 ? "" : "s"}? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#a34838] text-white hover:bg-[#8f3d2f]"
+              disabled={removeMut.isPending}
+              onClick={() => removeMut.mutate({ ids: Array.from(selected) })}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

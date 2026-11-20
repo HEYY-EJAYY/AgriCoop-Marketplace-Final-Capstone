@@ -199,11 +199,11 @@ export default function CoopAdminApplication() {
   if (!user || user.role !== "buyer" || user.requestedRole !== "admin") {
     return (
       <>
-        <WorkspaceHeader title="Cooperative Admin application" description="Applicant access only." />
+        <WorkspaceHeader title="OfficerAdmin application" description="Applicant access only." />
         <main className={`${shellContainerClass} py-10`}>
           <div className="agri-card p-8 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Applicant access required</h1>
-            <p className="mt-3 text-[#65766b]">Register as Cooperative Admin, verify your email, then return here.</p>
+            <p className="mt-3 text-[#65766b]">Register as OfficerAdmin, verify your email, then return here.</p>
             <Link href="/dashboard" className="agri-button mt-6 inline-flex min-h-11 no-underline">Back to dashboard</Link>
           </div>
         </main>
@@ -214,8 +214,8 @@ export default function CoopAdminApplication() {
   return (
     <>
       <WorkspaceHeader
-        title="Complete your Cooperative Admin application"
-        description="Upload your ID and proof of position. Officer Admin access is granted only after SuperAdmin approval."
+        title="Complete your OfficerAdmin application"
+        description="Upload your ID and proof of position. OfficerAdmin access is granted only after SuperAdmin approval."
       />
       <main className={`${shellContainerClass} py-8`}>
         {pending ? (

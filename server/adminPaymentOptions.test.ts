@@ -166,27 +166,13 @@ describe("admin payment option router authorization", () => {
     );
   });
 
-  it("allows SuperAdmin uploads with platform-wide or selected-cooperative scope", async () => {
-    const platformDb = createDb([]);
-    mocks.getDb.mockResolvedValueOnce(platformDb.db);
-    await caller("superadmin", null).adminPayment.uploadQrImage(qrUpload);
-    expect(mocks.storagePut).toHaveBeenLastCalledWith(
-      expect.stringMatching(/^payment-options\/platform\/1\//),
-      expect.any(Buffer),
-      "image/png",
-    );
+  it("rejects SuperAdmin payment-option management (OfficerAdmin-only policy)", async () => {
+    const { db } = createDb([]);
+    mocks.getDb.mockResolvedValue(db);
 
-    const cooperativeDb = createDb([[{ id: 22 }]]);
-    mocks.getDb.mockResolvedValueOnce(cooperativeDb.db);
-    await caller("superadmin", null).adminPayment.uploadQrImage({
-      ...qrUpload,
-      cooperativeId: 22,
-    });
-    expect(mocks.storagePut).toHaveBeenLastCalledWith(
-      expect.stringMatching(/^payment-options\/cooperative-22\/1\//),
-      expect.any(Buffer),
-      "image/png",
-    );
+    await expect(caller("superadmin", null).adminPayment.uploadQrImage(qrUpload))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.storagePut).not.toHaveBeenCalled();
   });
 
   it("returns active options only when the submitted basket belongs to the requested cooperative", async () => {
@@ -565,21 +551,13 @@ describe("admin payment option router authorization", () => {
     expect(mocks.storageDeleteObject).not.toHaveBeenCalled();
   });
 
-  it("allows SuperAdmin deletion across cooperatives and deletes only the option's QR prefix", async () => {
-    const { db, conditions } = createDb([
-      [{ cooperativeId: 77, qrImagePath: "payment-options/cooperative-77/qr.png" }],
-      [],
-    ]);
+  it("rejects SuperAdmin deletion (OfficerAdmin-only policy)", async () => {
+    const { db } = createDb([]);
     mocks.getDb.mockResolvedValue(db);
 
     await expect(caller("superadmin", null).adminPayment.deleteOption({ id: 4 }))
-      .resolves.toMatchObject({ success: true });
-
-    expect(conditions[0].params).toEqual([4]);
-    expect(conditions[2].params).toEqual([4]);
-    expect(mocks.storageDeleteObject).toHaveBeenCalledWith(
-      "payment-options/cooperative-77/qr.png",
-      "payment-options/cooperative-77/",
-    );
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(db.delete).not.toHaveBeenCalled();
+    expect(mocks.storageDeleteObject).not.toHaveBeenCalled();
   });
 });

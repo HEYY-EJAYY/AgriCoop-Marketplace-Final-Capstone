@@ -8,7 +8,7 @@ export function roleDisplayLabel(role: string | null | undefined): string {
     case "seller":
       return "Seller";
     case "admin":
-      return "Officer Admin";
+      return "OfficerAdmin";
     case "superadmin":
       return "SuperAdmin";
     default:

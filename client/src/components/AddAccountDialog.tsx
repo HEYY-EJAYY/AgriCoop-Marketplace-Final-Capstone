@@ -124,7 +124,7 @@ export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
           <select className="field-control" value={role} onChange={e => setRole(e.target.value as typeof role)}>
             <option value="buyer">Buyer</option>
             <option value="seller">Seller</option>
-            {user?.role === "superadmin" && <option value="admin">Officer Admin</option>}
+            {user?.role === "superadmin" && <option value="admin">OfficerAdmin</option>}
           </select>
         </label>
         {needsCoop && (

@@ -51,7 +51,7 @@ function readImageAsBase64(file: File): Promise<string> {
 export default function PaymentOptions() {
   const { user, loading } = useAuth();
   const utils = trpc.useUtils();
-  const enabled = !loading && (user?.role === "admin" || user?.role === "superadmin");
+  const enabled = !loading && user?.role === "admin";
   const {
     data: options,
     isLoading,
@@ -59,10 +59,6 @@ export default function PaymentOptions() {
     error: optionsError,
     refetch: refetchOptions,
   } = trpc.adminPayment.listOptions.useQuery(undefined, { enabled });
-  const cooperativesQuery = trpc.cooperatives.list.useQuery(undefined, {
-    enabled: !loading && user?.role === "superadmin",
-  });
-  const cooperatives = cooperativesQuery.data ?? [];
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<PaymentOptionDraft>(blankDraft);
   const [editing, setEditing] = useState<{ id: number } & PaymentOptionDraft | null>(null);
@@ -163,8 +159,8 @@ export default function PaymentOptions() {
   if (loading) {
     return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
   }
-  if (!user || (user.role !== "admin" && user.role !== "superadmin")) {
-    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Payment management is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Only an approved Admin assigned to a cooperative or a SuperAdmin can manage payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
+  if (!user || user.role !== "admin") {
+    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Payment management is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Only an approved OfficerAdmin assigned to a cooperative can manage payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
   }
   const restriction = getAccountAccessRestriction(user);
   if (restriction) {
@@ -185,11 +181,6 @@ export default function PaymentOptions() {
         <label className="field-label">Account name (optional)<input maxLength={150} className="field-control" value={draft.accountName} onChange={event => setDraft({ ...draft, accountName: event.target.value })}/></label>
         <label className="field-label">Account number or identifier<input maxLength={100} className="field-control" value={draft.accountNumber} onChange={event => setDraft({ ...draft, accountNumber: event.target.value })}/></label>
         <label className="field-label">Payment instructions<textarea maxLength={5000} className="field-control" value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })}/></label>
-        {user.role === "superadmin" && <div>
-          <label className="field-label">Option scope<select className="field-control" value={draft.cooperativeId ?? ""} disabled={Boolean(draft.qrImageUrl) || cooperativesQuery.isLoading} onChange={event => setDraft(current => ({ ...current, cooperativeId: event.target.value ? Number(event.target.value) : null }))}><option value="">Platform-wide</option>{cooperatives.map(cooperative => <option key={cooperative.id} value={cooperative.id}>{cooperative.name}</option>)}</select></label>
-          {cooperativesQuery.isLoading && <p className="mt-1 text-xs text-[#718074]">Loading cooperative scopes…</p>}
-          {cooperativesQuery.error && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#a34838]"><span role="alert">Cooperative scopes could not be loaded: {cooperativesQuery.error.message}</span><button type="button" className="agri-ghost px-2 py-1" disabled={cooperativesQuery.isFetching} onClick={() => void cooperativesQuery.refetch()}>Retry</button></div>}
-        </div>}
         <label className="field-label">QR image (JPEG, PNG, WebP; up to 3 MB)<input type="file" accept="image/jpeg,image/png,image/webp" className="field-control" onChange={event => void uploadImage(event, draft.cooperativeId, url => setDraft(current => ({ ...current, qrImageUrl: url })))}/></label>
         {draft.qrImageUrl && <div className="flex items-start gap-3"><img src={draft.qrImageUrl} alt="Payment QR preview" className="h-28 w-28 rounded-xl border border-[#dce4d6] object-contain"/><button type="button" className="agri-ghost text-xs" onClick={() => setDraft(current => ({ ...current, qrImageUrl: null }))}>Remove preview</button></div>}
         <label className="field-label flex items-center gap-2"><input type="checkbox" checked={draft.isActive} onChange={event => setDraft({ ...draft, isActive: event.target.checked })}/> Available at checkout</label>

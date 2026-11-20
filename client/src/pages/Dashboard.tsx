@@ -645,12 +645,12 @@ function BuyerDashboard() {
           {officerApplication.data?.application.status === "pending" ? (
             <>
               <p className="font-bold text-[#2f5a3d]">Application waiting for approval</p>
-              <p className="mt-1 text-sm text-[#5f7164]">Your Cooperative Admin documents are under review. We will contact you once they are reviewed.</p>
+              <p className="mt-1 text-sm text-[#5f7164]">Your OfficerAdmin documents are under review. We will contact you once they are reviewed.</p>
             </>
           ) : (
             <>
-              <p className="font-bold text-[#2f5a3d]">Complete your Cooperative Admin application</p>
-              <p className="mt-1 text-sm text-[#5f7164]">Upload your ID and proof of position so a SuperAdmin can review Officer Admin access.</p>
+              <p className="font-bold text-[#2f5a3d]">Complete your OfficerAdmin application</p>
+              <p className="mt-1 text-sm text-[#5f7164]">Upload your ID and proof of position so a SuperAdmin can review OfficerAdmin access.</p>
               <Link href="/applications/cooperative-admin" className="agri-button mt-3 inline-flex min-h-11 text-sm no-underline">Open application</Link>
             </>
           )}
@@ -703,7 +703,7 @@ function SellerProductCard({ product, listingTab }: { product: any; listingTab: 
   const [imageUrls, setImageUrls] = useState<string[]>(product.imageUrls?.length ? product.imageUrls : product.primaryImageUrl ? [product.primaryImageUrl] : []);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imageError, setImageError] = useState("");
-  const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), qualityGrade: product.qualityGrade, status: product.status, allowsPickup: product.allowsPickup ?? true, allowsDelivery: product.allowsDelivery ?? true });
+  const [values, setValues] = useState({ name: product.name, category: product.category, variety: product.variety, description: product.description || "", unit: product.unit, price: String(product.priceCents / 100), stock: String(product.stockQty), minOrderQty: String(product.minOrderQty), qualityGrade: product.qualityGrade, status: product.status, allowsPickup: product.allowsPickup ?? true, allowsDelivery: product.allowsDelivery ?? true, fulfillmentType: product.fulfillmentType ?? "on_hand" });
   const update = trpc.products.update.useMutation({ onSuccess: result => { toast.success(result.reviewRequired ? "Listing changes submitted for review and hidden until approval." : "Listing and inventory updated."); setEditing(false); setImageFiles([]); utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); }, onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_SAVE_ERROR)) });
   const uploadImage = trpc.products.uploadImage.useMutation();
   const invalidateListings = () => { utils.products.mine.invalidate(); utils.marketplace.list.invalidate(); };
@@ -729,14 +729,14 @@ function SellerProductCard({ product, listingTab }: { product: any; listingTab: 
       const uploadedUrls = await uploadProductImageFiles(imageFiles, uploadImage.mutateAsync);
       const nextImageUrls = [...imageUrls, ...uploadedUrls];
       update.mutate(
-        { id: product.id, name: values.name, category: values.category, variety: values.variety, description: values.description, unit: values.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(values.price) * 100), stockQty: Number(values.stock), minOrderQty: Number(values.minOrderQty), qualityGrade: values.qualityGrade, status: values.status, allowsPickup: values.allowsPickup, allowsDelivery: values.allowsDelivery, imageUrls: nextImageUrls },
+        { id: product.id, name: values.name, category: values.category, variety: values.variety, description: values.description, unit: values.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(values.price) * 100), stockQty: Number(values.stock), minOrderQty: Number(values.minOrderQty), qualityGrade: values.qualityGrade, status: values.status, allowsPickup: values.allowsPickup, allowsDelivery: values.allowsDelivery, fulfillmentType: values.fulfillmentType, imageUrls: nextImageUrls },
         { onSuccess: () => setImageUrls(nextImageUrls) },
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Image upload failed.");
     }
   };
-  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ListingPaymentFlagFields allowsPickup={values.allowsPickup} allowsDelivery={values.allowsDelivery} onChange={patch => setValues({ ...values, ...patch })}/><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button min-h-11 px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
+  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ListingPaymentFlagFields allowsPickup={values.allowsPickup} allowsDelivery={values.allowsDelivery} onChange={patch => setValues({ ...values, ...patch })}/><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Fulfillment<select className="field-control" value={values.fulfillmentType} onChange={e => setValues({ ...values, fulfillmentType: e.target.value as "on_hand" | "order_based" })}><option value="on_hand">On-Hand · Ready Stock</option><option value="order_based">Order-Based · Prepared After Order</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button min-h-11 px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
   return <div className="rounded-2xl border border-[#e2e9dd] p-4"><div className="flex justify-between gap-3"><span className="rounded-full bg-[#eef5ea] px-2 py-1 text-xs font-bold text-[#4d784c]">{product.category}</span><Status value={product.verificationStatus || product.status}/></div>{product.cooperativeName && <p className="mt-2 text-xs font-bold text-[#5f7a5f]">{product.cooperativeName}</p>}<h3 className="mt-4 font-display text-xl font-bold text-[#28523a]">{product.name}</h3><p className="mt-1 text-sm text-[#647468]">{product.variety} · {peso(product.priceCents)} per {product.unit}</p><div className="mt-4 flex items-center justify-between border-t border-[#edf0e9] pt-3"><span className="text-xs font-bold text-[#607363]">Stock: {product.stockQty} {product.unit} · Minimum: {product.minOrderQty} {product.unit}</span><span className="text-xs text-[#688068]">{product.qualityGrade}</span></div><div className="mt-4 flex flex-wrap gap-3"><button onClick={() => setEditing(true)} className="agri-ghost px-3 py-2 text-xs">Edit listing</button>{product.verificationStatus !== "pending" && product.verificationStatus !== "approved" && <button onClick={() => submitProduct.mutate({ id: product.id })} className="agri-button px-3 py-2 text-xs">Submit for verification</button>}{listingTab === "active" && <button type="button" onClick={() => archive.mutate({ id: product.id })} disabled={archive.isPending} className="text-xs font-bold text-[#a34838]">Archive</button>}{listingTab === "archived" && <button type="button" onClick={() => unarchive.mutate({ id: product.id })} disabled={unarchive.isPending} className="agri-ghost px-3 py-2 text-xs">Unarchive</button>}<button type="button" onClick={() => { if (window.confirm(`Delete “${product.name}”? It will leave Active and Archived.`)) softDelete.mutate({ id: product.id }); }} disabled={softDelete.isPending} className="text-xs font-bold text-[#a34838]">Delete</button></div></div>;
 }
 function QuotationResponse({ row, onRespond }: { row: any; onRespond: (price: number, note: string | undefined, status: "responded" | "declined") => void }) {
@@ -783,6 +783,15 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   const [queueTab, setQueueTab] = useState<"active" | "archived">("active");
   const sellerEnabled = user?.role === "seller" || !!onExitSellerMode;
   const ordersQuery = trpc.orders.sellerMine.useQuery({ archived: queueTab === "archived" }, { enabled: sellerEnabled }); const { data: orders = [] } = ordersQuery;
+  const orderGroups = useMemo(() => {
+    const groups = new Map<number, { order: any; buyerName: string | null; items: (typeof orders)[number][] }>();
+    for (const row of orders) {
+      const existing = groups.get(row.order.id);
+      if (existing) existing.items.push(row);
+      else groups.set(row.order.id, { order: row.order, buyerName: row.buyerName, items: [row] });
+    }
+    return Array.from(groups.values());
+  }, [orders]);
   const sellerOrderCounts = trpc.orders.sellerMineCounts.useQuery(undefined, { enabled: sellerEnabled });
   const quotationsQuery = trpc.quotations.sellerMine.useQuery({ archived: queueTab === "archived" }, { enabled: sellerEnabled }); const { data: quotations = [] } = quotationsQuery;
   const quotationCounts = trpc.quotations.counts.useQuery({ side: "seller" }, { enabled: sellerEnabled });
@@ -796,7 +805,7 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   const needsCooperative = user?.cooperativeId == null || cooperativeRemoved;
   const sellerCooperativeName = assignedCooperative?.name
     ?? (cooperativeRemoved ? "Your cooperative was removed. Choose another before publishing new listings." : "Not assigned — request a cooperative before publishing");
-  const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true });
+  const emptyForm = () => ({ name: "", category: "Crop Production", variety: "", description: "", unit: "kg", price: "", stock: "", minOrderQty: "1", qualityGrade: "standard" as "premium" | "standard" | "imperfect", allowsPickup: true, allowsDelivery: true, fulfillmentType: "on_hand" as "on_hand" | "order_based" });
   const [openForm, setOpenForm] = useState(false); const [form, setForm] = useState(emptyForm); const [imageFiles, setImageFiles] = useState<File[]>([]); const [imageError, setImageError] = useState("");
   const [listingTab, setListingTab] = useState<"active" | "archived">("active");
   const activeListings = products.filter(product => product.status === "published" && !product.deletedAt);
@@ -815,7 +824,7 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
     }
     try {
       const imageUrls = await uploadProductImageFiles(imageFiles, uploadImage.mutateAsync);
-      create.mutate({ name: form.name, category: form.category, variety: form.variety, description: form.description, unit: form.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(form.price) * 100), stockQty: Number(form.stock), minOrderQty: Number(form.minOrderQty), qualityGrade: form.qualityGrade, allowsPickup: form.allowsPickup, allowsDelivery: form.allowsDelivery, imageUrls });
+      create.mutate({ name: form.name, category: form.category, variety: form.variety, description: form.description, unit: form.unit as typeof PRODUCT_UNITS[number], priceCents: Math.round(Number(form.price) * 100), stockQty: Number(form.stock), minOrderQty: Number(form.minOrderQty), qualityGrade: form.qualityGrade, allowsPickup: form.allowsPickup, allowsDelivery: form.allowsDelivery, fulfillmentType: form.fulfillmentType, imageUrls });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Image upload failed.");
     }
@@ -841,7 +850,7 @@ function SellerDashboard({ onExitSellerMode }: { onExitSellerMode?: () => void }
   if (productsQuery.isLoading || (user?.role === "seller" && (ordersQuery.isLoading || quotationsQuery.isLoading))) {
     return <LoadingWorkspace/>;
   }
-  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className={`${shellContainerClass} pt-5`}><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(activeListings.length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p>{needsCooperative && <p className="mt-2 text-sm font-semibold text-[#a34838]" role="alert">Your cooperative was removed or is not assigned. Choose another before publishing new listings.</p>}</div><button className="agri-button text-sm" disabled={needsCooperative} onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{needsCooperative && <div className="mt-4"><SellerAssociationRequestPanel/></div>}{openForm && !needsCooperative && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Cooperative<input readOnly className="field-control bg-white/70" value={sellerCooperativeName} aria-label="Listing cooperative"/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ListingPaymentFlagFields allowsPickup={form.allowsPickup} allowsDelivery={form.allowsDelivery} onChange={patch => setForm({ ...form, ...patch })}/><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:col-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div className="md:col-span-2 flex justify-center pt-1"><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 flex gap-2" role="tablist" aria-label="Listing status"><button type="button" role="tab" aria-selected={listingTab === "active"} className={`min-h-11 rounded-xl px-3 text-sm font-bold ${listingTab === "active" ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => setListingTab("active")}>Active ({activeListings.length})</button><button type="button" role="tab" aria-selected={listingTab === "archived"} className={`min-h-11 rounded-xl px-3 text-sm font-bold ${listingTab === "archived" ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => setListingTab("archived")}>Archived ({archivedListings.length})</button></div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : visibleListings.length ? visibleListings.map(product => <SellerProductCard key={product.id} product={product} listingTab={listingTab}/>) : <Empty icon={Package} title={listingTab === "archived" ? "No archived listings" : "No products published"} body={listingTab === "archived" ? "Archived harvests appear here until you unarchive or delete them." : "Add your first harvest to begin reaching buyers."}/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-3 flex gap-2" role="tablist" aria-label="Queue filter"><button type="button" role="tab" aria-selected={queueTab==="active"} className={`agri-ghost px-3 py-1.5 text-xs ${queueTab==="active"?"bg-[#edf3e9]":""}`} onClick={()=>setQueueTab("active")}>Active ({sellerOrderCounts.data?.active ?? 0})</button><button type="button" role="tab" aria-selected={queueTab==="archived"} className={`agri-ghost px-3 py-1.5 text-xs ${queueTab==="archived"?"bg-[#edf3e9]":""}`} onClick={()=>setQueueTab("archived")}>Archived ({sellerOrderCounts.data?.archived ?? 0})</button></div><div className="mt-5 space-y-3">{orders.length ? orders.map(row => <div key={`${row.order.id}-${row.item.id}`} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.buyerName || "Buyer"}</Link><p className="mt-1 text-xs text-[#6f7d72]">{row.productName} × {row.item.quantity} {row.unit} · {peso(row.item.unitPriceCents * row.item.quantity)}</p></div><Status value={row.order.status}/></div><div className="mt-3"><button type="button" className="agri-ghost min-h-11 px-3 py-2 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}><MessageCircle size={14}/> Message</button></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}<button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => sellerArchive.mutate({ orderIds: [row.order.id], action: queueTab === "active" ? "archive" : "unarchive" })}>{queueTab === "active" ? "Archive" : "Unarchive"}</button><button type="button" className="text-xs font-bold text-[#a34838]" onClick={() => sellerArchive.mutate({ orderIds: [row.order.id], action: "delete" })}>Delete</button><button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-2 text-sm text-[#6a796e]">{queueTab === "archived" ? "Archived" : "Active"} · {quotationCounts.data?.active ?? 0} active / {quotationCounts.data?.archived ?? 0} archived</div><div className="mt-2 flex gap-2" role="tablist" aria-label="Quotation queue filter"><button type="button" role="tab" className="agri-ghost px-3 py-1.5 text-xs" onClick={() => setQueueTab("active")}>Active</button><button type="button" role="tab" className="agri-ghost px-3 py-1.5 text-xs" onClick={() => setQueueTab("archived")}>Archived</button></div><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
+  return <><WorkspaceHeader title={onExitSellerMode ? "Seller workspace (acting as seller)" : "Farmer workspace"} description="Manage harvest listings, quotations, inventory, and fulfillment."/>{onExitSellerMode && <div className={`${shellContainerClass} pt-5`}><button className="agri-ghost text-sm" onClick={onExitSellerMode}>Return to Admin workspace</button></div>}<main className={`${shellContainerClass} py-8`}><div className="grid gap-4 md:grid-cols-3"><Metric label="Active listings" value={String(activeListings.length)} icon={Package}/><Metric label="Incoming orders" value={String(orders.filter(row => row.order.status === "submitted").length)} icon={ClipboardList}/><Metric label="Waiting quotations" value={String(quotations.filter(row => row.quotation.status === "requested").length)} icon={FileText}/></div><section className="mt-8 agri-card p-5 sm:p-6"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your produce listings</h2><p className="mt-1 text-sm text-[#6a796e]">Edit product details, manually update stock, or archive unavailable listings.</p>{needsCooperative && <p className="mt-2 text-sm font-semibold text-[#a34838]" role="alert">Your cooperative was removed or is not assigned. Choose another before publishing new listings.</p>}</div><button className="agri-button text-sm" disabled={needsCooperative} onClick={() => setOpenForm(!openForm)}><Plus size={17}/>{openForm ? "Close form" : "Add harvest"}</button></div>{needsCooperative && <div className="mt-4"><SellerAssociationRequestPanel/></div>}{openForm && !needsCooperative && <form onSubmit={submit} className="mt-6 grid gap-4 rounded-2xl bg-[#f1f6ee] p-5 md:grid-cols-2"><label className="field-label">Product name<input required className="field-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/></label><label className="field-label">Classification<input required className="field-control" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}/></label><label className="field-label">Cooperative<input readOnly className="field-control bg-white/70" value={sellerCooperativeName} aria-label="Listing cooperative"/></label><label className="field-label">Variety<input required list="new-product-varieties" className="field-control" value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}/><datalist id="new-product-varieties">{getProductVarieties(form.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label">Price per chosen unit (PHP)<input required min="0.01" step="0.01" type="number" className="field-control" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })}/></label><label className="field-label">Unit of measurement<select required className="field-control" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({form.unit})<input required min="1" step="1" type="number" className="field-control" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })}/></label><label className="field-label">Minimum order quantity ({form.unit})<input required min="1" max={form.stock} step="1" type="number" className="field-control" value={form.minOrderQty} onChange={e => setForm({ ...form, minOrderQty: e.target.value })}/>{Number(form.minOrderQty) > Number(form.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label><ListingPaymentFlagFields allowsPickup={form.allowsPickup} allowsDelivery={form.allowsDelivery} onChange={patch => setForm({ ...form, ...patch })}/><ProductImagePicker imageUrls={[]} files={imageFiles} onImageUrlsChange={() => undefined} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={create.isPending || uploadImage.isPending}/><label className="field-label">Quality grade<select className="field-control" value={form.qualityGrade} onChange={e => setForm({ ...form, qualityGrade: e.target.value as typeof form.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label md:col-span-2">Fulfillment<select className="field-control" value={form.fulfillmentType} onChange={e => setForm({ ...form, fulfillmentType: e.target.value as "on_hand" | "order_based" })}><option value="on_hand">On-Hand · Ready Stock</option><option value="order_based">Order-Based · Prepared After Order</option></select></label><label className="field-label md:col-span-2">Description<textarea required className="field-control min-h-29" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/></label><div className="md:col-span-2 flex justify-center pt-1"><button disabled={create.isPending || uploadImage.isPending || Boolean(imageError)} className="agri-button text-sm">{create.isPending || uploadImage.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Submit listing</button></div></form>}<div className="mt-6 flex gap-2" role="tablist" aria-label="Listing status"><button type="button" role="tab" aria-selected={listingTab === "active"} className={`min-h-11 rounded-xl px-3 text-sm font-bold ${listingTab === "active" ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => setListingTab("active")}>Active ({activeListings.length})</button><button type="button" role="tab" aria-selected={listingTab === "archived"} className={`min-h-11 rounded-xl px-3 text-sm font-bold ${listingTab === "archived" ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => setListingTab("archived")}>Archived ({archivedListings.length})</button></div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{isLoading ? <Loader2 className="m-8 animate-spin text-[#5d8a5e]"/> : visibleListings.length ? visibleListings.map(product => <SellerProductCard key={product.id} product={product} listingTab={listingTab}/>) : <Empty icon={Package} title={listingTab === "archived" ? "No archived listings" : "No products published"} body={listingTab === "archived" ? "Archived harvests appear here until you unarchive or delete them." : "Add your first harvest to begin reaching buyers."}/>}</div></section><section className="mt-8 grid gap-8 xl:grid-cols-2"><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Fulfillment queue</h2><div className="mt-3 flex gap-2" role="tablist" aria-label="Queue filter"><button type="button" role="tab" aria-selected={queueTab==="active"} className={`agri-ghost px-3 py-1.5 text-xs ${queueTab==="active"?"bg-[#edf3e9]":""}`} onClick={()=>setQueueTab("active")}>Active ({sellerOrderCounts.data?.active ?? 0})</button><button type="button" role="tab" aria-selected={queueTab==="archived"} className={`agri-ghost px-3 py-1.5 text-xs ${queueTab==="archived"?"bg-[#edf3e9]":""}`} onClick={()=>setQueueTab("archived")}>Archived ({sellerOrderCounts.data?.archived ?? 0})</button></div><div className="mt-5 space-y-3">{orderGroups.length ? orderGroups.map(group => { const row = group.items[0]; return <div key={group.order.id} className="rounded-xl bg-[#f2f6ef] p-4"><div className="flex flex-wrap justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#315640] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.buyerName || "Buyer"}</Link>{group.items.map(itemRow => <p key={itemRow.item.id} className="mt-1 text-xs text-[#6f7d72]">{itemRow.productName} × {itemRow.item.quantity} {itemRow.unit} · {peso(itemRow.item.unitPriceCents * itemRow.item.quantity)}</p>)}</div><Status value={row.order.status}/></div><div className="mt-3"><button type="button" className="agri-ghost min-h-11 px-3 py-2 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}><MessageCircle size={14}/> Message</button></div>{row.order.status !== "completed" && row.order.status !== "cancelled" && <div className="mt-4 flex flex-wrap gap-2">{row.order.status === "submitted" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "confirmed" })} className="agri-ghost px-3 py-2 text-xs">Confirm</button>}{row.order.status === "confirmed" && <button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "ready" })} className="agri-ghost px-3 py-2 text-xs">Mark ready</button>}{row.order.status === "ready" && <p className="self-center text-xs text-[#617467]">Ready for the cooperative officer to complete after fulfillment and payment.</p>}<button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => sellerArchive.mutate({ orderIds: [row.order.id], action: queueTab === "active" ? "archive" : "unarchive" })}>{queueTab === "active" ? "Archive" : "Unarchive"}</button><button type="button" className="text-xs font-bold text-[#a34838]" onClick={() => sellerArchive.mutate({ orderIds: [row.order.id], action: "delete" })}>Delete</button><button onClick={() => updateStatus.mutate({ orderId: row.order.id, status: "cancelled" })} className="text-xs font-bold text-[#a34838]">Cancel</button></div>}</div>; }) : <Empty icon={ClipboardList} title="No incoming orders" body="New buyer orders will appear here."/>}</div></div><div className="agri-card p-5 sm:p-6"><h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2><div className="mt-2 text-sm text-[#6a796e]">{queueTab === "archived" ? "Archived" : "Active"} · {quotationCounts.data?.active ?? 0} active / {quotationCounts.data?.archived ?? 0} archived</div><div className="mt-2 flex gap-2" role="tablist" aria-label="Quotation queue filter"><button type="button" role="tab" className="agri-ghost px-3 py-1.5 text-xs" onClick={() => setQueueTab("active")}>Active</button><button type="button" role="tab" className="agri-ghost px-3 py-1.5 text-xs" onClick={() => setQueueTab("archived")}>Archived</button></div><div className="mt-5 space-y-3">{quotations.length ? quotations.map(row => <QuotationResponse key={row.quotation.id} row={row} onRespond={(quotedPriceCents, sellerNote, status) => respond.mutate({ quotationId: row.quotation.id, quotedPriceCents, sellerNote, status })}/>) : <Empty icon={FileText} title="No quotation requests" body="Buyer quotation requests will be shown here."/>}</div></div></section></main></>;
 }
 
 function SellerVerificationWorkspace() {
@@ -1190,9 +1199,13 @@ function AdminOrdersPanel() {
   const statesQuery = trpc.cooperativeAdmin.orderThreadStates.useQuery();
   const [tab, setTab] = useState<OrderTabId>("pending");
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
   const updateOrderState = trpc.cooperativeAdmin.updateOrderState.useMutation({
     onSuccess: () => {
       toast.success("Order list updated.");
+      setSelected(new Set());
+      setConfirmBulkRemove(false);
       void utils.cooperativeAdmin.orderThreadStates.invalidate();
       void utils.admin.overview.invalidate();
     },
@@ -1217,6 +1230,14 @@ function AdminOrdersPanel() {
   });
   const pendingOrders = filtered.filter(order => order.status !== "completed" && order.status !== "cancelled");
   const closedOrders = filtered.filter(order => order.status === "completed" || order.status === "cancelled");
+  const listedOrders = tab === "pending" ? pendingOrders : closedOrders;
+  const removableSelected = listedOrders.filter(order => selected.has(order.id) && (order.status === "completed" || order.status === "cancelled"));
+  const allListedSelected = listedOrders.length > 0 && listedOrders.every(order => selected.has(order.id));
+  const toggleSelected = (id: number) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   return (
     <section className="agri-card p-5 sm:p-6" data-testid="admin-orders-content">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1246,16 +1267,71 @@ function AdminOrdersPanel() {
           </button>
         ))}
       </div>
+      {listedOrders.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-[#f2f6ef] px-3 py-2 text-xs text-[#4c5f52]">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={allListedSelected}
+              onChange={() => setSelected(allListedSelected ? new Set() : new Set(listedOrders.map(order => order.id)))}
+              aria-label="Select all listed orders"
+            />
+            Select all
+          </label>
+          {selected.size > 0 && <span>{selected.size} selected</span>}
+          {removableSelected.length > 0 && (
+            <button
+              type="button"
+              className="font-semibold text-[#a34838] hover:underline disabled:opacity-50"
+              disabled={updateOrderState.isPending}
+              onClick={() => setConfirmBulkRemove(true)}
+            >
+              Remove {removableSelected.length} completed/cancelled
+            </button>
+          )}
+          {selected.size > 0 && tab === "pending" && (
+            <span className="text-[#6c7c70]">Only completed or cancelled orders can be removed.</span>
+          )}
+        </div>
+      )}
       <div className="mt-5 space-y-3">
-        {(tab === "pending" ? pendingOrders : closedOrders).map(order => (
-          <AdminOrderCard key={order.id} orderId={order.id} />
+        {listedOrders.map(order => (
+          <div key={order.id} className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-4 shrink-0"
+              checked={selected.has(order.id)}
+              onChange={() => toggleSelected(order.id)}
+              aria-label={`Select order #${order.id}`}
+            />
+            <div className="min-w-0 flex-1"><AdminOrderCard orderId={order.id} /></div>
+          </div>
         ))}
-        {!(tab === "pending" ? pendingOrders : closedOrders).length && (
+        {!listedOrders.length && (
           <p className="py-5 text-center text-sm text-[#6d7d70]">
             {tab === "pending" ? "No orders are waiting for fulfillment." : tab === "complete" ? "No completed orders yet." : "No cancelled orders."}
           </p>
         )}
       </div>
+      <AlertDialog open={confirmBulkRemove} onOpenChange={setConfirmBulkRemove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {removableSelected.length} order{removableSelected.length === 1 ? "" : "s"} from the list?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This hides completed/cancelled orders from operational lists. Order, payment, and audit records stay preserved for accountability.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updateOrderState.isPending}>Keep orders</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={updateOrderState.isPending}
+              onClick={() => updateOrderState.mutate({ orderIds: removableSelected.map(order => order.id), action: "archive" })}
+            >
+              Remove from list
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
@@ -1853,6 +1929,16 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
 function SystemHealthPanel() {
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [info, setInfo] = useState<{ status?: string; database?: string } | null>(null);
+  const overview = trpc.admin.overview.useQuery();
+  const metrics = overview.data
+    ? {
+        users: overview.data.users.length,
+        cooperatives: overview.data.cooperatives.length,
+        listings: overview.data.products.length,
+        orders: overview.data.orders.length,
+        transactions: overview.data.transactions.length,
+      }
+    : null;
   useEffect(() => {
     let cancelled = false;
     fetch("/api/health")
@@ -1891,6 +1977,26 @@ function SystemHealthPanel() {
         <p className="mt-4 text-sm text-[#a34838]" role="alert">
           The health endpoint could not be reached. Check the deployment and runtime logs.
         </p>
+      )}
+      {metrics && (
+        <div className="mt-5">
+          <h3 className="text-sm font-bold text-[#315640]">Platform metrics</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {[
+              ["Users", metrics.users],
+              ["Cooperatives", metrics.cooperatives],
+              ["Listings", metrics.listings],
+              ["Orders", metrics.orders],
+              ["Transactions", metrics.transactions],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-[#e2e9dd] p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">{label}</p>
+                <p className="mt-1 font-display text-xl font-bold text-[#315640]">{value}</p>
+              </div>
+            ))}
+          </div>
+          {overview.isError && <p className="mt-2 text-xs text-[#a34838]">Platform metrics could not be loaded.</p>}
+        </div>
       )}
     </section>
   );
@@ -1932,6 +2038,14 @@ function AdminDashboard() {
   const hideListing = trpc.admin.hideListing.useMutation({
     onSuccess: () => {
       toast.success("Listing hidden from the marketplace.");
+      void utils.admin.overview.invalidate();
+      void utils.marketplace.list.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const setFulfillment = trpc.cooperativeAdmin.setFulfillmentClassification.useMutation({
+    onSuccess: () => {
+      toast.success("Fulfillment classification updated.");
       void utils.admin.overview.invalidate();
       void utils.marketplace.list.invalidate();
     },
@@ -2017,7 +2131,6 @@ function AdminDashboard() {
       <AdminProfileVerificationQueue />
       <AdminRefundManagement />
       <AssociationRequestsManager />
-      {user?.role === "admin" && <CooperativesAdminPanel canCreateCooperative={false} />}
       {user?.role === "superadmin" && <RoleConflictsPanel />}
     </div>
   );
@@ -2093,6 +2206,20 @@ function AdminDashboard() {
                         <div>
                           <p className="font-bold text-[#315640]">{product.name}</p>
                           <p className="text-xs text-[#6d7d70]">{formatCombinedEnumLabels(product.status, product.verificationStatus)} · {product.deletedAt ? "Deleted" : formatEnumLabel(product.visibility)}</p>
+                          {!product.deletedAt && (
+                            <label className="mt-2 flex items-center gap-2 text-xs text-[#4c5f52]">
+                              Fulfillment
+                              <select
+                                className="rounded-md border border-[#d7dfd1] bg-white px-1.5 py-1 text-xs"
+                                value={product.fulfillmentType ?? "on_hand"}
+                                disabled={setFulfillment.isPending}
+                                onChange={event => setFulfillment.mutate({ productId: product.id, fulfillmentType: event.target.value as "on_hand" | "order_based" })}
+                              >
+                                <option value="on_hand">On-Hand · Ready Stock</option>
+                                <option value="order_based">Order-Based · Prepared After Order</option>
+                              </select>
+                            </label>
+                          )}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
                           {!product.deletedAt && product.visibility !== "hidden" && (
@@ -2197,9 +2324,6 @@ function AdminDashboard() {
                     )}
                   </div>
                 </div>
-                {(user?.role === "admin" || user?.role === "superadmin") && (
-                  <CooperativesAdminPanel canCreateCooperative={user.role === "superadmin"} />
-                )}
                 <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
                   <AlertDialogContent>
                     <AlertDialogHeader>
@@ -2232,7 +2356,7 @@ function AdminDashboard() {
     buyers: <MemberManagementPanel scope="buyer" />,
     sellers: <MemberManagementPanel scope="seller" />,
     users: panels.users,
-    orders: <div className="space-y-6">{panels.orders}{panels.quotations}</div>,
+    orders: panels.orders,
     payments: user?.role === "superadmin" ? panels.payments : <AdminPaymentReviewQueue />,
     products: panels.products,
     applications: panels.applications,

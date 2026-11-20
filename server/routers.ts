@@ -4656,7 +4656,7 @@ export const appRouter = router({
         base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin"]);
         const db = await dbOrThrow();
         const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
         if (cooperativeId !== null) {
@@ -4695,7 +4695,7 @@ export const appRouter = router({
         isActive: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && actor.cooperativeId === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
@@ -4731,7 +4731,7 @@ export const appRouter = router({
         isActive: z.boolean(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && actor.cooperativeId === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
@@ -4799,7 +4799,7 @@ export const appRouter = router({
     deleteOption: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && actor.cooperativeId === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });

@@ -50,8 +50,36 @@ export default function Auth() {
   const [verificationEmail, setVerificationEmail] = useState("");
   const [resendNotice, setResendNotice] = useState("");
   const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
+  const [resetStage, setResetStage] = useState<"none" | "request" | "complete">("none");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const registerAccount = trpc.auth.register.useMutation();
   const resendVerification = trpc.auth.resendVerification.useMutation();
+
+  // Password recovery links land here with ?type=recovery (or #type=recovery).
+  // Supabase establishes the recovery session from the URL; detect it and
+  // switch to the reset form instead of the normal sign-in/register views.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const params = new URLSearchParams(window.location.search);
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const type = params.get("type") ?? fragment.get("type");
+    if (type !== "recovery") return;
+    let active = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      if (data.session) {
+        setEmail(data.session.user.email ?? "");
+        setResetStage("complete");
+      } else {
+        setResetStage("request");
+        setResendNotice("That password reset link is invalid or has expired. Request a new one below.");
+      }
+    }).catch(() => {
+      if (active) setResetStage("request");
+    });
+    return () => { active = false; };
+  }, []);
 
   const resolveApplicationSession = useCallback(async (session: Session) => {
     authSession.setLoginSession(session);
@@ -281,6 +309,52 @@ export default function Auth() {
     }
   };
 
+  const requestPasswordReset = async () => {
+    if (!email.trim()) {
+      toast.error("Enter the email address for your account.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth`,
+      });
+      if (error) throw error;
+      // Never reveal whether the email is registered.
+      setResendNotice("If an account exists for that email, a password reset link is on its way. Check your inbox and spam folder.");
+    } catch {
+      setResendNotice("If an account exists for that email, a password reset link is on its way. Check your inbox and spam folder.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitPasswordReset = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (newPassword.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      toast.success("Password updated. You can now sign in.");
+      setResetStage("none");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPassword("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update the password. The link may have expired — request a new one.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!isSupabaseConfigured) {
@@ -333,7 +407,7 @@ export default function Auth() {
   const roleHint = role === "seller"
     ? "Create a Seller / Farmer account. A cooperative is required; Seller access still needs approval."
     : role === "coop_admin"
-      ? "Create a Cooperative Admin application account. You start with Buyer access until SuperAdmin approves your documents."
+      ? "Create a OfficerAdmin application account. You start with Buyer access until SuperAdmin approves your documents."
       : "Create a Buyer account. You may link a cooperative during sign-up.";
 
   return <PageFrame>
@@ -391,7 +465,29 @@ export default function Auth() {
           <button type="button" className="agri-button mt-3 text-sm" onClick={returnToSignIn}>Continue to sign in</button>
         </section>}
 
-        {verificationState === "none" && <form onSubmit={submit} className="mt-6 space-y-4">
+        {resetStage === "request" && <section className="mt-6 rounded-xl border border-[#d6e5cb] bg-[#f2f8ee] p-4">
+          <h2 className="font-bold text-[#315640]">Reset your password</h2>
+          <p className="mt-2 text-sm leading-6 text-[#617467]">Enter your account email and we will send a secure reset link.</p>
+          <label className="field-label mt-3">Email<input required type="email" className="field-control" value={email} onChange={event => setEmail(event.target.value)} /></label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="agri-button text-sm" disabled={busy} onClick={() => void requestPasswordReset()}>{busy ? "Sending…" : "Send reset link"}</button>
+            <button type="button" className="agri-ghost text-sm" onClick={() => { setResetStage("none"); setResendNotice(""); }}>Back to sign in</button>
+          </div>
+          {resendNotice && <p role="status" className="mt-3 text-sm text-[#496b50]">{resendNotice}</p>}
+        </section>}
+
+        {resetStage === "complete" && <form onSubmit={submitPasswordReset} className="mt-6 space-y-4">
+          <h2 className="font-bold text-[#315640]">Choose a new password</h2>
+          <p className="text-sm leading-6 text-[#617467]">Enter a new password for {email || "your account"}. It must be at least 6 characters.</p>
+          <label className="field-label" htmlFor="auth-new-password">New password</label>
+          <PasswordVisibilityInput id="auth-new-password" required minLength={6} value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" />
+          <label className="field-label" htmlFor="auth-confirm-password">Confirm new password</label>
+          <PasswordVisibilityInput id="auth-confirm-password" required minLength={6} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" />
+          <button disabled={busy} className="agri-button w-full">{busy ? "Updating…" : "Update password"}</button>
+          <button type="button" className="w-full text-sm font-bold text-[#3c704b]" onClick={() => { setResetStage("none"); setPassword(""); }}>Cancel</button>
+        </form>}
+
+        {verificationState === "none" && resetStage === "none" && <form onSubmit={submit} className="mt-6 space-y-4">
           {register && <>
             <label className="field-label">Full name<input required className="field-control" value={name} onChange={event => setName(event.target.value)} /></label>
             <label className="field-label">Role
@@ -406,7 +502,7 @@ export default function Auth() {
               >
                 <option value="buyer">Buyer / Consumer</option>
                 <option value="seller">Seller / Farmer</option>
-                <option value="coop_admin">Cooperative Admin (Officer Admin)</option>
+                <option value="coop_admin">OfficerAdmin (OfficerAdmin)</option>
               </select>
             </label>
             <CooperativeSelect
@@ -466,8 +562,9 @@ export default function Auth() {
           <label className="field-label" htmlFor="auth-password">Password</label>
           <PasswordVisibilityInput id="auth-password" required minLength={6} value={password} onChange={event => setPassword(event.target.value)} autoComplete={register ? "new-password" : "current-password"} />
           <button disabled={busy} className="agri-button w-full">{busy ? "Please wait…" : register ? "Create account" : "Sign in"}</button>
+          {!register && <button type="button" className="w-full text-sm font-bold text-[#3c704b]" onClick={() => { setResetStage("request"); setResendNotice(""); }}>Forgot password?</button>}
         </form>}
-        {(verificationState === "none" || verificationState === "verified") && <button className="mt-5 w-full text-sm font-bold text-[#3c704b]" onClick={() => setRegister(!register)}>
+        {(verificationState === "none" || verificationState === "verified") && resetStage === "none" && <button className="mt-5 w-full text-sm font-bold text-[#3c704b]" onClick={() => setRegister(!register)}>
           {register ? "Already registered? Sign in" : "New to AgriCoop? Create an account"}
         </button>}
       </div>
