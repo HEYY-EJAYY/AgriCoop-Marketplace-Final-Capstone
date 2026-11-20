@@ -25,6 +25,7 @@ import {
   getSellerQuotations,
   getConversationMessages,
   getConversationsForUser,
+  getPendingActivityCounts,
   ensureOrderPaymentRecord,
   syncProfileRoleToApplicationRole,
   upsertUser,
@@ -4973,6 +4974,10 @@ export const appRouter = router({
   }),
 
   notifications: router({
+    pendingCounts: protectedProcedure.query(({ ctx }) => {
+      requireOperationalRole(ctx.user, ["buyer", "seller", "admin", "superadmin"]);
+      return getPendingActivityCounts(ctx.user);
+    }),
     mine: protectedProcedure.query(async ({ ctx }) => {
       const db = await dbOrThrow();
       return db.select().from(notifications)

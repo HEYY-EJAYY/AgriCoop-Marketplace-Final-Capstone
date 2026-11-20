@@ -37,7 +37,8 @@ import {
   Ticket,
   UserRound,
 } from "lucide-react";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { usePendingCounts } from "@/lib/usePendingCounts";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -55,12 +56,13 @@ const navLinkClass = (active: boolean) =>
     active ? "text-[#1f5a3c]" : "text-[#647365] hover:text-[#1f5a3c] hover:bg-[#edf3e9]"
   }`;
 
-function NavLinks({ items, className = "", onNavigate }: { items: NavItem[]; className?: string; onNavigate?: () => void }) {
+function NavLinks({ items, className = "", onNavigate, badges }: { items: NavItem[]; className?: string; onNavigate?: () => void; badges?: Record<string, number> }) {
   const [location] = useLocation();
   return (
     <nav className={className} aria-label="Primary navigation" data-testid="primary-nav">
       {items.map(item => {
         const active = isNavActive(location, item);
+        const badge = badges?.[item.href] ?? 0;
         return (
           <Link
             key={item.href + item.label}
@@ -71,6 +73,11 @@ function NavLinks({ items, className = "", onNavigate }: { items: NavItem[]; cla
             data-testid={`nav-link-${item.label}`}
           >
             {item.label}
+            {badge > 0 && (
+              <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#a34838] px-1 text-[10px] font-extrabold text-white" aria-label={`${badge} pending`}>
+                {badge > 99 ? "99+" : badge}
+              </span>
+            )}
           </Link>
         );
       })}
@@ -548,6 +555,25 @@ export function PublicHeader() {
   // Prefer logged-out center links until auth resolves — avoids empty/role flash on public routes.
   const centerItems = !loading && user ? centerNavForRole(user.role) : LOGGED_OUT_CENTER;
   const overlayUser = !loading && user ? { name: user.name, role: user.role } : null;
+  const { counts } = usePendingCounts(Boolean(user) && !loading);
+  const navBadges = useMemo(() => {
+    if (!user) return undefined;
+    const p = counts.pending;
+    const rolePending = user.role === "buyer"
+      ? p.activeOrders + p.awaitingVerification
+      : user.role === "seller"
+        ? p.newOrders + p.awaitingMyResponse + p.requestedQuotations
+        : user.role === "admin"
+          ? p.ordersToReview + p.awaitingSellerConfirmation + p.paymentsToReview + p.openTickets
+          : p.productsPendingReview + p.cooperativeApplications + p.profileVerifications + p.userApprovals;
+    const map: Record<string, number> = {};
+    if (counts.unreadMessages) map["/messages"] = counts.unreadMessages;
+    if (counts.unreadTickets) map["/support"] = (map["/support"] ?? 0) + counts.unreadTickets;
+    if (counts.unreadTickets) map["/support-tickets"] = (map["/support-tickets"] ?? 0) + counts.unreadTickets;
+    if (user.role === "buyer" && p.activeOrders + p.awaitingVerification) map["/activity"] = p.activeOrders + p.awaitingVerification;
+    if (rolePending) map["/dashboard"] = rolePending;
+    return map;
+  }, [user, counts]);
 
   return (
     <header className="sticky top-0 z-50 border-b border-[#e4e7da] bg-[#fffdf8]" data-testid="site-header">
@@ -563,6 +589,7 @@ export function PublicHeader() {
 
         <NavLinks
           items={centerItems}
+          badges={navBadges}
           className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 whitespace-nowrap lg:flex"
         />
 

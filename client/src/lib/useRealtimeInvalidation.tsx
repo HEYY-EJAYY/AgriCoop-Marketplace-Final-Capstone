@@ -10,9 +10,9 @@ import { trpc } from "@/lib/trpc";
  */
 
 const TABLE_QUERIES: Record<string, string[]> = {
-  notifications: ["notifications.mine"],
+  notifications: ["notifications.mine", "notifications.pendingCounts"],
   orders: [
-    "orders.buyerMine", "orders.sellerMine", "orders.buyerMineCounts",
+    "orders.buyerMine", "orders.sellerMine", "orders.buyerMineCounts", "notifications.pendingCounts",
     "orders.sellerMineCounts", "orders.byId", "orders.history",
     "payments.mine", "payments.reviewQueue", "cooperativeAdmin.overview", "admin.overview",
   ],
@@ -20,13 +20,13 @@ const TABLE_QUERIES: Record<string, string[]> = {
   orderEvents: ["orders.byId", "admin.overview", "cooperativeAdmin.overview"],
   transactions: ["admin.overview", "cooperativeAdmin.overview", "payments.mine"],
   paymentProofs: ["payments.mine", "payments.reviewQueue", "admin.overview", "cooperativeAdmin.overview"],
-  conversations: ["conversations.mine", "conversations.messages", "cooperativeAdmin.orderThreadStates"],
+  conversations: ["conversations.mine", "conversations.messages", "cooperativeAdmin.orderThreadStates", "notifications.pendingCounts"],
   conversationMessages: ["conversations.messages", "conversations.mine"],
   threadStates: ["conversations.mine", "cooperativeAdmin.orderThreadStates"],
-  quotations: ["quotations.buyerMine", "quotations.sellerMine", "quotations.counts", "admin.overview", "cooperativeAdmin.overview"],
-  products: ["marketplace.list", "marketplace.byId", "products.mine", "admin.overview", "cooperativeAdmin.overview"],
-  users: ["admin.overview", "cooperativeAdmin.overview", "auth.me"],
-  cooperatives: ["admin.overview", "cooperativeAdmin.overview", "marketplace.list"],
+  quotations: ["quotations.buyerMine", "quotations.sellerMine", "quotations.counts", "admin.overview", "cooperativeAdmin.overview", "notifications.pendingCounts"],
+  products: ["marketplace.list", "marketplace.byId", "products.mine", "admin.overview", "cooperativeAdmin.overview", "notifications.pendingCounts"],
+  users: ["admin.overview", "cooperativeAdmin.overview", "auth.me", "notifications.pendingCounts"],
+  cooperatives: ["admin.overview", "cooperativeAdmin.overview", "marketplace.list", "notifications.pendingCounts"],
 };
 
 function invalidatePath(utils: ReturnType<typeof trpc.useUtils>, path: string) {
