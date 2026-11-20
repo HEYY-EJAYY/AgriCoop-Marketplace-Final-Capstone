@@ -21,15 +21,15 @@ export function PendingActivityCards({ counts, role }: { counts: PendingCounts; 
     if (p.awaitingMyResponse) cards.push({ label: "Awaiting your availability response", count: p.awaitingMyResponse, href: "/dashboard" });
     if (p.requestedQuotations) cards.push({ label: "Quotation requests", count: p.requestedQuotations, href: "/dashboard" });
   } else if (role === "admin") {
-    if (p.ordersToReview) cards.push({ label: "Orders awaiting approval", count: p.ordersToReview, href: "/dashboard" });
-    if (p.awaitingSellerConfirmation) cards.push({ label: "Awaiting seller confirmation", count: p.awaitingSellerConfirmation, href: "/dashboard" });
-    if (p.paymentsToReview) cards.push({ label: "Payment proofs to review", count: p.paymentsToReview, href: "/dashboard" });
+    if (p.ordersToReview) cards.push({ label: "Orders awaiting approval", count: p.ordersToReview, href: "/dashboard?section=orders" });
+    if (p.awaitingSellerConfirmation) cards.push({ label: "Awaiting seller confirmation", count: p.awaitingSellerConfirmation, href: "/dashboard?section=orders" });
+    if (p.paymentsToReview) cards.push({ label: "Payment proofs to review", count: p.paymentsToReview, href: "/dashboard?section=payments" });
     if (p.openTickets) cards.push({ label: "Open support tickets", count: p.openTickets, href: "/support-tickets" });
   } else if (role === "superadmin") {
-    if (p.productsPendingReview) cards.push({ label: "Listings pending review", count: p.productsPendingReview, href: "/dashboard" });
-    if (p.cooperativeApplications) cards.push({ label: "Officer applications", count: p.cooperativeApplications, href: "/dashboard" });
+    if (p.productsPendingReview) cards.push({ label: "Listings pending review", count: p.productsPendingReview, href: "/dashboard?section=products" });
+    if (p.cooperativeApplications) cards.push({ label: "Officer applications", count: p.cooperativeApplications, href: "/dashboard?section=applications" });
     if (p.profileVerifications) cards.push({ label: "Profile verifications", count: p.profileVerifications, href: "/dashboard" });
-    if (p.userApprovals) cards.push({ label: "Users awaiting approval", count: p.userApprovals, href: "/dashboard" });
+    if (p.userApprovals) cards.push({ label: "Users awaiting approval", count: p.userApprovals, href: "/dashboard?section=users" });
   }
   if (!cards.length) return null;
   return (

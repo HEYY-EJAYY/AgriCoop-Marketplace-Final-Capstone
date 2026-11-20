@@ -2204,10 +2204,13 @@ function AdminDashboard() {
     { enabled: Boolean(deleteUserTarget?.id) },
   );
   const search = useSearch();
-  const allowedSections = useMemo(
-    () => new Set(adminNavForRole(user?.role).map(item => item.section).filter(Boolean) as string[]),
-    [user?.role],
-  );
+  const allowedSections = useMemo(() => {
+    const sections = new Set(adminNavForRole(user?.role).map(item => item.section).filter(Boolean) as string[]);
+    // SuperAdmin reaches the platform-wide product moderation queue via pending-activity cards;
+    // it stays out of the sidebar per the platform-ownership nav split.
+    if (user?.role === "superadmin") sections.add("products");
+    return sections;
+  }, [user?.role]);
   const requestedSection = adminSectionFromSearch(search, user?.role);
   const activeSection = allowedSections.has(requestedSection) ? requestedSection : "overview";
   const [visitedSections, setVisitedSections] = useState<Set<string>>(() => new Set([activeSection]));
@@ -2250,6 +2253,7 @@ function AdminDashboard() {
         <Metric label="Product listings" value={String(overview?.products.filter(p => !p.deletedAt).length || 0)} icon={Package} />
         <Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList} />
       </div>
+      <PendingActivitySection role={user?.role === "superadmin" ? "superadmin" : "admin"} />
       {overview && (
         <Suspense fallback={<div className="agri-card h-40 animate-pulse p-5" aria-label="Loading analytics" />}>
           <DashboardAnalytics overview={overview} isPlatformAdmin={user?.role === "superadmin"} healthOk={healthOk} />
