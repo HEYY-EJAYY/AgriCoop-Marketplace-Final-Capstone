@@ -53,6 +53,7 @@ Conversation SSE is process-local and unsuitable as the sole mechanism on multi-
 
 ## Docs
 
+- [`docs/AgriCoop_System_Documentation.md`](docs/AgriCoop_System_Documentation.md) — canonical system documentation (architecture, roles, order lifecycle, API, security, testing)
 - [`docs/COMPLETION_INVENTORY.md`](docs/COMPLETION_INVENTORY.md) — running checklist
 - [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) — env var **names**
 - [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) — deploy notes (update alongside Gate 2 `DEPLOYMENT.md`)
