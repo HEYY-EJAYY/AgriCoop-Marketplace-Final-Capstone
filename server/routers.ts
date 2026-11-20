@@ -1958,7 +1958,7 @@ export const appRouter = router({
         const createdOrder = await db.transaction(async tx => {
           await tx.execute(sql`select set_config('agricoop.order_create_scope', 'on', true)`);
           const currentProducts = Array.from(await tx.execute(sql`
-            select * from agricoop_app.order_create_lock_products(${productIds}::integer[])
+            select * from agricoop_app.order_create_lock_products(array[${sql.join(productIds.map(id => sql`${id}`), sql`,`)}]::integer[])
           `)) as unknown as Array<typeof products.$inferSelect>;
           if (currentProducts.length !== productIds.length) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "A product in this order could not be found." });
@@ -1973,7 +1973,7 @@ export const appRouter = router({
           }));
           const sellerIds = Array.from(new Set(availableProducts.map(product => product.sellerId)));
           const currentSellers = Array.from(await tx.execute(sql`
-            select * from agricoop_app.order_create_lock_sellers(${sellerIds}::integer[])
+            select * from agricoop_app.order_create_lock_sellers(array[${sql.join(sellerIds.map(id => sql`${id}`), sql`,`)}]::integer[])
           `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "approvalStatus" | "deletedAt">>;
           const sellersById = new Map(currentSellers.map(seller => [seller.id, seller]));
           for (const product of availableProducts) {
