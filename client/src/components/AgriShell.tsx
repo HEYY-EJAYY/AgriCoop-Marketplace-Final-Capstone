@@ -111,7 +111,7 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
     <Link href="/" aria-label="AgriCoop" className="inline-flex shrink-0 items-center gap-2 text-[#174a31] no-underline">
       <img
-        src="/images/agricoop-mark.jpg"
+        src="/images/agricoop-mark.webp"
         alt=""
         width={40}
         height={40}

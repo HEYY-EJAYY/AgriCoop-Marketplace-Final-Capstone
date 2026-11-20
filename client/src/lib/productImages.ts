@@ -10,16 +10,16 @@ export const FORBIDDEN_PRODUCT_IMAGE_PATHS = [
 ] as const;
 
 const localCatalog: Array<{ match: RegExp; src: string }> = [
-  { match: /mango/i, src: "/images/Manggo.jpeg" },
-  { match: /banana/i, src: "/images/Banana.jpeg" },
-  { match: /pineapple/i, src: "/images/Pineapple.jpeg" },
-  { match: /sugarcane/i, src: "/images/Sugarcane.jpeg" },
-  { match: /coffee/i, src: "/images/Coffee%20Beans.jpeg" },
-  { match: /coconut/i, src: "/images/Coconut.jpeg" },
-  { match: /cassava/i, src: "/images/Cassava%20Roots.jpg" },
-  { match: /cacao/i, src: "/images/Cacao.jpg" },
-  { match: /corn/i, src: "/images/Corn.jpeg" },
-  { match: /rice/i, src: "/images/Rice.jpeg" },
+  { match: /mango/i, src: "/images/Manggo.webp" },
+  { match: /banana/i, src: "/images/Banana.webp" },
+  { match: /pineapple/i, src: "/images/Pineapple.webp" },
+  { match: /sugarcane/i, src: "/images/Sugarcane.webp" },
+  { match: /coffee/i, src: "/images/Coffee%20Beans.webp" },
+  { match: /coconut/i, src: "/images/Coconut.webp" },
+  { match: /cassava/i, src: "/images/Cassava%20Roots.webp" },
+  { match: /cacao/i, src: "/images/Cacao.webp" },
+  { match: /corn/i, src: "/images/Corn.webp" },
+  { match: /rice/i, src: "/images/Rice.webp" },
 ];
 
 export function isForbiddenProductImageUrl(url: string | null | undefined): boolean {
