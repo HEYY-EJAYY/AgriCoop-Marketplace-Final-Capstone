@@ -2144,6 +2144,7 @@ function AdminDashboard() {
   const requestedSection = adminSectionFromSearch(search, user?.role);
   const activeSection = allowedSections.has(requestedSection) ? requestedSection : "overview";
   const [visitedSections, setVisitedSections] = useState<Set<string>>(() => new Set([activeSection]));
+  const [listingTab, setListingTab] = useState<"active" | "pending" | "approved" | "rejected" | "hidden" | "deleted">("active");
   useEffect(() => {
     setVisitedSections(prev => (prev.has(activeSection) ? prev : new Set(prev).add(activeSection)));
   }, [activeSection]);
@@ -2162,7 +2163,6 @@ function AdminDashboard() {
   }
 
   const pendingProducts = overview?.products.filter(product => product.verificationStatus === "pending" && !product.deletedAt) ?? [];
-  const [listingTab, setListingTab] = useState<"active" | "pending" | "approved" | "rejected" | "hidden" | "deleted">("active");
   const managedListings = (overview?.products ?? []).filter(product => {
     if (listingTab === "deleted") return Boolean(product.deletedAt);
     if (product.deletedAt) return false;

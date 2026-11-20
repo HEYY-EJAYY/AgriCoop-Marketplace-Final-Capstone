@@ -145,6 +145,11 @@ export default function OrderDetail() {
   const detailQuery = useOrdersById(orderId, validId);
   const { data, isLoading, isFetching, error, refetch } = detailQuery;
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
+  const orderChat = trpc.conversations.openForOrder.useMutation({
+    onSuccess: data => setLocation(`/messages?id=${data.conversationId}`),
+    onError: problem => toast.error(toUserFacingErrorMessage(problem.message)),
+  });
 
   const canRecordCash = hasPaymentProcedure("recordCashReceipt");
   const canReviewProof = hasPaymentProcedure("reviewProof");
@@ -249,11 +254,6 @@ export default function OrderDetail() {
     && isOfficer
     && proof?.id
     && (proof.verificationStatus === "pending" || paymentStatus === "awaiting_verification");
-  const [, setLocation] = useLocation();
-  const orderChat = trpc.conversations.openForOrder.useMutation({
-    onSuccess: data => setLocation(`/messages?id=${data.conversationId}`),
-    onError: problem => toast.error(toUserFacingErrorMessage(problem.message)),
-  });
   const showWaitingForConfirmation = isSeller && paymentUnpaid;
 
   return (
