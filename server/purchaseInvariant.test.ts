@@ -180,8 +180,8 @@ describe("marketplace purchasability invariant", () => {
       execute: async (query: unknown) => {
         const raw = JSON.stringify(query);
         executedSql.push(raw);
-        if (raw.includes("order_create_lock_products")) return [activeProduct];
-        if (raw.includes("order_create_lock_sellers")) {
+        if (raw.includes("order_create_lock_products") || raw.includes("quotation_request_lock_product")) return [activeProduct];
+        if (raw.includes("order_create_lock_sellers") || raw.includes("quotation_request_lock_seller")) {
           return [{ id: activeProduct.sellerId, approvalStatus: "approved", deletedAt: null }];
         }
         return [];

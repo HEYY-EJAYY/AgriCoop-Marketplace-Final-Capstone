@@ -64,10 +64,13 @@ export default function Auth() {
     const params = new URLSearchParams(window.location.search);
     const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const type = params.get("type") ?? fragment.get("type");
-    if (type !== "recovery") return;
+    // `recovery=1` is set by the global PASSWORD_RECOVERY redirect when the
+    // Supabase Site URL lands the user somewhere other than /auth.
+    if (type !== "recovery" && params.get("recovery") !== "1") return;
     let active = true;
     void supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
+      window.history.replaceState({}, "", "/auth");
       if (data.session) {
         setEmail(data.session.user.email ?? "");
         setResetStage("complete");

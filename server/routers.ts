@@ -1826,9 +1826,11 @@ export const appRouter = router({
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
         return db.transaction(async tx => {
-          const [product] = await tx.select().from(products)
-            .where(eq(products.id, input.productId))
-            .for("update");
+          await tx.execute(sql`select set_config('agricoop.quotation_request_scope', 'on', true)`);
+          const productRows = Array.from(await tx.execute(sql`
+            select * from agricoop_app.quotation_request_lock_product(${input.productId})
+          `)) as unknown as Array<typeof products.$inferSelect>;
+          const product = productRows[0];
           if (!product) {
             throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
           }
@@ -1837,13 +1839,10 @@ export const appRouter = router({
           } catch (error) {
             throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Unable to request this quotation." });
           }
-          const [seller] = await tx.select({
-            approvalStatus: users.approvalStatus,
-            deletedAt: users.deletedAt,
-          })
-            .from(users)
-            .where(eq(users.id, product.sellerId))
-            .for("update");
+          const sellerRows = Array.from(await tx.execute(sql`
+            select * from agricoop_app.quotation_request_lock_seller(${product.sellerId})
+          `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "approvalStatus" | "deletedAt">>;
+          const seller = sellerRows[0];
           const reserved = await getOpenOrderReservationQuantities(tx, [product.id]);
           const availableQty = availableStockAfterReservations(
             product.stockQty,
