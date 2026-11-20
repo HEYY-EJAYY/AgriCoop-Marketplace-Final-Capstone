@@ -28,7 +28,7 @@ export default function Support() {
     : threads[0]?.conversation.id ?? null;
   const messagesQuery = trpc.conversations.messages.useQuery(
     { conversationId: activeId! },
-    { enabled: !!activeId, refetchInterval: 5_000, refetchOnWindowFocus: true },
+    { enabled: !!activeId, refetchInterval: 30_000, refetchOnWindowFocus: true },
   );
   const create = trpc.conversations.create.useMutation({
     onSuccess: data => {

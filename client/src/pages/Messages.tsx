@@ -24,7 +24,7 @@ export default function Messages() {
     : threads[0]?.conversation.id ?? null;
   const messagesQuery = trpc.conversations.messages.useQuery(
     { conversationId: activeId! },
-    { enabled: !!activeId, refetchInterval: 5_000 },
+    { enabled: !!activeId, refetchInterval: 15_000 },
   );
   const send = trpc.conversations.send.useMutation({
     onSuccess: () => {

@@ -8,7 +8,7 @@ import { logAuthDiagnostic } from "@/lib/authSession";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import AdminRefundManagement from "@/components/AdminRefundManagement";
-import { DashboardAnalytics } from "@/components/analytics/DashboardAnalytics";
+const DashboardAnalytics = lazy(() => import("@/components/analytics/DashboardAnalytics").then(m => ({ default: m.DashboardAnalytics })));
 import { AdminOrderDetailsQueryError } from "@/components/AdminOrderDetailsQueryError";
 import { StatusPill } from "@/components/StatusPill";
 import AdminShell from "@/components/AdminShell";
@@ -37,7 +37,7 @@ import { PAYMENT_PROOF_BUCKET, PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BY
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../../../shared/profileVerification";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AlertCircle, BarChart3, Check, ClipboardList, Download, FileText, Leaf, Loader2, LucideIcon, MessageCircle, Package, Plus, Store, Users, QrCode } from "lucide-react";
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, lazy, ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useSearch } from "wouter";
 
@@ -2183,7 +2183,11 @@ function AdminDashboard() {
         <Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package} />
         <Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList} />
       </div>
-      {overview && <DashboardAnalytics overview={overview} isPlatformAdmin={user?.role === "superadmin"} healthOk={healthOk} />}
+      {overview && (
+        <Suspense fallback={<div className="agri-card h-40 animate-pulse p-5" aria-label="Loading analytics" />}>
+          <DashboardAnalytics overview={overview} isPlatformAdmin={user?.role === "superadmin"} healthOk={healthOk} />
+        </Suspense>
+      )}
       <section className="flex flex-wrap items-center justify-between gap-4 agri-card p-5 sm:p-6">
         <div>
           <h2 className="font-display text-2xl font-bold text-[#264f37]">Payments</h2>

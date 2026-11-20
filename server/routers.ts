@@ -1244,20 +1244,53 @@ export const appRouter = router({
         if (!cooperative) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Cooperative not found." });
         }
-        const listings = await getMarketplace();
-        const productsForCoop = listings
-          .filter(row => row.product.cooperativeId === cooperative.id)
-          .map(row => ({
-            id: row.product.id,
-            name: row.product.name,
-            variety: row.product.variety,
-            category: row.product.category,
-            unit: row.product.unit,
-            priceCents: row.product.priceCents,
-            primaryImageUrl: row.product.primaryImageUrl,
-            allowsPickup: row.product.allowsPickup,
-            allowsDelivery: row.product.allowsDelivery,
-            acceptsOnlinePayment: row.product.acceptsOnlinePayment,
+        const candidateProducts = await db
+          .select({
+            id: products.id,
+            name: products.name,
+            variety: products.variety,
+            category: products.category,
+            unit: products.unit,
+            priceCents: products.priceCents,
+            stockQty: products.stockQty,
+            minOrderQty: products.minOrderQty,
+            status: products.status,
+            verificationStatus: products.verificationStatus,
+            visibility: products.visibility,
+            deletedAt: products.deletedAt,
+            primaryImageUrl: products.primaryImageUrl,
+            allowsPickup: products.allowsPickup,
+            allowsDelivery: products.allowsDelivery,
+            acceptsOnlinePayment: products.acceptsOnlinePayment,
+          })
+          .from(products)
+          .innerJoin(users, eq(products.sellerId, users.id))
+          .where(and(
+            eq(products.cooperativeId, cooperative.id),
+            eq(products.status, "published"),
+            eq(products.verificationStatus, "approved"),
+            eq(products.visibility, "visible"),
+            isNull(products.deletedAt),
+            eq(users.approvalStatus, "approved"),
+            isNull(users.deletedAt),
+          ));
+        const reservations = await getOpenOrderReservationQuantities(db, candidateProducts.map(p => p.id));
+        const productsForCoop = candidateProducts
+          .filter(product => !productPurchaseBlockReason({
+            ...product,
+            stockQty: availableStockAfterReservations(product.stockQty, reservations.get(product.id) ?? 0),
+          }, { approvalStatus: "approved", deletedAt: null }))
+          .map(product => ({
+            id: product.id,
+            name: product.name,
+            variety: product.variety,
+            category: product.category,
+            unit: product.unit,
+            priceCents: product.priceCents,
+            primaryImageUrl: product.primaryImageUrl,
+            allowsPickup: product.allowsPickup,
+            allowsDelivery: product.allowsDelivery,
+            acceptsOnlinePayment: product.acceptsOnlinePayment,
           }));
         return {
           cooperative: {
@@ -4846,7 +4879,8 @@ export const appRouter = router({
       const db = await dbOrThrow();
       return db.select().from(notifications)
         .where(and(eq(notifications.userId, ctx.user.id), isNull(notifications.deletedAt)))
-        .orderBy(desc(notifications.createdAt));
+        .orderBy(desc(notifications.createdAt))
+        .limit(200);
     }),
     markRead: protectedProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       const db = await dbOrThrow();
