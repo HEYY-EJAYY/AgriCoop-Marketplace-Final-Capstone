@@ -32,7 +32,7 @@ Prepared policies live in `supabase/migrations/20261117131000_marketplace_rls_gr
 | conversations / messages | — | participant | participant | seller's coop | all | |
 | cooperativeAssociationRequests | — | — | own request | coop review | all | |
 | notifications | — | own R + mark-read | own | own | own | INSERT only via definer fn |
-| supportTickets / messages | — | own | own | coop | all | |
+| supportTickets / messages | — | own R + reply/reopen (`…20261202000000`) | own R + reply/reopen | coop R/W | all | Owner UPDATE added for reply flow |
 | auditLogs | — | — | — | SELECT coop | SELECT all | INSERT via definer/trigger only |
 | profileVerificationSubmissions | — | own | own | review coop | all | Policies from draft `…120000` |
 

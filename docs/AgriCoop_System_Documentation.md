@@ -272,6 +272,7 @@ Prepared policies are documented in `docs/RLS_POLICY_MATRIX.md` and implemented 
 
 - `20261117131000_marketplace_rls_grants.sql`
 - `20261117132000_secure_audit_notification_writes.sql`
+- `20261202000000_support_ticket_owner_reply.sql` — owner UPDATE policy so buyers/sellers can reply to (and reopen) their own support tickets; previously only staff could update ticket rows, which made owner replies fail under RLS.
 
 **Mechanism.**
 

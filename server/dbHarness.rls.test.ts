@@ -2509,6 +2509,91 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
       await sql.end({ timeout: 5 });
     }
   });
+
+  it("lets a ticket owner reply under RLS while other buyers cannot (rollback)", async () => {
+    assertLocalTestDatabaseUrl(testDatabaseUrl);
+    const postgres = (await import("postgres")).default;
+    const sql = postgres(testDatabaseUrl!, { max: 1, prepare: false });
+    const ownerAuth = "33333333-3333-4333-8333-333333333333";
+    const otherAuth = "34343434-3434-4434-8434-343434343434";
+    try {
+      await sql.begin(async tx => {
+        await tx`insert into auth.users (id, email) values
+          (${ownerAuth}::uuid, 'harness-ticket-owner@example.test'),
+          (${otherAuth}::uuid, 'harness-ticket-other@example.test')
+          on conflict (id) do nothing`;
+        await tx`
+          insert into agricoop_app.users (
+            "openId", name, email, "loginMethod", role, "approvalStatus", "cooperativeId"
+          ) values
+            (${ownerAuth}, 'Harness Ticket Owner', 'harness-ticket-owner@example.test', 'supabase', 'buyer', 'approved', null),
+            (${otherAuth}, 'Harness Ticket Other', 'harness-ticket-other@example.test', 'supabase', 'buyer', 'approved', null)
+        `;
+        const [owner] = await tx`select id from agricoop_app.users where "openId" = ${ownerAuth} limit 1`;
+        const [other] = await tx`select id from agricoop_app.users where "openId" = ${otherAuth} limit 1`;
+        const [ticket] = await tx`
+          insert into agricoop_app."supportTickets" (
+            subject, category, description, priority, "userId", "cooperativeId", status
+          ) values (
+            'Harness ticket', 'general', 'Harness body', 'low', ${owner.id}, null, 'resolved'
+          )
+          returning id
+        `;
+
+        const asAuth = async (openId: string, fn: () => Promise<void>) => {
+          await tx`select set_config('role', 'authenticated', true)`;
+          await tx.unsafe("set local role authenticated");
+          await tx`select set_config('search_path', 'public, agricoop_app', true)`;
+          await tx`select set_config('request.jwt.claim.sub', ${openId}, true)`;
+          await tx`select set_config(
+            'request.jwt.claims',
+            ${JSON.stringify({ aud: "authenticated", role: "authenticated", sub: openId })},
+            true
+          )`;
+          await fn();
+        };
+
+        // Owner: SELECT ... FOR UPDATE must see the row (reply flow locks it)
+        // and the owner must be able to update status (reopen on reply).
+        await asAuth(ownerAuth, async () => {
+          const locked = await tx`
+            select id from agricoop_app."supportTickets"
+            where id = ${ticket.id} for update
+          `;
+          expect(locked).toHaveLength(1);
+          const updated = await tx`
+            update agricoop_app."supportTickets"
+            set status = 'open', "updatedAt" = now()
+            where id = ${ticket.id}
+            returning id
+          `;
+          expect(updated).toHaveLength(1);
+          await tx`
+            insert into agricoop_app."supportTicketMessages" ("ticketId", "senderId", body)
+            values (${ticket.id}, ${owner.id}, 'owner reply')
+          `;
+        });
+
+        // Other buyer: no visibility and no writes.
+        await asAuth(otherAuth, async () => {
+          expect(await tx`
+            select id from agricoop_app."supportTickets" where id = ${ticket.id} for update
+          `).toEqual([]);
+          expect(await tx`
+            update agricoop_app."supportTickets"
+            set status = 'closed' where id = ${ticket.id}
+            returning id
+          `).toEqual([]);
+        });
+
+        throw new Error("harness_rollback");
+      }).catch((error: unknown) => {
+        if (!(error instanceof Error) || error.message !== "harness_rollback") throw error;
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
 });
 
 if (!testDatabaseUrl) {

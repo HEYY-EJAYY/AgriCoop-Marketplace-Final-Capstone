@@ -170,8 +170,8 @@ Self-registration sets `buyer` with `approvalStatus` **approved** (`resolvePubli
 - Seller product CRUD and image upload: `products.create`, `update`, `submit`, `archive`, `uploadImage` (roles: seller, admin, superadmin with ownership checks).
 - Cooperative association request: `cooperativeAssociations.request`, `mine`, `activeCooperatives`.
 - Seller order and quotation queues: `orders.sellerMine`, `quotations.sellerMine`, `quotations.respond`.
-- Order status transitions for own orders: `orders.updateStatus` (seller among allowed roles).
-- Fulfillment status updates only (Confirm / Mark ready). Cash received and receipt verification are Admin/SuperAdmin actions.
+- Order status transitions: `orders.updateStatus` — sellers may only move `confirmed → ready`; `submitted → confirmed` approval is OfficerAdmin/SuperAdmin-only and gated by stock and seller availability confirmation (see §9).
+- Fulfillment status updates only (Mark ready after officer approval). Cash received and receipt verification are Admin/SuperAdmin actions. Seller availability responses use `orders.respondAvailability`.
 - Dashboard workspace: `SellerVerificationWorkspace` on `/dashboard` (`docs/UX_AUDIT.md`).
 
 Self-registration sets `seller` with `approvalStatus` **pending** until admin approval.
@@ -380,7 +380,7 @@ Summary of tRPC procedure gates (`requireOperationalRole` and specialized authz)
 | Quotations | `buyerMine`, `request`, `decide` | allowed | allowed (as buyer) | — | — |
 | Quotations | `sellerMine`, `respond` | — | allowed | — | — |
 | Orders | `buyerMine`, `create` | allowed | allowed (as buyer) | — | — |
-| Orders | `sellerMine`, `updateStatus` | — | own seller orders | coop-scoped complete | allowed in role list |
+| Orders | `sellerMine`, `updateStatus`, `respondAvailability` | — | own seller orders (ready only) | coop-scoped approve/complete | allowed in role list |
 | Payments | proofs, cash | buyer upload | — | review | review / refunds |
 | Cooperative admin | overview, members | — | — | scoped | platform |
 | Admin | `reviewProduct`, `updateUser` | — | — | allowed | allowed |
@@ -461,18 +461,29 @@ Narrative detail and UX verdicts: `docs/UX_AUDIT.md`.
 
 ```mermaid
 stateDiagram-v2
-  [*] --&gt; submitted : orders.create
-  submitted --&gt; confirmed : seller/admin confirm
+  [*] --&gt; submitted : orders.create (buyer)
+  submitted --&gt; confirmed : OfficerAdmin/SuperAdmin approval only
   submitted --&gt; cancelled : cancel
-  confirmed --&gt; ready : seller/admin ready
+  confirmed --&gt; ready : seller fulfillment
   confirmed --&gt; cancelled : cancel
-  ready --&gt; completed : admin completion + inventory
+  ready --&gt; completed : officer completion + inventory
   ready --&gt; cancelled : cancel
   completed --&gt; [*]
   cancelled --&gt; [*]
 ```
 
-**Stock reservation.** Open orders in `submitted`, `confirmed`, or `ready` reserve inventory (`STOCK_RESERVING_ORDER_STATUSES`); marketplace listing stock is reduced by reservations via `reserved_quantities_for_products` (`server/db.ts`).
+**OfficerAdmin approval gate.** `submitted → confirmed` is an OfficerAdmin/SuperAdmin-only approval (`orders.updateStatus`). Sellers can no longer self-confirm a submitted order; they may only move `confirmed → ready` during fulfillment. Approval is blocked (`PRECONDITION_FAILED`) when `evaluateOfficerApproval` (`server/marketplaceRules.ts`) reports an issue:
+
+- Any `order_based` (made-to-order) line item requires `orders.sellerConfirmationStatus = 'available'`. The officer requests confirmation via `orders.requestSellerAvailability` (sets `pending`, notifies the seller); the seller responds via `orders.respondAvailability` (`available` / `partially_available` / `unavailable` / `needs_clarification`, notifies officers). Partial/unavailable/clarification responses require a note and block approval until the officer adjusts or cancels the order.
+- Every `on_hand` line item must have sufficient stock after subtracting reservations held by *other* open orders (this order's own reservation is excluded from the check).
+
+Mixed carts are safe because approval is evaluated per line item using the `orderItems.fulfillmentType` snapshot taken at checkout; one ready on-hand item cannot approve an unconfirmed made-to-order item.
+
+**Availability types.** Products carry `fulfillmentType` (`on_hand` = ready stock, `order_based` = prepared after order; labels &quot;On-Hand · Ready Stock&quot; / &quot;Order-Based · Prepared After Order&quot;). Officers manage it — plus `prepTimeDays`, `capacityNote`, and `category` — from Admin → Listings via `cooperativeAdmin.setFulfillmentClassification`, scoped to the officer's cooperative. These edits never reset `verificationStatus`/`visibility`, so listing approval is preserved.
+
+**Cash on delivery address.** `orders.create` accepts `deliveryDetails` (recipient name, contact number, province, city/municipality, barangay, street address, optional instructions). It is mandatory server-side when `paymentMethod = 'cash_delivery'` and stored as a JSON snapshot on `orders.deliveryDetails`, visible only to the order's buyer, its seller, the cooperative's officers, and SuperAdmins. Other payment methods keep the previous optional behavior.
+
+**Stock reservation.** Open orders in `submitted`, `confirmed`, or `ready` reserve inventory (`STOCK_RESERVING_ORDER_STATUSES`); marketplace listing stock is reduced by reservations via `reserved_quantities_for_products` (`server/db.ts`). Approval re-verifies headroom but does not double-reserve; deduction happens once at `ready → completed`.
 
 **Order types.** `regular` (single line item aggregate) vs `bulk` (multiple products, single seller) from `prepareOrder`.
 
