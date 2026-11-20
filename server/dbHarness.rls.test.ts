@@ -1786,8 +1786,12 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
           select id from storage.objects where bucket_id = 'profile-verification-documents'
         `).toEqual([]);
 
+        // Owner-scoped upload policies (20261120140000) allow an authenticated
+        // user to INSERT proof/verification objects only under their own
+        // `<bucket>/<userId>/` prefix. Assert that boundary explicitly:
+        // own-prefix insert succeeds, foreign prefix and uncovered buckets fail.
         await tx`savepoint seller_private_storage_insert`;
-        let privateStorageInsertDenied = false;
+        let ownPrefixInsertAllowed = false;
         try {
           await tx`
             insert into storage.objects (bucket_id, name)
@@ -1796,11 +1800,42 @@ describe.skipIf(!testDatabaseUrl)("RLS and concurrency against TEST_DATABASE_URL
               ${`profile-verification-documents/${seller.id}/direct.png`}
             )
           `;
-        } catch (error) {
-          privateStorageInsertDenied = /permission denied|row-level security|42501/i.test(String(error));
+          ownPrefixInsertAllowed = true;
+        } catch {
+          ownPrefixInsertAllowed = false;
         }
+        expect(ownPrefixInsertAllowed).toBe(true);
+
+        await tx`savepoint seller_foreign_prefix_insert`;
+        let foreignPrefixInsertDenied = false;
+        try {
+          await tx`
+            insert into storage.objects (bucket_id, name)
+            values (
+              'profile-verification-documents',
+              ${`profile-verification-documents/${buyer.id}/direct.png`}
+            )
+          `;
+        } catch (error) {
+          foreignPrefixInsertDenied = /permission denied|row-level security|42501/i.test(String(error));
+        }
+        await tx`rollback to savepoint seller_foreign_prefix_insert`;
+        expect(foreignPrefixInsertDenied).toBe(true);
+
+        await tx`savepoint seller_uncovered_bucket_insert`;
+        let uncoveredBucketInsertDenied = false;
+        try {
+          await tx`
+            insert into storage.objects (bucket_id, name)
+            values ('system-payment-qr', 'harness/seller-direct.png')
+          `;
+        } catch (error) {
+          uncoveredBucketInsertDenied = /permission denied|row-level security|42501/i.test(String(error));
+        }
+        await tx`rollback to savepoint seller_uncovered_bucket_insert`;
+        expect(uncoveredBucketInsertDenied).toBe(true);
+
         await tx`rollback to savepoint seller_private_storage_insert`;
-        expect(privateStorageInsertDenied).toBe(true);
 
         throw new Error("harness_rollback");
       }).catch((error: unknown) => {
