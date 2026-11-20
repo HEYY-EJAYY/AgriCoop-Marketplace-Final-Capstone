@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -43,6 +44,11 @@ describe("nested withRequestDatabaseScope deadlock contract", () => {
         note: "Express route; single scope, not under tRPC middleware",
         nestedRisk: "safe",
       },
+      {
+        file: "server/db.ts",
+        note: "Defines withRequestDatabaseScope; not a call site",
+        nestedRisk: "safe",
+      },
     ] as const;
 
     for (const row of inventory) {
@@ -51,8 +57,16 @@ describe("nested withRequestDatabaseScope deadlock contract", () => {
       expect(["safe", "mitigated"]).toContain(row.nestedRisk);
     }
 
-    // No other app server files should open a second scope without being inventoried.
-    const routersFixed = readFileSync(join(process.cwd(), "server/routers.fixed.ts"), "utf8");
-    expect(routersFixed).toMatch(/withRequestDatabaseScope/);
+    // No other tracked app server file should reference withRequestDatabaseScope
+    // without being inventoried. Uses `git ls-files` so gitignored local backups
+    // (routers.fixed.ts, *.bak) can neither satisfy nor break this contract.
+    const tracked = execSync("git ls-files server", { cwd: process.cwd(), encoding: "utf8" })
+      .split("\n")
+      .filter(file => file.endsWith(".ts") && !file.endsWith(".test.ts"));
+    const scopeUsers = tracked
+      .filter(file => readFileSync(join(process.cwd(), file), "utf8").includes("withRequestDatabaseScope"))
+      .sort();
+    const inventoried = inventory.map(row => row.file).sort();
+    expect(scopeUsers).toEqual(inventoried);
   });
 });
