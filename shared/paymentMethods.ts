@@ -45,7 +45,7 @@ export function paymentMethodLabel(value: string | null | undefined): string {
     case "gcash":
       return "Online Payment";
     case "f2f":
-      return "Face-to-Face (Legacy)";
+      return "F2F";
     default:
       return value ? formatEnumLabel(value) : "Payment";
   }

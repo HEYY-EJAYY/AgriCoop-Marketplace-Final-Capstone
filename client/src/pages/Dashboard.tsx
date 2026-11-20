@@ -1075,7 +1075,7 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
     <div className="mt-4 flex flex-wrap items-center gap-2">
       {data.payment && (
         <span className="rounded-full bg-[#e8f1e4] px-2.5 py-1 text-xs font-semibold text-[#315640]">
-          Payment: {data.order.paymentStatus === "paid" ? "Paid" : data.order.paymentStatus === "awaiting_verification" ? "Awaiting verification" : "Unpaid"} · {String(data.order.paymentMethod ?? "").replaceAll("_", " ")}
+          Payment: {data.order.paymentStatus === "paid" ? "Paid" : data.order.paymentStatus === "awaiting_verification" ? "Awaiting verification" : "Unpaid"} · {paymentMethodLabel(data.order.paymentMethod)}
         </span>
       )}
       {data.order.status === "ready" && data.payment && data.order.paymentStatus !== "paid" && (data.order.paymentMethod === "cash_pickup" || data.order.paymentMethod === "cash_delivery") && <div><p className="mb-1 text-xs text-[#6c7c70]">Record only after the full cash amount is received.</p><button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={recordCashReceipt.isPending} onClick={() => recordCashReceipt.mutate({ orderId: data.order.id })}>Record cash received</button></div>}
