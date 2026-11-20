@@ -154,7 +154,9 @@ export default function Profile() {
 
   return (
     <>
-      <WorkspaceHeader title="My Profile" description="Update the details that appear in your account menu and message threads." />
+      {user.role !== "admin" && user.role !== "superadmin" && (
+        <WorkspaceHeader title="My Profile" description="Update the details that appear in your account menu and message threads." />
+      )}
       <main className={`${shellContainerClass} w-full pb-28 pt-8`}>
         <form id="profile-form" onSubmit={onSubmit} className="grid w-full gap-6 lg:grid-cols-2">
           <section className="agri-card w-full p-6 sm:p-8">

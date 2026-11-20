@@ -1,5 +1,6 @@
 import { shellContainerClass, WorkspaceHeader } from "@/components/AgriShell";
 import { ProductImage } from "@/components/ProductImage";
+import { FulfillmentBadge } from "@/components/FulfillmentBadge";
 import { StatusPill } from "@/components/StatusPill";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatDateTimeManila } from "@/lib/datetime";
@@ -319,6 +320,7 @@ export default function OrderDetail() {
                   />
                   <div className="min-w-0 flex-1">
                     <p className="font-bold text-[#315640]">{name}</p>
+                    {row.item.fulfillmentType && <FulfillmentBadge type={row.item.fulfillmentType} className="mt-1" />}
                     <p className="mt-1 text-sm text-[#6a796e]">
                       {row.item.quantity} {row.unit || "unit"} · {peso(row.item.unitPriceCents)} each
                     </p>

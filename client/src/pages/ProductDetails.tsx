@@ -1,6 +1,7 @@
 import { PageFrame, shellContainerClass } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ProductImage } from "@/components/ProductImage";
+import { FulfillmentBadge } from "@/components/FulfillmentBadge";
 import { resolveProductImageSrc } from "@/lib/productImages";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { ArrowLeft, Loader2, Package, ShoppingBag } from "lucide-react";
@@ -98,6 +99,7 @@ export default function ProductDetails() {
         </div>
         <div className="p-6 sm:p-9">
           <span className="rounded-full bg-[#edf3e9] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-[#487249]">{product.category}</span>
+          <div className="mt-2"><FulfillmentBadge type={product.fulfillmentType} prepTimeDays={product.prepTimeDays} /></div>
           <h1 className="mt-4 font-display text-4xl font-bold text-[#214b35]">{product.name}</h1>
           <p className="mt-3 text-lg font-semibold text-[#57715e]">Variety: {product.variety}</p>
           <p className="mt-5 whitespace-pre-wrap leading-7 text-[#66766b]">{product.description}</p>

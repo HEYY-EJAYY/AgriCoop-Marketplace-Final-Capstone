@@ -52,9 +52,9 @@ function Router() {
       <Route path="/cooperatives/:slug">{() => <LazyPage><CooperativePage/></LazyPage>}</Route>
       <Route path="/activity">{() => <LazyPage><Activity/></LazyPage>}</Route>
       <Route path="/messages">{() => <LazyPage><Messages/></LazyPage>}</Route>
-      <Route path="/profile">{() => <LazyPage><Profile/></LazyPage>}</Route>
+      <Route path="/profile">{() => <LazyPage><AdminShell><Profile/></AdminShell></LazyPage>}</Route>
       <Route path="/support">{() => <LazyPage><Support/></LazyPage>}</Route>
-      <Route path="/support-tickets">{() => <LazyPage><SupportTickets/></LazyPage>}</Route>
+      <Route path="/support-tickets">{() => <LazyPage><AdminShell><SupportTickets/></AdminShell></LazyPage>}</Route>
       <Route path="/reports">{() => <LazyPage><AdminShell><Reports/></AdminShell></LazyPage>}</Route>
       <Route path="/admin/payment-options">{() => <LazyPage><AdminShell><PaymentOptions/></AdminShell></LazyPage>}</Route>
       <Route path="/admin/audit-logs">{() => <LazyPage><AdminShell><AuditLogs/></AdminShell></LazyPage>}</Route>

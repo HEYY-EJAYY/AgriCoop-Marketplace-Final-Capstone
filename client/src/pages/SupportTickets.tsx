@@ -116,7 +116,7 @@ export default function SupportTickets() {
     bulkUpdate.mutate({ ticketIds: selectedTicketIds, action });
   };
   return <>
-    <WorkspaceHeader title="Support tickets" description="Follow replies and status updates for marketplace support requests."/>
+    {!isStaff && <WorkspaceHeader title="Support tickets" description="Follow replies and status updates for marketplace support requests."/>}
   <main className={`${shellContainerClass} grid gap-6 py-8 lg:grid-cols-[320px_1fr]`}>
     <div className="mb-2 flex flex-wrap items-center gap-2 lg:col-span-2">
       <button type="button" className={`min-h-11 rounded-xl px-3 text-sm font-bold ${!archivedView ? "bg-[#1f4f36] text-white" : "bg-[#edf3e9] text-[#315640]"}`} onClick={() => { setArchivedView(false); setSelectedTicketIds([]); }}>Inbox</button>

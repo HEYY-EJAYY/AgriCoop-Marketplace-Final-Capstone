@@ -615,7 +615,7 @@ export const orderArchiveRouterExtras = {
   buyerMineArchivedCapable: true as const,
 };
 
-async function upsertPerUserThreadState(args: {
+export async function upsertPerUserThreadState(args: {
   userId: number;
   channel: "conversation" | "ticket" | "support" | "order" | "seller_order" | "quotation";
   threadId: number;

@@ -126,6 +126,32 @@ export function NotificationBell() {
     onSuccess: () => utils.notifications.mine.invalidate(),
     onError: () => toast.error("Could not mark the notification as read. Please try again."),
   });
+  const markAllRead = trpc.notifications.markAllRead.useMutation({
+    onSuccess: () => utils.notifications.mine.invalidate(),
+    onError: () => toast.error("Could not mark notifications as read. Please try again."),
+  });
+  const setReadMut = trpc.notifications.setRead.useMutation({
+    onSuccess: () => {
+      setSelected(new Set());
+      void utils.notifications.mine.invalidate();
+    },
+    onError: () => toast.error("Could not update the selected notifications. Please try again."),
+  });
+  const removeMut = trpc.notifications.remove.useMutation({
+    onSuccess: () => {
+      setSelected(new Set());
+      void utils.notifications.mine.invalidate();
+    },
+    onError: () => toast.error("Could not delete the selected notifications. Please try again."),
+  });
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const visibleNotifications = notifications.slice(0, 12);
+  const allVisibleSelected = visibleNotifications.length > 0 && visibleNotifications.every(n => selected.has(n.id));
+  const toggleSelected = (id: number) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const unreadCount = notifications.filter(notification => notification.isRead === 0).length;
   if (!user) return null;
   return (
@@ -145,20 +171,73 @@ export function NotificationBell() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-80 max-w-[90vw] overflow-hidden rounded-xl border border-[#dce4d6] bg-white shadow-xl">
-          <div className="border-b border-[#e3e9de] p-3 font-bold text-[#264f37]">Notifications</div>
+        <div className="absolute right-0 z-50 mt-2 w-96 max-w-[92vw] overflow-hidden rounded-xl border border-[#dce4d6] bg-white shadow-xl">
+          <div className="flex items-center justify-between gap-2 border-b border-[#e3e9de] p-3">
+            <span className="font-bold text-[#264f37]">Notifications</span>
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && (
+                <button type="button" className="text-xs font-semibold text-[#1f5a3c] hover:underline disabled:opacity-50" disabled={markAllRead.isPending} onClick={() => markAllRead.mutate()}>
+                  Mark all read
+                </button>
+              )}
+            </div>
+          </div>
+          {notifications.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#edf0e9] bg-[#f7faf5] px-3 py-2 text-xs text-[#4c5f52]">
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(visibleNotifications.map(n => n.id)))}
+                  aria-label="Select all notifications"
+                />
+                Select all
+              </label>
+              {selected.size > 0 && (
+                <>
+                  <span>{selected.size} selected</span>
+                  <button type="button" className="font-semibold text-[#1f5a3c] hover:underline disabled:opacity-50" disabled={setReadMut.isPending} onClick={() => setReadMut.mutate({ ids: Array.from(selected), isRead: 1 })}>Mark read</button>
+                  <button type="button" className="font-semibold text-[#1f5a3c] hover:underline disabled:opacity-50" disabled={setReadMut.isPending} onClick={() => setReadMut.mutate({ ids: Array.from(selected), isRead: 0 })}>Mark unread</button>
+                  <button
+                    type="button"
+                    className="font-semibold text-[#a34838] hover:underline disabled:opacity-50"
+                    disabled={removeMut.isPending}
+                    onClick={() => {
+                      if (window.confirm(`Delete ${selected.size} notification${selected.size === 1 ? "" : "s"}?`)) {
+                        removeMut.mutate({ ids: Array.from(selected) });
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           {error ? (
             <NotificationQueryError message="Notifications could not be loaded." isRetrying={isFetching} onRetry={() => { void refetch(); }} />
           ) : isLoading ? (
             <p className="p-4 text-sm text-[#65766b]">Loading notifications...</p>
           ) : notifications.length ? (
-            notifications.slice(0, 8).map(notification => {
+            visibleNotifications.map(notification => {
               const href =
                 notification.link?.startsWith("/") && !notification.link.startsWith("//") ? notification.link : "/dashboard";
               const content = (
                 <>
-                  <span className="block font-bold text-[#315640]">{notification.title}</span>
-                  <span className="mt-1 block text-xs leading-5 text-[#65766b]">{notification.content}</span>
+                  <span className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 shrink-0"
+                      checked={selected.has(notification.id)}
+                      onChange={() => toggleSelected(notification.id)}
+                      onClick={event => event.stopPropagation()}
+                      aria-label={`Select notification: ${notification.title}`}
+                    />
+                    <span className="block">
+                      <span className="block font-bold text-[#315640]">{notification.title}</span>
+                      <span className="mt-1 block text-xs leading-5 text-[#65766b]">{notification.content}</span>
+                    </span>
+                  </span>
                 </>
               );
               return (

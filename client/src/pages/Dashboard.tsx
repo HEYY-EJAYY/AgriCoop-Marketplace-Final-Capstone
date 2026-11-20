@@ -926,14 +926,14 @@ function AdminUserRow({
         </select>
       </td>
       <td className="p-3">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-2 whitespace-nowrap">
           {!isDeleted && (
-            <button type="button" onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost px-3 py-2 text-xs">Save</button>
+            <button type="button" onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost shrink-0 px-3 py-2 text-xs">Save</button>
           )}
           {isDeleted ? (
-            <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => onRestore(user.id)}>Restore</button>
+            <button type="button" className="agri-ghost shrink-0 px-3 py-2 text-xs" onClick={() => onRestore(user.id)}>Restore</button>
           ) : canDelete ? (
-            <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => onRequestDelete(user)}>Delete</button>
+            <button type="button" className="agri-ghost shrink-0 px-3 py-2 text-xs text-[#a34838]" onClick={() => onRequestDelete(user)}>Delete</button>
           ) : null}
         </div>
       </td>
@@ -974,6 +974,32 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
       ]);
     },
     onError: problem => toast.error(problem.message),
+  });
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const statesQuery = trpc.cooperativeAdmin.orderThreadStates.useQuery();
+  const thread = (statesQuery.data ?? []).find(row => row.orderId === orderId);
+  const requestAvailability = trpc.orders.requestSellerAvailability.useMutation({
+    onSuccess: async () => {
+      toast.success("Seller availability request sent.");
+      await Promise.all([
+        utils.orders.sellerMine.invalidate(),
+        utils.cooperativeAdmin.orderDetails.invalidate({ orderId }),
+        utils.cooperativeAdmin.orderThreadStates.invalidate(),
+      ]);
+    },
+    onError: problem => toast.error(problem.message),
+  });
+  const updateOrderState = trpc.cooperativeAdmin.updateOrderState.useMutation({
+    onSuccess: async () => {
+      toast.success("Order removed from the list.");
+      setRemoveOpen(false);
+      await Promise.all([
+        utils.cooperativeAdmin.orderThreadStates.invalidate(),
+        utils.admin.overview.invalidate(),
+        utils.cooperativeAdmin.overview.invalidate(),
+      ]);
+    },
+    onError: problem => toast.error(toUserFacingErrorMessage(problem.message)),
   });
   const items = data?.items ?? [];
   const quantityError = (value: string, stockQty: number) => {
@@ -1016,6 +1042,7 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
     });
   };
   const cancelOrder = () => setCancelOpen(true);
+  const isRemoved = Boolean(thread?.deletedAt || thread?.archivedAt);
 
   if (isLoading) return <div className="rounded-xl bg-[#f2f6ef] p-4 text-sm text-[#6c7c70]">Loading order #{orderId}…</div>;
   if (error || !data) return <AdminOrderDetailsQueryError
@@ -1036,11 +1063,25 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
     <div className="mt-3 space-y-1 text-sm text-[#586d5d]">
       {items.map(({ item, productName, unit }) => <p key={item.id}>{productName} × {item.quantity} {unit} · {peso(item.unitPriceCents * item.quantity)}</p>)}
     </div>
-    <div className="mt-4 flex flex-wrap gap-2">
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      {data.payment && (
+        <span className="rounded-full bg-[#e8f1e4] px-2.5 py-1 text-xs font-semibold text-[#315640]">
+          Payment: {data.order.paymentStatus === "paid" ? "Paid" : data.order.paymentStatus === "awaiting_verification" ? "Awaiting verification" : "Unpaid"} · {String(data.order.paymentMethod ?? "").replaceAll("_", " ")}
+        </span>
+      )}
       {data.order.status === "ready" && data.payment && data.order.paymentStatus !== "paid" && (data.order.paymentMethod === "cash_pickup" || data.order.paymentMethod === "cash_delivery") && <div><p className="mb-1 text-xs text-[#6c7c70]">Record only after the full cash amount is received.</p><button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={recordCashReceipt.isPending} onClick={() => recordCashReceipt.mutate({ orderId: data.order.id })}>Record cash received</button></div>}
+      {data.order.status === "submitted" && <button type="button" className="agri-button px-3 py-2 text-xs" disabled={updateStatus.isPending} onClick={() => updateStatus.mutate({ orderId: data.order.id, status: "confirmed" })}>Approve order</button>}
+      {data.order.status === "confirmed" && <button type="button" className="agri-button px-3 py-2 text-xs" disabled={updateStatus.isPending} onClick={() => updateStatus.mutate({ orderId: data.order.id, status: "ready" })}>Mark ready</button>}
       {data.order.status === "ready" && <button type="button" className="agri-button px-3 py-2 text-xs" onClick={startCompletion}>Complete</button>}
+      {(data.order.status === "submitted" || data.order.status === "confirmed") && (
+        <button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={requestAvailability.isPending} onClick={() => requestAvailability.mutate({ orderId: data.order.id })}>Request seller confirmation</button>
+      )}
       {data.order.status !== "completed" && data.order.status !== "cancelled" && <button type="button" className="px-3 py-2 text-xs font-bold text-[#a34838]" onClick={cancelOrder}>Cancel</button>}
+      {(data.order.status === "completed" || data.order.status === "cancelled") && !isRemoved && (
+        <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => setRemoveOpen(true)}>Remove from list</button>
+      )}
     </div>
+    {isRemoved && <p className="mt-3 text-xs text-[#6c7c70]">This order was removed from the operational list. Its records remain preserved for accountability.</p>}
     {completionOpen && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/50 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setCompletionOpen(false); }}>
       <form role="dialog" aria-modal="true" aria-labelledby={`complete-order-title-${orderId}`} onSubmit={confirmCompletion} className="my-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-7">
         <h3 id={`complete-order-title-${orderId}`} className="font-display text-2xl font-bold text-[#264f37]">Complete order #{orderId}</h3>
@@ -1108,7 +1149,115 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    <AlertDialog open={removeOpen} onOpenChange={setRemoveOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove order #{orderId} from the list?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This hides the order from operational lists. The order, payment, and audit records stay preserved for accountability. This cannot be undone from this screen.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={updateOrderState.isPending}>Keep order</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={updateOrderState.isPending}
+            onClick={() => updateOrderState.mutate({ orderIds: [orderId], action: "archive" })}
+          >
+            Remove from list
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </article>;
+}
+
+const ORDER_TAB_DEFS = [
+  { id: "pending", label: "Pending" },
+  { id: "complete", label: "Complete" },
+  { id: "cancelled", label: "Cancelled" },
+] as const;
+type OrderTabId = (typeof ORDER_TAB_DEFS)[number]["id"];
+
+function orderTabForStatus(status: string): OrderTabId {
+  if (status === "completed") return "complete";
+  if (status === "cancelled") return "cancelled";
+  return "pending";
+}
+
+function AdminOrdersPanel() {
+  const utils = trpc.useUtils();
+  const overviewQuery = trpc.admin.overview.useQuery();
+  const statesQuery = trpc.cooperativeAdmin.orderThreadStates.useQuery();
+  const [tab, setTab] = useState<OrderTabId>("pending");
+  const [search, setSearch] = useState("");
+  const updateOrderState = trpc.cooperativeAdmin.updateOrderState.useMutation({
+    onSuccess: () => {
+      toast.success("Order list updated.");
+      void utils.cooperativeAdmin.orderThreadStates.invalidate();
+      void utils.admin.overview.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const orders = overviewQuery.data?.orders ?? [];
+  const hiddenIds = new Set(
+    (statesQuery.data ?? [])
+      .filter(row => row.deletedAt || row.archivedAt)
+      .map(row => row.orderId),
+  );
+  const visible = orders.filter(order => !hiddenIds.has(order.id));
+  const counts: Record<OrderTabId, number> = { pending: 0, complete: 0, cancelled: 0 };
+  for (const order of visible) counts[orderTabForStatus(order.status)] += 1;
+  const term = search.trim().toLowerCase();
+  const filtered = visible.filter(order => {
+    if (orderTabForStatus(order.status) !== tab) return false;
+    if (!term) return true;
+    return String(order.id).includes(term)
+      || (order.totalCents !== undefined && peso(order.totalCents).toLowerCase().includes(term))
+      || (order.status ?? "").toLowerCase().includes(term);
+  });
+  const pendingOrders = filtered.filter(order => order.status !== "completed" && order.status !== "cancelled");
+  const closedOrders = filtered.filter(order => order.status === "completed" || order.status === "cancelled");
+  return (
+    <section className="agri-card p-5 sm:p-6" data-testid="admin-orders-content">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-[#264f37]">Order management</h2>
+          <p className="mt-1 text-sm text-[#6a796e]">Review orders, coordinate fulfillment, and verify payments for your cooperative.</p>
+        </div>
+        <input
+          className="field-control w-full sm:w-64"
+          placeholder="Search orders…"
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          aria-label="Search orders"
+        />
+      </div>
+      <div className="mt-4 flex gap-2" role="tablist" aria-label="Order category">
+        {ORDER_TAB_DEFS.map(item => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.id}
+            className={`agri-ghost px-3 py-1.5 text-xs ${tab === item.id ? "bg-[#edf3e9]" : ""}`}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label} ({counts[item.id]})
+          </button>
+        ))}
+      </div>
+      <div className="mt-5 space-y-3">
+        {(tab === "pending" ? pendingOrders : closedOrders).map(order => (
+          <AdminOrderCard key={order.id} orderId={order.id} />
+        ))}
+        {!(tab === "pending" ? pendingOrders : closedOrders).length && (
+          <p className="py-5 text-center text-sm text-[#6d7d70]">
+            {tab === "pending" ? "No orders are waiting for fulfillment." : tab === "complete" ? "No completed orders yet." : "No cancelled orders."}
+          </p>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function AdminPaymentReviewQueue() {
@@ -1873,6 +2022,31 @@ function AdminDashboard() {
     </div>
   );
 
+  const quotationsPanel = (
+    <section className="agri-card p-5 sm:p-6" data-testid="admin-quotations-content">
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2>
+      <p className="mt-1 text-sm text-[#6a796e]">Scope: {user?.role === "admin" ? "My cooperative" : "All cooperatives"}.</p>
+      <div className="mt-5 space-y-3">
+        {overview?.quotations.map(row => (
+          <article key={row.quotation.id} className="rounded-xl bg-[#f2f6ef] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-bold text-[#315640]">{row.productName}</p>
+                <p className="mt-1 text-xs text-[#6d7d70]">
+                  {row.quotation.requestedQty} {row.unit} · {row.buyerName || "Buyer"} · Request #{row.quotation.id}
+                </p>
+              </div>
+              <Status value={row.quotation.status}/>
+            </div>
+            {row.quotation.quotedPriceCents != null && (
+              <p className="mt-2 text-sm font-bold text-[#315640]">{peso(row.quotation.quotedPriceCents)} per {row.unit}</p>
+            )}
+          </article>
+        ))}
+        {!overview?.quotations.length && <p className="py-5 text-center text-sm text-[#6d7d70]">No quotation requests are recorded for this scope.</p>}
+      </div>
+    </section>
+  );
   const panels: Record<string, ReactNode> = {
             applications: user?.role === "superadmin" ? <OfficerApplicationsPanel /> : null,
             products: (
@@ -1955,57 +2129,14 @@ function AdminDashboard() {
             ),
             payments: <AdminSystemPaymentsPanel />,
             orders: (
-              <section className="agri-card p-5 sm:p-6" data-testid="admin-orders-content">
-                <h2 className="font-display text-2xl font-bold text-[#264f37]">Order fulfillment</h2>
-                <p className="mt-1 text-sm text-[#6a796e]">Complete ready orders with actual delivered quantities, or cancel without deducting stock.</p>
-                <div className="mt-5 space-y-3">
-                  {openOrders.map(order => <AdminOrderCard key={order.id} orderId={order.id} />)}
-                  {!openOrders.length && <p className="py-5 text-center text-sm text-[#6d7d70]">No orders are waiting for fulfillment.</p>}
-                </div>
-                <div className="mt-8 border-t border-[#e3e9de] pt-6">
-                  <h3 className="font-display text-xl font-bold text-[#264f37]">All order activity · {user?.role === "admin" ? "My cooperative" : "All cooperatives"}</h3>
-                  <div className="mt-4 space-y-3">
-                    {overview?.orders.map(order => (
-                      <div className="flex items-center justify-between rounded-xl bg-[#f2f6ef] p-3" key={order.id}>
-                        <div>
-                          <p className="font-bold text-[#315640]">Order #{order.id}</p>
-                          <p className="text-xs text-[#6c7c70]">{peso(order.totalCents)} · {when(order.createdAt)}</p>
-                        </div>
-                        <Status value={order.status} />
-                      </div>
-                    ))}
-                    {!overview?.orders.length && <p className="text-sm text-[#6d7d70]">Orders will appear as marketplace activity begins.</p>}
-                  </div>
-                </div>
-              </section>
+              <div className="space-y-6">
+                <AdminOrdersPanel />
+                {quotationsPanel}
+              </div>
             ),
-            quotations: (
-              <section className="agri-card p-5 sm:p-6" data-testid="admin-quotations-content">
-                <h2 className="font-display text-2xl font-bold text-[#264f37]">Quotation requests</h2>
-                <p className="mt-1 text-sm text-[#6a796e]">Scope: {user?.role === "admin" ? "My cooperative" : "All cooperatives"}.</p>
-                <div className="mt-5 space-y-3">
-                  {overview?.quotations.map(row => (
-                    <article key={row.quotation.id} className="rounded-xl bg-[#f2f6ef] p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-bold text-[#315640]">{row.productName}</p>
-                          <p className="mt-1 text-xs text-[#6d7d70]">
-                            {row.quotation.requestedQty} {row.unit} · {row.buyerName || "Buyer"} · Request #{row.quotation.id}
-                          </p>
-                        </div>
-                        <Status value={row.quotation.status}/>
-                      </div>
-                      {row.quotation.quotedPriceCents != null && (
-                        <p className="mt-2 text-sm font-bold text-[#315640]">{peso(row.quotation.quotedPriceCents)} per {row.unit}</p>
-                      )}
-                    </article>
-                  ))}
-                  {!overview?.quotations.length && <p className="py-5 text-center text-sm text-[#6d7d70]">No quotation requests are recorded for this scope.</p>}
-                </div>
-              </section>
-            ),
+            quotations: quotationsPanel,
             users: (
-              <section className="grid gap-8 xl:grid-cols-[1.3fr_.7fr]" data-testid="admin-users-content">
+              <section className="grid gap-8" data-testid="admin-users-content">
                 <div className="agri-card overflow-hidden">
                   <div className="flex flex-wrap items-start justify-between gap-3 p-5 sm:p-6">
                     <div>
@@ -2066,11 +2197,9 @@ function AdminDashboard() {
                     )}
                   </div>
                 </div>
-                <div className="space-y-8">
-                  {(user?.role === "admin" || user?.role === "superadmin") && (
-                    <CooperativesAdminPanel canCreateCooperative={user.role === "superadmin"} />
-                  )}
-                </div>
+                {(user?.role === "admin" || user?.role === "superadmin") && (
+                  <CooperativesAdminPanel canCreateCooperative={user.role === "superadmin"} />
+                )}
                 <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
                   <AlertDialogContent>
                     <AlertDialogHeader>

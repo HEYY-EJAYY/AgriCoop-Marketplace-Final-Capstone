@@ -75,13 +75,14 @@ import {
   verifyPaymentProofUploadIntent,
 } from "./paymentProofs";
 import { PAYMENT_PROOF_CONTENT_TYPES, PAYMENT_PROOF_MAX_BYTES } from "../shared/paymentProofs";
+import { FULFILLMENT_TYPES } from "../shared/fulfillment";
 import { SUPPORT_TICKET_STATUSES } from "../shared/supportTicketStatus";
 import { matchesImageContentTypeSignature } from "../shared/imageValidation";
 import { createRefundRecord, completedRefundAmountCents, parseRefundRecords, reservedRefundAmountCents, transitionRefundRecord, type RefundState } from "../shared/paymentRefunds";
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../shared/profileVerification";
 import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
-import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures, quotationArchiveProcedures } from "./part2Routers";
+import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures, quotationArchiveProcedures, upsertPerUserThreadState } from "./part2Routers";
 import { cartRouter } from "./cart";
 import { accountInactiveMessage, canSoftDeleteTargetUser } from "./userSoftDelete";
 import {
@@ -235,6 +236,9 @@ export const newProductSchema = z.object({
   allowsPickup: z.boolean().default(true),
   allowsDelivery: z.boolean().default(true),
   acceptsOnlinePayment: z.boolean().default(false),
+  fulfillmentType: z.enum(FULFILLMENT_TYPES).default("on_hand"),
+  prepTimeDays: z.number().int().min(1).max(90).optional(),
+  capacityNote: z.string().trim().max(300).optional(),
   imageUrls: z.array(z.string().max(1000).refine(
     imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
     "Image must be a valid URL or local image path.",
@@ -256,6 +260,9 @@ export const updateProductSchema = z.object({
   allowsPickup: z.boolean().optional(),
   allowsDelivery: z.boolean().optional(),
   acceptsOnlinePayment: z.boolean().optional(),
+  fulfillmentType: z.enum(FULFILLMENT_TYPES).optional(),
+  prepTimeDays: z.number().int().min(1).max(90).nullable().optional(),
+  capacityNote: z.string().trim().max(300).nullable().optional(),
   imageUrls: z.array(z.string().max(1000).refine(
     imageUrl => /^https?:\/\//i.test(imageUrl) || imageUrl.startsWith("/manus-storage/") || imageUrl.startsWith("/images/"),
     "Image must be a valid URL or local image path.",
@@ -1596,7 +1603,8 @@ export const appRouter = router({
                 "sellerId", "cooperativeId", name, category, variety, description, unit,
                 "priceCents", "stockQty", "minOrderQty", "qualityGrade", status,
                 "verificationStatus", visibility, "primaryImageUrl",
-                "allowsPickup", "allowsDelivery", "acceptsOnlinePayment"
+                "allowsPickup", "allowsDelivery", "acceptsOnlinePayment",
+                "fulfillmentType", "prepTimeDays", "capacityNote"
               ) values (
                 ${seller.id},
                 ${seller.cooperativeId},
@@ -1615,7 +1623,10 @@ export const appRouter = router({
                 ${imageUrls[0] ?? null},
                 ${productValues.allowsPickup},
                 ${productValues.allowsDelivery},
-                ${false}
+                ${false},
+                ${productValues.fulfillmentType},
+                ${productValues.prepTimeDays ?? null},
+                ${productValues.capacityNote ?? null}
               )
               returning id
             `);
@@ -2147,7 +2158,13 @@ export const appRouter = router({
             paymentStatus: initialPaymentStatus,
             paymentOptionId: selectedPaymentOptionId ?? null,
           }, buyer.id);
-          await tx.insert(orderItems).values(pricing.lines.map(item => ({ orderId: newOrder.id, productId: item.productId, quantity: item.quantity, unitPriceCents: item.unitPriceCents })));
+          await tx.insert(orderItems).values(pricing.lines.map(item => ({
+            orderId: newOrder.id,
+            productId: item.productId,
+            quantity: item.quantity,
+            unitPriceCents: item.unitPriceCents,
+            fulfillmentType: (currentOrder.productMap.get(item.productId) as { fulfillmentType?: string | null } | undefined)?.fulfillmentType ?? "on_hand",
+          })));
           await tx.insert(orderEvents).values({
             orderId: newOrder.id,
             actorUserId: buyer.id,
@@ -2195,17 +2212,7 @@ export const appRouter = router({
               .from(transactions)
               .where(eq(transactions.orderId, newOrder.id))
               .limit(1);
-            await tx.execute(sql`
-              select pg_advisory_xact_lock(
-                hashtext('agricoop_app.paymentProofs'),
-                hashtext('paymentProofs.id')
-              )
-            `);
-            const [idRow] = await tx.select({
-              nextId: sql<number>`coalesce(max(${paymentProofs.id}), 0) + 1`,
-            }).from(paymentProofs);
             await tx.insert(paymentProofs).values({
-              id: idRow.nextId,
               orderId: newOrder.id,
               transactionId: transaction?.id ?? null,
               uploadedBy: buyer.id,
@@ -2521,6 +2528,120 @@ export const appRouter = router({
           throw error;
         }
         return { success: true };
+      }),
+    requestSellerAvailability: protectedProcedure
+      .input(z.object({
+        orderId: z.number().int().positive(),
+        note: z.string().trim().max(600).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [order] = await tx.select().from(orders)
+            .where(eq(orders.id, input.orderId))
+            .for("update")
+            .limit(1);
+          if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
+          if (!canAccessOrderForCooperative(actor, order.cooperativeId)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only manage orders in their cooperative." });
+          }
+          if (order.status !== "submitted" && order.status !== "confirmed") {
+            throw new TRPCError({ code: "CONFLICT", message: "Seller availability can only be requested while the order is still open." });
+          }
+          const note = input.note?.trim() || null;
+          await tx.insert(orderEvents).values({
+            orderId: order.id,
+            actorUserId: actor.id,
+            action: "availability_requested",
+            fromStatus: order.status,
+            note,
+          });
+          await tx.insert(orderHistory).values({
+            orderId: order.id,
+            actorUserId: actor.id,
+            eventType: "order_status",
+            fromValue: order.status,
+            toValue: order.status,
+            note: `Seller availability confirmation requested.${note ? ` ${note}` : ""}`,
+          });
+          await createNotification(tx, {
+            userId: order.sellerId,
+            type: "order_status_updated",
+            title: `Availability check for order #${order.id}`,
+            content: `A cooperative officer asked you to confirm availability.${note ? ` Note: ${note}` : ""}`,
+            link: `/orders/${order.id}`,
+            relatedEntityId: order.id,
+            relatedEntityType: "order",
+          });
+          return { success: true };
+        });
+      }),
+    respondAvailability: protectedProcedure
+      .input(z.object({
+        orderId: z.number().int().positive(),
+        response: z.enum(["available", "partially_available", "unavailable", "needs_clarification"]),
+        note: z.string().trim().max(600).optional(),
+        availableQuantity: z.number().int().min(0).optional(),
+      }).strict().superRefine((input, context) => {
+        if ((input.response === "partially_available" || input.response === "unavailable" || input.response === "needs_clarification") && !input.note) {
+          context.addIssue({ code: "custom", path: ["note"], message: "Explain the availability response so the officer can coordinate with the buyer." });
+        }
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [order] = await tx.select().from(orders)
+            .where(eq(orders.id, input.orderId))
+            .for("update")
+            .limit(1);
+          if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
+          if (order.sellerId !== seller.id) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You can only respond to availability requests for your own orders." });
+          }
+          if (order.status === "completed" || order.status === "cancelled") {
+            throw new TRPCError({ code: "CONFLICT", message: "This order is already closed." });
+          }
+          const note = input.note?.trim() || null;
+          const detail = [
+            `response=${input.response}`,
+            input.availableQuantity !== undefined ? `availableQuantity=${input.availableQuantity}` : null,
+            note,
+          ].filter(Boolean).join(" | ");
+          await tx.insert(orderEvents).values({
+            orderId: order.id,
+            actorUserId: seller.id,
+            action: "availability_response",
+            fromStatus: order.status,
+            note: detail.slice(0, 2000),
+          });
+          await tx.insert(orderHistory).values({
+            orderId: order.id,
+            actorUserId: seller.id,
+            eventType: "order_status",
+            fromValue: order.status,
+            toValue: order.status,
+            note: `Seller availability response: ${formatEnumLabel(input.response)}.${note ? ` ${note}` : ""}`,
+          });
+          const officers = order.cooperativeId === null ? [] : await tx.select({ id: users.id }).from(users).where(and(
+            eq(users.role, "admin"),
+            eq(users.cooperativeId, order.cooperativeId),
+            eq(users.approvalStatus, "approved"),
+          ));
+          for (const officer of officers) {
+            await createNotification(tx, {
+              userId: officer.id,
+              type: "order_status_updated",
+              title: `Seller responded on order #${order.id}`,
+              content: `Availability: ${formatEnumLabel(input.response)}.${note ? ` ${note}` : ""}`,
+              link: `/orders/${order.id}`,
+              relatedEntityId: order.id,
+              relatedEntityType: "order",
+            });
+          }
+          return { success: true };
+        });
       }),
   }),
 
@@ -3073,17 +3194,8 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The order transaction cannot accept another payment proof." });
         }
 
-        await tx.execute(sql`
-          select pg_advisory_xact_lock(
-            hashtext('agricoop_app.paymentProofs'),
-            hashtext('paymentProofs.id')
-          )
-        `);
-        const [idRow] = await tx.select({
-          nextId: sql<number>`coalesce(max(${paymentProofs.id}), 0) + 1`,
-        }).from(paymentProofs);
+        // The paymentProofs.id identity/sequence generates the primary key.
         const [proof] = await tx.insert(paymentProofs).values({
-          id: idRow.nextId,
           orderId: order.id,
           transactionId: transaction.id,
           uploadedBy: buyer.id,
@@ -3927,6 +4039,113 @@ export const appRouter = router({
           return { success: true };
         });
       }),
+    orderThreadStates: protectedProcedure.query(async ({ ctx }) => {
+      const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+      const db = await dbOrThrow();
+      return db.select({
+        orderId: threadStates.threadId,
+        archivedAt: threadStates.archivedAt,
+        deletedAt: threadStates.deletedAt,
+      }).from(threadStates).where(and(
+        eq(threadStates.userId, actor.id),
+        eq(threadStates.channel, "order"),
+      ));
+    }),
+    updateOrderState: protectedProcedure
+      .input(z.object({
+        orderIds: z.array(z.number().int().positive()).min(1).max(100),
+        action: z.enum(["archive", "unarchive", "delete", "restore"]),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const orderRows = await db.select({
+          id: orders.id,
+          status: orders.status,
+          cooperativeId: orders.cooperativeId,
+        }).from(orders).where(inArray(orders.id, input.orderIds));
+        if (orderRows.length !== input.orderIds.length) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "One or more orders could not be found." });
+        }
+        for (const order of orderRows) {
+          if (!canAccessOrderForCooperative(actor, order.cooperativeId)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only manage orders in their cooperative." });
+          }
+          if ((input.action === "archive" || input.action === "delete")
+            && order.status !== "completed" && order.status !== "cancelled") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Order #${order.id} is ${formatEnumLabel(order.status)}; only completed or cancelled orders can be removed from the list.`,
+            });
+          }
+        }
+        for (const order of orderRows) {
+          await upsertPerUserThreadState({
+            userId: actor.id,
+            channel: "order",
+            threadId: order.id,
+            action: input.action,
+          });
+        }
+        return { success: true, count: orderRows.length };
+      }),
+    setFulfillmentClassification: protectedProcedure
+      .input(z.object({
+        productId: z.number().int().positive(),
+        fulfillmentType: z.enum(FULFILLMENT_TYPES),
+        prepTimeDays: z.number().int().min(1).max(90).nullable().optional(),
+        capacityNote: z.string().trim().max(300).nullable().optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        return db.transaction(async tx => {
+          const [product] = await tx.select({
+            id: products.id,
+            sellerId: products.sellerId,
+            cooperativeId: products.cooperativeId,
+            fulfillmentType: products.fulfillmentType,
+            prepTimeDays: products.prepTimeDays,
+            capacityNote: products.capacityNote,
+          }).from(products).where(eq(products.id, input.productId)).for("update").limit(1);
+          if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Product not found." });
+          if (!canManageCooperativeResource(actor, product.cooperativeId)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot classify a product outside your cooperative." });
+          }
+          const changed = product.fulfillmentType !== input.fulfillmentType
+            || (product.prepTimeDays ?? null) !== (input.prepTimeDays ?? null)
+            || (product.capacityNote ?? null) !== (input.capacityNote?.trim() || null);
+          if (changed) {
+            await tx.update(products).set({
+              fulfillmentType: input.fulfillmentType,
+              prepTimeDays: input.prepTimeDays ?? null,
+              capacityNote: input.capacityNote?.trim() || null,
+            }).where(eq(products.id, product.id));
+            await recordAuditLog(tx, {
+              actorUserId: actor.id,
+              action: "product_fulfillment_classified",
+              entityType: "product",
+              entityId: product.id,
+              cooperativeId: product.cooperativeId,
+              metadata: {
+                from: product.fulfillmentType,
+                to: input.fulfillmentType,
+                prepTimeDays: input.prepTimeDays ?? null,
+              },
+            });
+            await createNotification(tx, {
+              userId: product.sellerId,
+              type: "product_fulfillment_classified",
+              title: "Listing fulfillment updated",
+              content: `A cooperative officer set this listing to ${input.fulfillmentType === "order_based" ? "Order-Based (prepared after order)" : "On-Hand (ready stock)"}.`,
+              link: "/dashboard",
+              relatedEntityId: product.id,
+              relatedEntityType: "product",
+            });
+          }
+          return { success: true, changed };
+        });
+      }),
   }),
 
   admin: router({
@@ -4631,13 +4850,40 @@ export const appRouter = router({
   notifications: router({
     mine: protectedProcedure.query(async ({ ctx }) => {
       const db = await dbOrThrow();
-      return db.select().from(notifications).where(eq(notifications.userId, ctx.user.id)).orderBy(desc(notifications.createdAt));
+      return db.select().from(notifications)
+        .where(and(eq(notifications.userId, ctx.user.id), isNull(notifications.deletedAt)))
+        .orderBy(desc(notifications.createdAt));
     }),
     markRead: protectedProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       const db = await dbOrThrow();
       await db.update(notifications).set({ isRead: 1 }).where(and(eq(notifications.id, input.id), eq(notifications.userId, ctx.user.id)));
       return { success: true };
     }),
+    markAllRead: protectedProcedure.mutation(async ({ ctx }) => {
+      const db = await dbOrThrow();
+      await db.update(notifications).set({ isRead: 1 })
+        .where(and(eq(notifications.userId, ctx.user.id), eq(notifications.isRead, 0), isNull(notifications.deletedAt)));
+      return { success: true };
+    }),
+    setRead: protectedProcedure
+      .input(z.object({
+        ids: z.array(z.number().int().positive()).min(1).max(100),
+        isRead: z.union([z.literal(0), z.literal(1)]),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        await db.update(notifications).set({ isRead: input.isRead })
+          .where(and(eq(notifications.userId, ctx.user.id), inArray(notifications.id, input.ids), isNull(notifications.deletedAt)));
+        return { success: true };
+      }),
+    remove: protectedProcedure
+      .input(z.object({ ids: z.array(z.number().int().positive()).min(1).max(100) }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const db = await dbOrThrow();
+        await db.update(notifications).set({ deletedAt: new Date() })
+          .where(and(eq(notifications.userId, ctx.user.id), inArray(notifications.id, input.ids)));
+        return { success: true };
+      }),
   }),
 
   auditLogs: router({

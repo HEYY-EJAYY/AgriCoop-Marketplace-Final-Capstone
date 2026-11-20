@@ -216,7 +216,7 @@ CREATE TABLE agricoop_app.transactions (
 );
 
 CREATE TABLE agricoop_app."paymentProofs" (
-  id integer PRIMARY KEY,
+  id serial PRIMARY KEY,
   "orderId" integer NOT NULL REFERENCES agricoop_app.orders(id) ON DELETE RESTRICT,
   "transactionId" integer REFERENCES agricoop_app.transactions(id) ON DELETE SET NULL,
   "uploadedBy" integer NOT NULL REFERENCES agricoop_app.users(id) ON DELETE RESTRICT,

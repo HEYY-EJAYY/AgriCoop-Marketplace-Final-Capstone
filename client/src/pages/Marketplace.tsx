@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { ProductImage } from "@/components/ProductImage";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { ListingOptionBadges } from "@/components/ListingOptionBadges";
+import { FulfillmentBadge } from "@/components/FulfillmentBadge";
 import { hasMinimumOrderStock } from "../../../shared/checkoutCart";
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
 import { CartQuantityInput } from "@/components/CartQuantityInput";
@@ -100,6 +101,8 @@ type ListingRow = {
     allowsPickup?: boolean;
     allowsDelivery?: boolean;
     acceptsOnlinePayment?: boolean;
+    fulfillmentType?: string | null;
+    prepTimeDays?: number | null;
   };
   sellerName: string | null;
   cooperativeName: string | null;
@@ -643,6 +646,7 @@ export default function Marketplace() {
                         <p className="mt-1 line-clamp-2 min-h-8 text-xs leading-5 text-[#66766b]">
                           {product.description}
                         </p>
+                        <FulfillmentBadge type={product.fulfillmentType} prepTimeDays={product.prepTimeDays} className="mt-2 self-start" />
                         <ListingOptionBadges
                           className="mt-2"
                           allowsPickup={product.allowsPickup}

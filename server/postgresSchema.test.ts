@@ -207,7 +207,7 @@ describe("PostgreSQL identity lookup schema", () => {
       "originalFileName", "mimeType", "fileSizeBytes", "verificationStatus",
       "reviewNote", "reviewedBy", "reviewedAt", "createdAt", "updatedAt",
     ]);
-    expect(config.columns.find(column => column.name === "id")?.hasDefault).toBe(false);
+    expect(config.columns.find(column => column.name === "id")?.hasDefault).toBe(true);
     expect(config.columns.find(column => column.name === "fileSizeBytes")?.columnType).toBe("PgBigInt53");
     expect(config.columns.find(column => column.name === "fileSizeBytes")?.notNull).toBe(false);
     expect(config.columns.find(column => column.name === "orderId")?.notNull).toBe(true);

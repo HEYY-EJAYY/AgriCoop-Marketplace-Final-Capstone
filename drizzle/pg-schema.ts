@@ -180,6 +180,9 @@ export const products = appSchema.table("products", {
   allowsPickup: boolean("allowsPickup").notNull().default(true),
   allowsDelivery: boolean("allowsDelivery").notNull().default(true),
   acceptsOnlinePayment: boolean("acceptsOnlinePayment").notNull().default(false),
+  fulfillmentType: varchar("fulfillmentType", { length: 20 }).notNull().default("on_hand"),
+  prepTimeDays: integer("prepTimeDays"),
+  capacityNote: text("capacityNote"),
   deletedAt: timestamp("deletedAt", { mode: "date" }),
   deletedBy: integer("deletedBy").references(() => users.id),
 }, table => [index("products_seller_id_idx").on(table.sellerId)]);
@@ -270,6 +273,7 @@ export const orderItems = appSchema.table("orderItems", {
   productId: integer("productId").notNull().references(() => products.id),
   quantity: integer("quantity").notNull(),
   unitPriceCents: integer("unitPriceCents").notNull(),
+  fulfillmentType: varchar("fulfillmentType", { length: 20 }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
 }, table => [index("orderitems_order_id_idx").on(table.orderId)]);
@@ -309,7 +313,7 @@ export const transactions = appSchema.table("transactions", {
 }, table => [uniqueIndex("transactions_order_id_idx").on(table.orderId)]);
 
 export const paymentProofs = appSchema.table("paymentProofs", {
-  id: integer("id").primaryKey(),
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   orderId: integer("orderId").notNull().references(() => orders.id, { onDelete: "restrict" }),
   transactionId: integer("transactionId").references(() => transactions.id, { onDelete: "set null" }),
   uploadedBy: integer("uploadedBy").notNull().references(() => users.id, { onDelete: "restrict" }),
