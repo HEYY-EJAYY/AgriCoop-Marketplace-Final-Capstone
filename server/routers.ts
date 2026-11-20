@@ -2309,6 +2309,9 @@ export const appRouter = router({
         if (!detail || !canViewOrder(actor, detail.order)) {
           throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
         }
+        if (actor.role === "admin" && !canAccessOrderForCooperative(actor, detail.order.cooperativeId)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
+        }
         const maySeeProof = actor.id === detail.order.buyerId || actor.role === "admin" || actor.role === "superadmin";
         let proofSignedUrl: string | null = null;
         if (maySeeProof && detail.proof?.storagePath && isPaymentProofStorageKey(detail.proof.storagePath, detail.order.buyerId, detail.order.id)) {
@@ -2343,8 +2346,12 @@ export const appRouter = router({
           id: orders.id,
           buyerId: orders.buyerId,
           sellerId: orders.sellerId,
+          cooperativeId: orders.cooperativeId,
         }).from(orders).where(eq(orders.id, input.orderId)).limit(1);
         if (!order || !canViewOrder(actor, order)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
+        }
+        if (actor.role === "admin" && !canAccessOrderForCooperative(actor, order.cooperativeId)) {
           throw new TRPCError({ code: "NOT_FOUND", message: "This order could not be found." });
         }
         return db.select({

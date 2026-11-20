@@ -118,7 +118,7 @@ describe("tRPC role × procedure access matrix", () => {
 
   it("returns friendly NOT_FOUND for unauthorized order detail viewers", async () => {
     mocks.getOrderDetail.mockResolvedValue({
-      order: { id: 9, buyerId: 10, sellerId: 20, paymentMethod: "f2f" },
+      order: { id: 9, buyerId: 10, sellerId: 20, cooperativeId: 2, paymentMethod: "f2f" },
       proof: null,
       history: [],
       events: [],
@@ -128,6 +128,15 @@ describe("tRPC role × procedure access matrix", () => {
     await expect(caller("buyer", 10).orders.byId({ id: 9 })).resolves.toMatchObject({ order: { id: 9 } });
     await expect(caller("seller", 20).orders.byId({ id: 9 })).resolves.toMatchObject({ order: { id: 9 } });
     await expect(caller("admin").orders.byId({ id: 9 })).resolves.toMatchObject({ order: { id: 9 } });
+    await expect(caller("superadmin").orders.byId({ id: 9 })).resolves.toMatchObject({ order: { id: 9 } });
+    mocks.getOrderDetail.mockResolvedValue({
+      order: { id: 9, buyerId: 10, sellerId: 20, cooperativeId: 99, paymentMethod: "f2f" },
+      proof: null,
+      history: [],
+      events: [],
+      items: [],
+    });
+    await expect(caller("admin").orders.byId({ id: 9 })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(caller("superadmin").orders.byId({ id: 9 })).resolves.toMatchObject({ order: { id: 9 } });
   });
 
