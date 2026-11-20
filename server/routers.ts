@@ -1961,6 +1961,11 @@ export const appRouter = router({
             .orderBy(asc(products.id))
             .for("update");
           if (currentProducts.length !== productIds.length) {
+            console.error("[orders.create] product lookup mismatch", {
+              requested: productIds,
+              found: currentProducts.map(p => p.id),
+              buyerId: buyer.id,
+            });
             throw new TRPCError({ code: "BAD_REQUEST", message: "A product in this order could not be found." });
           }
           const reservedByProduct = await getOpenOrderReservationQuantities(tx, productIds);
