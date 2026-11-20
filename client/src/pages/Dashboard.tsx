@@ -2178,9 +2178,9 @@ function AdminDashboard() {
         <button className="agri-ghost text-sm" onClick={() => setSellerMode(true)}>Act as seller</button>
       </div>
       <div className="grid gap-4 md:grid-cols-4">
-        <Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.length || 0)} icon={Users} />
-        <Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.length || 0)} icon={Store} />
-        <Metric label="Product listings" value={String(overview?.products.length || 0)} icon={Package} />
+        <Metric label={user?.role === "superadmin" ? "Platform users" : "Cooperative users"} value={String(overview?.users.filter(r => !r.user.deletedAt).length || 0)} icon={Users} />
+        <Metric label={user?.role === "superadmin" ? "Cooperatives" : "Your cooperative"} value={String(overview?.cooperatives.filter(c => !c.deletedAt).length || 0)} icon={Store} />
+        <Metric label="Product listings" value={String(overview?.products.filter(p => !p.deletedAt).length || 0)} icon={Package} />
         <Metric label="Transaction records" value={String(overview?.transactions.length || 0)} icon={ClipboardList} />
       </div>
       {overview && (
