@@ -165,6 +165,7 @@ describe("marketplace purchasability invariant", () => {
       return [];
     };
 
+    const executedSql: string[] = [];
     const tx = {
       select: (selection?: Record<string, unknown>) => ({
         from: (table: unknown) => makeQuery(selectRows(selection, table)),
@@ -176,7 +177,15 @@ describe("marketplace purchasability invariant", () => {
           }],
         }),
       }),
-      execute: async () => [],
+      execute: async (query: unknown) => {
+        const raw = JSON.stringify(query);
+        executedSql.push(raw);
+        if (raw.includes("order_create_lock_products")) return [activeProduct];
+        if (raw.includes("order_create_lock_sellers")) {
+          return [{ id: activeProduct.sellerId, approvalStatus: "approved", deletedAt: null }];
+        }
+        return [];
+      },
       transaction: async (work: (transaction: unknown) => unknown) => work(tx),
     };
     mocks.getDb.mockResolvedValue(tx);
@@ -205,5 +214,8 @@ describe("marketplace purchasability invariant", () => {
 
     expect(mocks.getMarketplace).toHaveBeenCalledOnce();
     expect(mocks.getOpenOrderReservationQuantities).toHaveBeenCalled();
+    expect(executedSql.some(sql => sql.includes("agricoop.order_create_scope"))).toBe(true);
+    expect(executedSql.some(sql => sql.includes("order_create_lock_products"))).toBe(true);
+    expect(executedSql.some(sql => sql.includes("order_create_lock_sellers"))).toBe(true);
   });
 });

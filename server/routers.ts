@@ -1956,22 +1956,11 @@ export const appRouter = router({
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
         const createdOrder = await db.transaction(async tx => {
-          const diag = await tx.execute(sql`
-            select current_user as role,
-                   current_setting('request.jwt.claim.sub', true) as jwt_sub,
-                   agricoop_app.current_app_user_id() as app_user_id
-          `);
-          console.error("[orders.create] scope diag", JSON.stringify(Array.from(diag as any)));
-          const currentProducts = await tx.select().from(products)
-            .where(inArray(products.id, productIds))
-            .orderBy(asc(products.id))
-            .for("update");
+          await tx.execute(sql`select set_config('agricoop.order_create_scope', 'on', true)`);
+          const currentProducts = Array.from(await tx.execute(sql`
+            select * from agricoop_app.order_create_lock_products(${productIds}::integer[])
+          `)) as unknown as Array<typeof products.$inferSelect>;
           if (currentProducts.length !== productIds.length) {
-            console.error("[orders.create] product lookup mismatch", {
-              requested: productIds,
-              found: currentProducts.map(p => p.id),
-              buyerId: buyer.id,
-            });
             throw new TRPCError({ code: "BAD_REQUEST", message: "A product in this order could not be found." });
           }
           const reservedByProduct = await getOpenOrderReservationQuantities(tx, productIds);
@@ -1983,14 +1972,9 @@ export const appRouter = router({
             ),
           }));
           const sellerIds = Array.from(new Set(availableProducts.map(product => product.sellerId)));
-          const currentSellers = await tx.select({
-            id: users.id,
-            approvalStatus: users.approvalStatus,
-            deletedAt: users.deletedAt,
-          })
-            .from(users)
-            .where(inArray(users.id, sellerIds))
-            .for("update");
+          const currentSellers = Array.from(await tx.execute(sql`
+            select * from agricoop_app.order_create_lock_sellers(${sellerIds}::integer[])
+          `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "approvalStatus" | "deletedAt">>;
           const sellersById = new Map(currentSellers.map(seller => [seller.id, seller]));
           for (const product of availableProducts) {
             const purchaseBlockReason = productPurchaseBlockReason({
@@ -2057,21 +2041,15 @@ export const appRouter = router({
 
           let selectedPaymentOptionId: number | undefined;
           if (isOnlinePaymentMethod(paymentMethod) && input.paymentOptionId !== undefined) {
-            const optionScope = currentOrder.cooperativeId === null
-              ? isNull(paymentOptions.cooperativeId)
-              : eq(paymentOptions.cooperativeId, currentOrder.cooperativeId);
-            const [selectedOption] = await tx.select({
-              id: paymentOptions.id,
-              cooperativeId: paymentOptions.cooperativeId,
-              paymentMethod: paymentOptions.paymentMethod,
-              isActive: paymentOptions.isActive,
-            }).from(paymentOptions)
-              .where(and(
-                eq(paymentOptions.id, input.paymentOptionId),
-                eq(paymentOptions.isActive, true),
-                optionScope,
-              ))
-              .for("update");
+            const optionRows = Array.from(await tx.execute(sql`
+              select * from agricoop_app.order_create_lock_payment_option(${input.paymentOptionId}::integer)
+            `)) as unknown as Array<{
+              id: number;
+              cooperativeId: number | null;
+              paymentMethod: string;
+              isActive: boolean;
+            }>;
+            const selectedOption = optionRows[0];
             if (selectedOption && (selectedOption.paymentMethod === "gcash" || selectedOption.paymentMethod === "online")
               && isGcashCheckoutOption({ ...selectedOption, paymentMethod: "gcash" }, currentOrder.cooperativeId)) {
               selectedPaymentOptionId = selectedOption.id;
@@ -2124,9 +2102,10 @@ export const appRouter = router({
 
           let currentQuotedPrice: number | undefined;
           if (input.quotationId !== undefined) {
-            const [quotation] = await tx.select().from(quotations)
-              .where(eq(quotations.id, input.quotationId))
-              .for("update");
+            const quotationRows = Array.from(await tx.execute(sql`
+              select * from agricoop_app.order_create_lock_quotation(${input.quotationId}::integer)
+            `)) as unknown as Array<typeof quotations.$inferSelect>;
+            const [quotation] = quotationRows;
             if (!quotation || quotation.sellerId !== currentOrder.sellerId || !canPlaceAcceptedQuotationOrder(buyer.id, quotation, currentOrder.items)) {
               throw new TRPCError({ code: "FORBIDDEN", message: "Only your accepted quotation and its quoted quantity can be used for this order." });
             }
