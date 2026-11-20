@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { formatUserRoleChip, roleDisplayLabel } from "@/lib/roleLabels";
+import { formatDateTimeManila, formatRelativeTime } from "@/lib/datetime";
 import { trpc } from "@/lib/trpc";
 import {
   LOGGED_OUT_CENTER,
@@ -156,7 +157,11 @@ export function NotificationBell() {
   });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const visibleNotifications = notifications.slice(0, 12);
+  const [sortOldestFirst, setSortOldestFirst] = useState(false);
+  const sortedNotifications = sortOldestFirst
+    ? [...notifications].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() || a.id - b.id)
+    : notifications;
+  const visibleNotifications = sortedNotifications.slice(0, 12);
   const allVisibleSelected = visibleNotifications.length > 0 && visibleNotifications.every(n => selected.has(n.id));
   const toggleSelected = (id: number) => setSelected(prev => {
     const next = new Set(prev);
@@ -186,6 +191,14 @@ export function NotificationBell() {
           <div className="flex items-center justify-between gap-2 border-b border-[#e3e9de] p-3">
             <span className="font-bold text-[#264f37]">Notifications</span>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-xs font-semibold text-[#1f5a3c] hover:underline"
+                onClick={() => setSortOldestFirst(value => !value)}
+                aria-label={sortOldestFirst ? "Sort newest first" : "Sort oldest first"}
+              >
+                {sortOldestFirst ? "Newest" : "Oldest"}
+              </button>
               {unreadCount > 0 && (
                 <button type="button" className="text-xs font-semibold text-[#1f5a3c] hover:underline disabled:opacity-50" disabled={markAllRead.isPending} onClick={() => markAllRead.mutate()}>
                   Mark all read
@@ -243,6 +256,9 @@ export function NotificationBell() {
                     <span className="block">
                       <span className="block font-bold text-[#315640]">{notification.title}</span>
                       <span className="mt-1 block text-xs leading-5 text-[#65766b]">{notification.content}</span>
+                      <span className="mt-1 block text-[11px] text-[#8a978d]" title={formatDateTimeManila(notification.createdAt)}>
+                        {formatRelativeTime(notification.createdAt)} · {formatDateTimeManila(notification.createdAt)}
+                      </span>
                     </span>
                   </span>
                 </>

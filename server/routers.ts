@@ -308,9 +308,9 @@ export function assertProductImageUpdateInput(
   }
 }
 
-async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { buyerId: number; sellerId?: number; productId?: number; subject: string; body: string; orderId?: number; quotationId?: number }) {
+async function openSupportThread(db: Awaited<ReturnType<typeof dbOrThrow>>, input: { buyerId: number; sellerId?: number; productId?: number; subject: string; body: string; orderId?: number; quotationId?: number; senderId?: number }) {
   const [thread] = await db.insert(conversations).values({ buyerId: input.buyerId, sellerId: input.sellerId, productId: input.productId, subject: input.subject, orderId: input.orderId, quotationId: input.quotationId }).returning({ id: conversations.id });
-  await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.buyerId, body: input.body });
+  await db.insert(conversationMessages).values({ conversationId: thread.id, senderId: input.senderId ?? input.buyerId, body: input.body });
   return thread.id;
 }
 
@@ -786,6 +786,7 @@ export const appRouter = router({
           orderId: order.id,
           subject: `Order #${order.id}`,
           body: input.body ?? `Chat opened for order #${order.id}.`,
+          senderId: ctx.user.id,
         });
         return { conversationId: id, created: true as const };
       }),
@@ -861,16 +862,10 @@ export const appRouter = router({
       const [message] = await db.insert(conversationMessages).values({ conversationId: input.conversationId, senderId: ctx.user.id, body: input.body }).returning({ id: conversationMessages.id });
       publishConversationMessage({ conversationId: input.conversationId, messageId: message.id, senderId: ctx.user.id });
       await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, input.conversationId));
-      // Mark unread for the other participant
+      // Mark unread for the other participant (cross-user write via SECURITY DEFINER helper)
       const otherId = ctx.user.id === thread.buyerId ? thread.sellerId : thread.buyerId;
       if (otherId) {
-        const [state] = await db.select().from(threadStates).where(and(
-          eq(threadStates.userId, otherId),
-          eq(threadStates.channel, "conversation"),
-          eq(threadStates.threadId, input.conversationId),
-        )).limit(1);
-        if (state) await db.update(threadStates).set({ isRead: 0, updatedAt: new Date() }).where(eq(threadStates.id, state.id));
-        else await db.insert(threadStates).values({ userId: otherId, channel: "conversation", threadId: input.conversationId, isRead: 0 });
+        await db.execute(sql`select agricoop_app.mark_counterparty_thread_unread('conversation', ${input.conversationId}, ${ctx.user.id})`);
       }
       return { success: true };
     }),
@@ -4880,7 +4875,7 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const db = await dbOrThrow();
         await db.update(notifications).set({ deletedAt: new Date() })
-          .where(and(eq(notifications.userId, ctx.user.id), inArray(notifications.id, input.ids)));
+          .where(and(eq(notifications.userId, ctx.user.id), inArray(notifications.id, input.ids), isNull(notifications.deletedAt)));
         return { success: true };
       }),
   }),

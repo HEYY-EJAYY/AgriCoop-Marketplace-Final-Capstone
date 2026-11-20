@@ -14,10 +14,10 @@ import {
 } from "@shared/paymentMethods";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { formatEnumLabel } from "@shared/enumLabels";
-import { ArrowLeft, ClipboardList, Loader2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, Loader2, MessageCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Link, useRoute } from "wouter";
+import { Link, useRoute, useLocation } from "wouter";
 
 const peso = (cents: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
@@ -249,6 +249,11 @@ export default function OrderDetail() {
     && isOfficer
     && proof?.id
     && (proof.verificationStatus === "pending" || paymentStatus === "awaiting_verification");
+  const [, setLocation] = useLocation();
+  const orderChat = trpc.conversations.openForOrder.useMutation({
+    onSuccess: data => setLocation(`/messages?id=${data.conversationId}`),
+    onError: problem => toast.error(toUserFacingErrorMessage(problem.message)),
+  });
   const showWaitingForConfirmation = isSeller && paymentUnpaid;
 
   return (
@@ -268,7 +273,19 @@ export default function OrderDetail() {
           <p className="text-sm text-[#6a796e]">
             Placed {formatDateTimeManila(order.createdAt)} · {peso(order.totalCents)}
           </p>
-          <StatusPill value={order.status} />
+          <div className="flex items-center gap-2">
+            {(role === "buyer" || role === "seller") && (
+              <button
+                type="button"
+                className="agri-ghost inline-flex min-h-11 items-center gap-1.5 px-3 py-2 text-xs"
+                disabled={orderChat.isPending}
+                onClick={() => orderChat.mutate({ orderId: order.id })}
+              >
+                <MessageCircle size={14} /> {orderChat.isPending ? "Opening…" : "Message about this order"}
+              </button>
+            )}
+            <StatusPill value={order.status} />
+          </div>
         </div>
 
         <section className="agri-card p-5 sm:p-6">

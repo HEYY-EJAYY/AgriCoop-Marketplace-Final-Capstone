@@ -123,6 +123,16 @@ button { cursor: pointer; }
   transition: background 160ms ease, transform 160ms ease;
 }
 .agri-ghost:hover { background: #edf3e9; transform: translateY(-1px); }
+.agri-danger {
+  display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+  border-radius: 999px; border: 1px solid #ecc9c0; padding: .6rem .95rem;
+  background: #fff7f5; color: #a34838; font-weight: 700; font-size: .8rem;
+  line-height: 1; cursor: pointer;
+  transition: background 160ms ease, transform 160ms ease;
+}
+.agri-danger:hover { background: #fbe9e4; }
+.agri-danger:disabled { cursor: not-allowed; opacity: .55; }
+.agri-danger:focus-visible { outline: 3px solid #eab75d; outline-offset: 3px; }
 .agri-card { border: 1px solid #e1e3d6; border-radius: 1.35rem; background: #fffdf8; box-shadow: 0 14px 35px rgba(46,61,43,.06); }
 .field-label { display: block; color: #315640; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .field-control { margin-top: .4rem; width: 100%; border: 1px solid #ccd8c8; border-radius: .8rem; background: #fffdf8; padding: .7rem .8rem; color: #173a2a; outline: none; transition: border 160ms ease, box-shadow 160ms ease; }

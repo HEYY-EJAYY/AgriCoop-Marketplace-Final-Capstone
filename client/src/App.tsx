@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { RealtimeInvalidator } from "./lib/useRealtimeInvalidation";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { PageFrame, marketingShellClass } from "@/components/AgriShell";
 import AdminShell from "@/components/AdminShell";
@@ -71,6 +72,7 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
+          <RealtimeInvalidator/>
           <Toaster richColors position="top-right"/>
           <Router/>
         </TooltipProvider>
