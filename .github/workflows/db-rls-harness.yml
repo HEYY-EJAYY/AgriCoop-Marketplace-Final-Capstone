@@ -89,7 +89,7 @@ jobs:
             echo "Missing executed cooperative public-read test."
             exit 1
           fi
-          if ! grep -q "registration insert and login select under authenticated role" harness-output.txt; then
+          if ! grep -q "registers a Buyer with a selected cooperative and reads the login row under authenticated role" harness-output.txt; then
             echo "Missing executed registration/login role test."
             exit 1
           fi
