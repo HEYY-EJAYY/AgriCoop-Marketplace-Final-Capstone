@@ -60,7 +60,7 @@ describe("payment method helpers", () => {
   it("maps legacy gcash to online and labels consistently", () => {
     expect(normalizePaymentMethodInput("gcash")).toBe("online");
     expect(paymentMethodLabel("gcash")).toBe("Online Payment");
-    expect(paymentMethodLabel("f2f")).toBe("Face-to-Face (Legacy)");
+    expect(paymentMethodLabel("f2f")).toBe("F2F");
   });
 
   it("intersects listing flags for a seller group", () => {

@@ -102,7 +102,7 @@ describe("order detail authorization", () => {
 describe("legacy payment display", () => {
   it("maps legacy gcash and f2f without rewriting stored values", () => {
     expect(paymentMethodLabel("gcash")).toBe("Online Payment");
-    expect(paymentMethodLabel("f2f")).toBe("Face-to-Face (Legacy)");
+    expect(paymentMethodLabel("f2f")).toBe("F2F");
     expect(paymentMethodLabel("online")).toBe("Online Payment");
     expect(paymentMethodLabel("cash_pickup")).toBe("Cash on Pickup");
   });
