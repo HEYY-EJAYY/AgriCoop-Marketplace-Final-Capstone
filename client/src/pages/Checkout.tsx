@@ -397,9 +397,10 @@ export default function Checkout() {
   const { user, loading } = useAuth();
   const [, setLocation] = useLocation();
   const { items: cartItems, isCartLoading, remove: removeCartItem } = useBuyerCart();
-  const cart = cartItems.length
-    ? { items: cartItems as CheckoutCartItem[] }
-    : null;
+  const cart = useMemo(
+    () => (cartItems.length ? { items: cartItems as CheckoutCartItem[] } : null),
+    [cartItems],
+  );
   const sellerMap = useMemo(() => (cart ? groupCartItemsBySeller(cart.items) : new Map()), [cart]);
 
   const availabilityQuery = trpc.systemPayment.getAvailability.useQuery(undefined, {
