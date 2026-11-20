@@ -790,7 +790,12 @@ export const appRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Only the buyer or seller on this order can open its chat." });
         }
         const [existing] = await db.select({ id: conversations.id }).from(conversations)
-          .where(and(eq(conversations.orderId, input.orderId), isNull(conversations.deletedAt)))
+          .where(and(
+            eq(conversations.orderId, input.orderId),
+            eq(conversations.buyerId, order.buyerId),
+            eq(conversations.sellerId, order.sellerId ?? -1),
+            isNull(conversations.deletedAt),
+          ))
           .limit(1);
         if (existing) return { conversationId: existing.id, created: false as const };
         const id = await openSupportThread(db, {
@@ -800,6 +805,41 @@ export const appRouter = router({
           subject: `Order #${order.id}`,
           body: input.body ?? `Chat opened for order #${order.id}.`,
           senderId: ctx.user.id,
+        });
+        return { conversationId: id, created: true as const };
+      }),
+    openOfficerOrderThread: protectedProcedure
+      .input(z.object({ orderId: z.number().int().positive(), body: z.string().min(1).max(2000).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const db = await dbOrThrow();
+        const [order] = await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "That order could not be found." });
+        if (order.sellerId !== seller.id) throw new TRPCError({ code: "FORBIDDEN", message: "Only the seller on this order can open its officer conversation." });
+        if (order.cooperativeId === null) throw new TRPCError({ code: "BAD_REQUEST", message: "This order has no cooperative officer to message." });
+        const [officer] = await db.select({ id: users.id }).from(users).where(and(
+          eq(users.cooperativeId, order.cooperativeId),
+          eq(users.role, "admin"),
+          eq(users.approvalStatus, "approved"),
+          isNull(users.deletedAt),
+        )).limit(1);
+        if (!officer) throw new TRPCError({ code: "NOT_FOUND", message: "No approved officer is assigned to this cooperative yet." });
+        const [existing] = await db.select({ id: conversations.id }).from(conversations)
+          .where(and(
+            eq(conversations.orderId, order.id),
+            eq(conversations.sellerId, seller.id),
+            eq(conversations.buyerId, officer.id),
+            isNull(conversations.deletedAt),
+          ))
+          .limit(1);
+        if (existing) return { conversationId: existing.id, created: false as const };
+        const id = await openSupportThread(db, {
+          buyerId: officer.id,
+          sellerId: seller.id,
+          orderId: order.id,
+          subject: `Order #${order.id} — officer coordination`,
+          body: input.body ?? `Seller opened the officer conversation for order #${order.id}.`,
+          senderId: seller.id,
         });
         return { conversationId: id, created: true as const };
       }),
@@ -4148,6 +4188,36 @@ export const appRouter = router({
           });
           return { success: true };
         });
+      }),
+    openSellerOrderThread: protectedProcedure
+      .input(z.object({ orderId: z.number().int().positive(), body: z.string().min(1).max(2000).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        const [order] = await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "That order could not be found." });
+        if (!canAccessOrderForCooperative(actor, order.cooperativeId)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only message sellers on orders in their cooperative." });
+        }
+        if (order.sellerId === null) throw new TRPCError({ code: "BAD_REQUEST", message: "This order has no seller to message." });
+        const [existing] = await db.select({ id: conversations.id }).from(conversations)
+          .where(and(
+            eq(conversations.orderId, order.id),
+            eq(conversations.buyerId, actor.id),
+            eq(conversations.sellerId, order.sellerId),
+            isNull(conversations.deletedAt),
+          ))
+          .limit(1);
+        if (existing) return { conversationId: existing.id, created: false as const };
+        const id = await openSupportThread(db, {
+          buyerId: actor.id,
+          sellerId: order.sellerId,
+          orderId: order.id,
+          subject: `Order #${order.id} — cooperative coordination`,
+          body: input.body ?? `Officer opened the order conversation for order #${order.id}.`,
+          senderId: actor.id,
+        });
+        return { conversationId: id, created: true as const };
       }),
     orderThreadStates: protectedProcedure.query(async ({ ctx }) => {
       const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
