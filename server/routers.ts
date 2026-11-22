@@ -350,15 +350,27 @@ async function createNotification(db: Awaited<ReturnType<typeof dbOrThrow>>, inp
 }
 
 /** Officers only. Uses order_status_updated because the DB allowlist rejects ad-hoc payment types for non-buyer recipients. */
-async function notifyApprovedOfficers(
+export async function notifyApprovedOfficers(
   db: Awaited<ReturnType<typeof dbOrThrow>>,
   input: { title: string; content: string; link: string; relatedEntityId: number },
+  cooperativeId: number | null,
 ) {
-  const officers = await db.select({ id: users.id }).from(users).where(and(
-    inArray(users.role, ["admin", "superadmin"]),
-    eq(users.approvalStatus, "approved"),
-  ));
-  for (const officer of officers) {
+  const officers = await db.select({
+    id: users.id,
+    role: users.role,
+    cooperativeId: users.cooperativeId,
+    approvalStatus: users.approvalStatus,
+    deletedAt: users.deletedAt,
+  }).from(users).where(inArray(users.role, ["admin", "superadmin"]));
+  const recipients = officers.filter(officer =>
+    officer.approvalStatus === "approved"
+    && officer.deletedAt === null
+    && (
+      officer.role === "superadmin"
+      || (officer.role === "admin" && cooperativeId !== null && officer.cooperativeId === cooperativeId)
+    ),
+  );
+  for (const officer of recipients) {
     await createNotification(db, {
       userId: officer.id,
       type: "order_status_updated",
@@ -2330,14 +2342,14 @@ export const appRouter = router({
               content: `Order #${newOrder.id} has a receipt awaiting officer verification.`,
               link: `/orders/${newOrder.id}`,
               relatedEntityId: newOrder.id,
-            });
+            }, currentOrder.cooperativeId);
           } else {
             await notifyApprovedOfficers(tx, {
               title: "Cash order awaiting confirmation",
               content: `Order #${newOrder.id} is awaiting payment confirmation.`,
               link: `/orders/${newOrder.id}`,
               relatedEntityId: newOrder.id,
-            });
+            }, currentOrder.cooperativeId);
           }
           await createNotification(tx, {
             userId: currentOrder.sellerId,

@@ -8,6 +8,25 @@ const heroSrc = "/images/hero-banner-1200.webp";
 const heroSrcSet = "/images/hero-banner-800.webp 800w, /images/hero-banner-1200.webp 1200w";
 const heroSizes = "(max-width: 1023px) 100vw, 50vw";
 
+const cooperativeContactMailto = (() => {
+  const to = ["joanathancahiyang59@gmail.com", "daguinoderoll33@gmail.com"].join(",");
+  const subject = "Cooperative Inquiry – AgriCoop Marketplace";
+  const body = [
+    "Hello AgriCoop Team,",
+    "",
+    "I am interested in learning more about joining the AgriCoop Marketplace as a cooperative.",
+    "I would appreciate more information about the application process, requirements, and next steps.",
+    "",
+    "Thank you, and I look forward to hearing from you.",
+    "",
+    "Best regards,",
+    "[Your Name]",
+    "[Cooperative Name]",
+    "[Contact Number]",
+  ].join("\n");
+  return `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+})();
+
 export default function Home() {
   // Defer marketplace snapshot until after first paint so it cannot contend with LCP.
   const [snapshotReady, setSnapshotReady] = useState(false);
@@ -184,11 +203,11 @@ export default function Home() {
                 Contact our team to discuss onboarding your cooperative.
               </p>
               <div className="mt-5 flex flex-col gap-3">
-                <a href="mailto:joanathancahiyang59@gmail.com" className="agri-button min-h-11 justify-center no-underline">
-                  Email joanathancahiyang59@gmail.com
-                </a>
-                <a href="mailto:daguinoderoll33@gmail.com" className="agri-ghost min-h-11 justify-center no-underline">
-                  Email daguinoderoll33@gmail.com
+                <a
+                  href={cooperativeContactMailto}
+                  className="agri-button min-h-11 justify-center no-underline"
+                >
+                  Contact Us
                 </a>
               </div>
             </div>

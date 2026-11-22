@@ -1,0 +1,122 @@
+[
+  {
+    "productId": 60,
+    "slug": "durian-puyat",
+    "path": "catalog/60-durian-puyat.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/60-durian-puyat.webp",
+    "bytes": 148114,
+    "query": "durian fruit",
+    "title": "File:Durian fruit singapore.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "G.Mannaerts",
+    "source": "https://commons.wikimedia.org/wiki/File:Durian_fruit_singapore.jpg"
+  },
+  {
+    "productId": 61,
+    "slug": "cacao-dry-beans",
+    "path": "catalog/61-cacao-dry-beans.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/61-cacao-dry-beans.webp",
+    "bytes": 139880,
+    "query": "cacao beans",
+    "title": "File:Fermentation of cacao seeds.jpg",
+    "license": "CC0",
+    "artist": "Scot Nelson",
+    "source": "https://commons.wikimedia.org/wiki/File:Fermentation_of_cacao_seeds.jpg"
+  },
+  {
+    "productId": 62,
+    "slug": "coffee-robusta",
+    "path": "catalog/62-coffee-robusta.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/62-coffee-robusta.webp",
+    "bytes": 217278,
+    "query": "robusta coffee beans",
+    "title": "File:Coffea canephora Pierre ex A.Froehner (49093833872).jpg",
+    "license": "CC BY-SA 2.0",
+    "artist": "Dinesh Valke from Thane, India",
+    "source": "https://commons.wikimedia.org/wiki/File:Coffea_canephora_Pierre_ex_A.Froehner_(49093833872).jpg"
+  },
+  {
+    "productId": 63,
+    "slug": "abaca-fiber",
+    "path": "catalog/63-abaca-fiber.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/63-abaca-fiber.webp",
+    "bytes": 143630,
+    "query": "abaca",
+    "title": "File:Musa textilis 11zz.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "Photo by David J. Stang",
+    "source": "https://commons.wikimedia.org/wiki/File:Musa_textilis_11zz.jpg"
+  },
+  {
+    "productId": 64,
+    "slug": "rubber-cup-lump",
+    "path": "catalog/64-rubber-cup-lump.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/64-rubber-cup-lump.webp",
+    "bytes": 165334,
+    "query": "natural rubber",
+    "title": "File:Natural rubber.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "LukaszKatlewa",
+    "source": "https://commons.wikimedia.org/wiki/File:Natural_rubber.jpg"
+  },
+  {
+    "productId": 65,
+    "slug": "sugarcane",
+    "path": "catalog/65-sugarcane.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/65-sugarcane.webp",
+    "bytes": 128564,
+    "query": "sugarcane",
+    "title": "File:Sugarcane jbi gallery.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "Jubair Bin Iqbal",
+    "source": "https://commons.wikimedia.org/wiki/File:Sugarcane_jbi_gallery.jpg"
+  },
+  {
+    "productId": 66,
+    "slug": "palay-rice",
+    "path": "catalog/66-palay-rice.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/66-palay-rice.webp",
+    "bytes": 163694,
+    "query": "rice paddy",
+    "title": "File:Green rice sheaves planted in a paddy field with long shadows at golden hour in Don Det Laos.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "Basile Morin",
+    "source": "https://commons.wikimedia.org/wiki/File:Green_rice_sheaves_planted_in_a_paddy_field_with_long_shadows_at_golden_hour_in_Don_Det_Laos.jpg"
+  },
+  {
+    "productId": 67,
+    "slug": "yellow-corn",
+    "path": "catalog/67-yellow-corn.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/67-yellow-corn.webp",
+    "bytes": 98032,
+    "query": "maize ears",
+    "title": "File:Dülmen, Hausdülmen, Maisfeld am Sythener Hellweg -- 2021 -- 1835.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "Dietmar Rabich",
+    "source": "https://commons.wikimedia.org/wiki/File:D%C3%BClmen,_Hausd%C3%BClmen,_Maisfeld_am_Sythener_Hellweg_--_2021_--_1835.jpg"
+  },
+  {
+    "productId": 68,
+    "slug": "cassava",
+    "path": "catalog/68-cassava.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/68-cassava.webp",
+    "bytes": 187044,
+    "query": "cassava roots",
+    "title": "File:Cassava roots for peeling.jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "Denis kasozi",
+    "source": "https://commons.wikimedia.org/wiki/File:Cassava_roots_for_peeling.jpg"
+  },
+  {
+    "productId": 69,
+    "slug": "ginger-native",
+    "path": "catalog/69-ginger-native.webp",
+    "url": "https://adxprwseqawqrwuijata.supabase.co/storage/v1/object/public/product-images/catalog/69-ginger-native.webp",
+    "bytes": 156318,
+    "query": "ginger rhizome",
+    "title": "File:Rhizome of crêpe ginger..jpg",
+    "license": "CC BY-SA 4.0",
+    "artist": "Plague",
+    "source": "https://commons.wikimedia.org/wiki/File:Rhizome_of_cr%C3%AApe_ginger..jpg"
+  }
+]
