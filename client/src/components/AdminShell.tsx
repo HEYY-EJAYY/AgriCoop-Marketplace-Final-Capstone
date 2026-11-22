@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sidebar";
 import { NotificationBell, ProfileMenu } from "@/components/AgriShell";
 import { BrandMark } from "@/components/AgriShell";
+import { adminNavBadges, usePendingCounts } from "@/lib/usePendingCounts";
 import { adminNavForRole, adminNavItemForLocation } from "@/navigation/adminNav";
 import { LogOut, UserRound } from "lucide-react";
 import { ReactNode } from "react";
@@ -32,11 +33,32 @@ function navHref(item: { section?: string; href?: string }): string {
   return `/dashboard?section=${item.section ?? "overview"}`;
 }
 
+function SidebarBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count > 99 ? "99+" : String(count);
+  return (
+    <>
+      <span
+        className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#a34838] px-1 text-[10px] font-extrabold text-white group-data-[collapsible=icon]:hidden"
+        aria-label={`${count} pending`}
+      >
+        {label}
+      </span>
+      <span
+        className="absolute right-1.5 top-1.5 hidden h-2 w-2 rounded-full bg-[#a34838] group-data-[collapsible=icon]:block"
+        aria-hidden
+      />
+    </>
+  );
+}
+
 function AdminShellContent({ role, children }: { role: "admin" | "superadmin"; children: ReactNode }) {
   const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const search = useSearch();
   const items = adminNavForRole(role);
+  const { counts } = usePendingCounts(true);
+  const badges = adminNavBadges(counts, role);
   const activeItem = adminNavItemForLocation(items, location, search);
   const pageTitle = activeItem?.label ?? "Dashboard";
 
@@ -59,6 +81,8 @@ function AdminShellContent({ role, children }: { role: "admin" | "superadmin"; c
                   const href = navHref(item);
                   const isActive = activeItem?.id === item.id;
                   const isSection = Boolean(item.section);
+                  const badge = badges[item.id] ?? 0;
+                  const buttonClass = `h-10 font-normal relative${badge > 0 ? " pr-9 group-data-[collapsible=icon]:pr-2" : ""}`;
                   return (
                     <SidebarMenuItem key={item.id}>
                       {isSection ? (
@@ -66,21 +90,23 @@ function AdminShellContent({ role, children }: { role: "admin" | "superadmin"; c
                           isActive={isActive}
                           onClick={() => setLocation(href)}
                           tooltip={item.label}
-                          className="h-10 font-normal"
+                          className={buttonClass}
                         >
                           <item.icon className={`h-4 w-4 ${isActive ? "text-[#1f5a3c]" : ""}`} />
                           <span>{item.label}</span>
+                          <SidebarBadge count={badge} />
                         </SidebarMenuButton>
                       ) : (
                         <SidebarMenuButton
                           asChild
                           isActive={isActive}
                           tooltip={item.label}
-                          className="h-10 font-normal"
+                          className={buttonClass}
                         >
                           <Link href={href} className="no-underline">
                             <item.icon className={`h-4 w-4 ${isActive ? "text-[#1f5a3c]" : ""}`} />
                             <span>{item.label}</span>
+                            <SidebarBadge count={badge} />
                           </Link>
                         </SidebarMenuButton>
                       )}

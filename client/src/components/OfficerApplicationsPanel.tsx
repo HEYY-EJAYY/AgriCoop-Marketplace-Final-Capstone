@@ -15,6 +15,7 @@ export function OfficerApplicationsPanel() {
       toast.success("Application review saved.");
       void utils.officerApplications.pendingList.invalidate();
       void utils.admin.overview.invalidate();
+      void utils.notifications.pendingCounts.invalidate();
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });

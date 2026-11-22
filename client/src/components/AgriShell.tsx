@@ -38,7 +38,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { usePendingCounts } from "@/lib/usePendingCounts";
+import { centerNavBadges, mobileNavBadges, usePendingCounts } from "@/lib/usePendingCounts";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -460,6 +460,8 @@ function MobileBottomNav() {
   const loggedIn = !!user;
   const onMarketplace = location === "/marketplace" || location.startsWith("/marketplace?");
   const items = mobileBottomNav(user?.role, loggedIn).filter(item => !(onMarketplace && item.key === "cart"));
+  const { counts } = usePendingCounts(loggedIn);
+  const badges = useMemo(() => mobileNavBadges(counts, user?.role), [counts, user?.role]);
 
   return (
     <nav
@@ -470,15 +472,23 @@ function MobileBottomNav() {
         {items.map(item => {
           const active = isMobileNavItemActive(location, item);
           const Icon = mobileNavIcon(item);
+          const badge = badges[item.key] ?? 0;
           return (
             <li key={item.key + item.href}>
               <Link
                 href={item.href}
-                className={`flex min-h-14 flex-col items-center justify-center gap-1 text-[11px] font-bold no-underline ${
+                className={`relative flex min-h-14 flex-col items-center justify-center gap-1 text-[11px] font-bold no-underline ${
                   active ? "text-[#1f5a3c]" : "text-[#6a796e]"
                 }`}
               >
-                <Icon size={20} />
+                <span className="relative">
+                  <Icon size={20} />
+                  {badge > 0 && (
+                    <span className="absolute -right-2.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-[#a34838] px-1 text-[9px] font-extrabold text-white" aria-label={`${badge} pending`}>
+                      {badge > 99 ? "99+" : badge}
+                    </span>
+                  )}
+                </span>
                 {item.label}
               </Link>
             </li>
@@ -556,24 +566,10 @@ export function PublicHeader() {
   const centerItems = !loading && user ? centerNavForRole(user.role) : LOGGED_OUT_CENTER;
   const overlayUser = !loading && user ? { name: user.name, role: user.role } : null;
   const { counts } = usePendingCounts(Boolean(user) && !loading);
-  const navBadges = useMemo(() => {
-    if (!user) return undefined;
-    const p = counts.pending;
-    const rolePending = user.role === "buyer"
-      ? p.activeOrders + p.awaitingVerification
-      : user.role === "seller"
-        ? p.newOrders + p.awaitingMyResponse + p.requestedQuotations
-        : user.role === "admin"
-          ? p.ordersToReview + p.awaitingSellerConfirmation + p.paymentsToReview + p.openTickets
-          : p.productsPendingReview + p.cooperativeApplications + p.profileVerifications + p.userApprovals;
-    const map: Record<string, number> = {};
-    if (counts.unreadMessages) map["/messages"] = counts.unreadMessages;
-    if (counts.unreadTickets) map["/support"] = (map["/support"] ?? 0) + counts.unreadTickets;
-    if (counts.unreadTickets) map["/support-tickets"] = (map["/support-tickets"] ?? 0) + counts.unreadTickets;
-    if (user.role === "buyer" && p.activeOrders + p.awaitingVerification) map["/activity"] = p.activeOrders + p.awaitingVerification;
-    if (rolePending) map["/dashboard"] = rolePending;
-    return map;
-  }, [user, counts]);
+  const navBadges = useMemo(
+    () => (user ? centerNavBadges(counts, user.role) : undefined),
+    [user, counts],
+  );
 
   return (
     <header className="sticky top-0 z-50 border-b border-[#e4e7da] bg-[#fffdf8]" data-testid="site-header">
@@ -607,6 +603,7 @@ export function PublicHeader() {
         navItems={centerItems}
         user={overlayUser}
         onLogout={() => void logout()}
+        badges={navBadges}
         toggleRef={toggleRef}
       />
     </header>
@@ -649,6 +646,11 @@ export function WorkspaceHeader({ title, description, children }: { title: strin
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const overlayUser = !loading && user ? { name: user.name, role: user.role } : null;
+  const { counts } = usePendingCounts(Boolean(user) && !loading);
+  const navBadges = useMemo(
+    () => (user ? centerNavBadges(counts, user.role) : undefined),
+    [user, counts],
+  );
 
   return (
     <header className="sticky top-0 z-50 border-b border-[#dde4d9] bg-[#fffdf8]" data-testid="site-header">
@@ -666,6 +668,7 @@ export function WorkspaceHeader({ title, description, children }: { title: strin
 
         <NavLinks
           items={compactNav}
+          badges={navBadges}
           className="hidden flex-wrap items-center gap-0.5 lg:flex lg:justify-center"
         />
 
@@ -688,6 +691,7 @@ export function WorkspaceHeader({ title, description, children }: { title: strin
         navItems={compactNav}
         user={overlayUser}
         onLogout={() => void logout()}
+        badges={navBadges}
         toggleRef={toggleRef}
       />
     </header>

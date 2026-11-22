@@ -19,7 +19,12 @@ const TABLE_QUERIES: Record<string, string[]> = {
   orderHistory: ["orders.history", "orders.byId", "admin.overview", "cooperativeAdmin.overview"],
   orderEvents: ["orders.byId", "admin.overview", "cooperativeAdmin.overview"],
   transactions: ["admin.overview", "cooperativeAdmin.overview", "payments.mine"],
-  paymentProofs: ["payments.mine", "payments.reviewQueue", "admin.overview", "cooperativeAdmin.overview"],
+  paymentProofs: ["payments.mine", "payments.reviewQueue", "admin.overview", "cooperativeAdmin.overview", "notifications.pendingCounts"],
+  payments: ["payments.mine", "payments.reviewQueue", "admin.overview", "cooperativeAdmin.overview", "notifications.pendingCounts"],
+  supportTickets: ["supportTickets.mine", "notifications.pendingCounts"],
+  supportTicketMessages: ["supportTickets.mine", "notifications.pendingCounts"],
+  profileVerificationSubmissions: ["account.verificationQueue", "notifications.pendingCounts", "admin.overview"],
+  cooperativeAssociationRequests: ["cooperativeAdmin.associationRequests", "notifications.pendingCounts", "admin.overview"],
   conversations: ["conversations.mine", "conversations.messages", "cooperativeAdmin.orderThreadStates", "notifications.pendingCounts"],
   conversationMessages: ["conversations.messages", "conversations.mine"],
   threadStates: ["conversations.mine", "cooperativeAdmin.orderThreadStates"],
@@ -27,6 +32,7 @@ const TABLE_QUERIES: Record<string, string[]> = {
   products: ["marketplace.list", "marketplace.byId", "products.mine", "admin.overview", "cooperativeAdmin.overview", "notifications.pendingCounts"],
   users: ["admin.overview", "cooperativeAdmin.overview", "auth.me", "notifications.pendingCounts"],
   cooperatives: ["admin.overview", "cooperativeAdmin.overview", "marketplace.list", "notifications.pendingCounts"],
+  cooperativeAdminApplications: ["notifications.pendingCounts", "officerApplications.pendingList", "admin.overview"],
 };
 
 function invalidatePath(utils: ReturnType<typeof trpc.useUtils>, path: string) {

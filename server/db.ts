@@ -840,6 +840,11 @@ export type PendingActivityCounts = {
     cooperativeApplications: number;
     profileVerifications: number;
     userApprovals: number;
+    buyers: number;
+    sellers: number;
+    associationRequests: number;
+    productReviews: number;
+    paymentReviews: number;
   };
 };
 
@@ -857,6 +862,7 @@ export async function getPendingActivityCounts(user: { id: number; role: string;
       activeOrders: 0, awaitingVerification: 0, ordersToReview: 0, awaitingSellerConfirmation: 0,
       paymentsToReview: 0, openTickets: 0, newOrders: 0, awaitingMyResponse: 0, requestedQuotations: 0,
       productsPendingReview: 0, cooperativeApplications: 0, profileVerifications: 0, userApprovals: 0,
+      buyers: 0, sellers: 0, associationRequests: 0, productReviews: 0, paymentReviews: 0,
     },
   };
   if (!db) return empty;
@@ -882,7 +888,7 @@ export async function getPendingActivityCounts(user: { id: number; role: string;
   } else if (user.role === "seller") {
     [pending.newOrders, pending.awaitingMyResponse, pending.requestedQuotations] = await Promise.all([
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(orders)
-        .where(and(eq(orders.sellerId, user.id), eq(orders.status, "submitted")))),
+        .where(and(eq(orders.sellerId, user.id), inArray(orders.status, ["submitted", "confirmed"])))),
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(orders)
         .where(and(eq(orders.sellerId, user.id), eq(orders.sellerConfirmationStatus, "pending"), eq(orders.status, "submitted")))),
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(quotations)
@@ -901,17 +907,74 @@ export async function getPendingActivityCounts(user: { id: number; role: string;
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(supportTickets)
         .where(and(eq(supportTickets.cooperativeId, coop), eq(supportTickets.status, "open"), isNull(supportTickets.deletedAt), isNull(supportTickets.archivedAt)))),
     ]);
+    const pendingUserScope = (role: "buyer" | "seller") => and(
+      eq(users.role, role),
+      eq(users.approvalStatus, "pending"),
+      eq(users.cooperativeId, coop),
+      isNull(users.deletedAt),
+    );
+    const paymentReviewScope = and(
+      inArray(orders.paymentMethod, ["gcash", "online"]),
+      inArray(orders.status, ["submitted", "confirmed", "ready"]),
+      inArray(orders.paymentStatus, ["pending", "awaiting_verification", "failed"]),
+      eq(orders.cooperativeId, coop),
+    );
+    const [buyers, sellers, associationRequests, productReviews, onlineProofs, cashAwaiting, profileVerifications] = await Promise.all([
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(users).where(pendingUserScope("buyer"))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(users).where(pendingUserScope("seller"))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(cooperativeAssociationRequests)
+        .where(and(eq(cooperativeAssociationRequests.cooperativeId, coop), eq(cooperativeAssociationRequests.status, "pending")))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(products)
+        .where(and(inArray(products.verificationStatus, ["pending", "pending_review"]), eq(products.cooperativeId, coop), isNull(products.deletedAt)))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(paymentProofs)
+        .innerJoin(orders, eq(orders.id, paymentProofs.orderId))
+        .where(and(eq(paymentProofs.verificationStatus, "pending"), paymentReviewScope))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(orders)
+        .where(and(eq(orders.cooperativeId, coop), inArray(orders.paymentMethod, ["cash_pickup", "cash_delivery"]), eq(orders.status, "ready"), inArray(orders.paymentStatus, ["pending", "F2F-pending-confirmation"])))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(profileVerificationSubmissions)
+        .innerJoin(users, eq(users.id, profileVerificationSubmissions.userId))
+        .where(and(eq(profileVerificationSubmissions.status, "pending"), eq(users.cooperativeId, coop), isNull(users.deletedAt)))),
+    ]);
+    pending.buyers = buyers;
+    pending.sellers = sellers;
+    pending.associationRequests = associationRequests;
+    pending.productReviews = productReviews;
+    pending.paymentReviews = onlineProofs + cashAwaiting;
+    pending.profileVerifications = profileVerifications;
   } else if (user.role === "superadmin") {
     [pending.productsPendingReview, pending.cooperativeApplications, pending.profileVerifications, pending.userApprovals] = await Promise.all([
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(products)
         .where(and(inArray(products.verificationStatus, ["pending", "pending_review"]), isNull(products.deletedAt)))),
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(cooperativeAdminApplications)
-        .where(inArray(cooperativeAdminApplications.status, ["awaiting_documents", "pending"]))),
+        .where(eq(cooperativeAdminApplications.status, "pending"))),
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(profileVerificationSubmissions)
         .where(eq(profileVerificationSubmissions.status, "pending"))),
       countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(users)
         .where(and(eq(users.approvalStatus, "pending"), isNull(users.deletedAt)))),
     ]);
+    const [buyers, sellers, associationRequests, onlineProofs, cashAwaiting] = await Promise.all([
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(users)
+        .where(and(eq(users.role, "buyer"), eq(users.approvalStatus, "pending"), isNull(users.deletedAt)))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(users)
+        .where(and(eq(users.role, "seller"), eq(users.approvalStatus, "pending"), isNull(users.deletedAt)))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(cooperativeAssociationRequests)
+        .where(eq(cooperativeAssociationRequests.status, "pending"))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(paymentProofs)
+        .innerJoin(orders, eq(orders.id, paymentProofs.orderId))
+        .where(and(
+          eq(paymentProofs.verificationStatus, "pending"),
+          inArray(orders.paymentMethod, ["gcash", "online"]),
+          inArray(orders.status, ["submitted", "confirmed", "ready"]),
+          inArray(orders.paymentStatus, ["pending", "awaiting_verification", "failed"]),
+        ))),
+      countRows(db, db.select({ count: sql<number>`count(*)::int` }).from(orders)
+        .where(and(inArray(orders.paymentMethod, ["cash_pickup", "cash_delivery"]), eq(orders.status, "ready"), inArray(orders.paymentStatus, ["pending", "F2F-pending-confirmation"])))),
+    ]);
+    pending.buyers = buyers;
+    pending.sellers = sellers;
+    pending.associationRequests = associationRequests;
+    pending.paymentReviews = onlineProofs + cashAwaiting;
+    pending.productReviews = pending.productsPendingReview;
   }
   return { unreadNotifications, unreadMessages, unreadTickets, pending };
 }

@@ -757,3 +757,15 @@ Source: `docs/PERFORMANCE.md` (Lighthouse 12.6.1, Vercel region `sin1` aligned w
 ---
 
 *End of document.*
+## Notification badge architecture (update)
+
+Dashboard pending-activity cards were removed. Attention indicators are now per-navigation-tab red dot + count badges driven by `notifications.pendingCounts` (`getPendingActivityCounts` in `server/db.ts`), which issues COUNT-only, role- and cooperative-scoped queries.
+
+- OfficerAdmin sidebar: overview (association requests + profile verifications), Buyer Management (pending buyer approvals), Seller Management (pending seller approvals), Order Management (submitted orders), Payment Verification (pending proofs + cash awaiting receipt), Products & Listings (pending product reviews), Support & Messages (open tickets).
+- SuperAdmin sidebar: Dashboard overview (profile verifications + association requests), User Management (pending approvals), OfficerAdmin Management (pending applications only), Product Management (pending product reviews, platform-wide).
+- Buyer/Seller top nav, mobile menu, and bottom nav: badges on orders/activity, seller center, messages (unread threads), and support (unread ticket threads).
+- Badges hide at zero, cap at `99+`, and refresh via Supabase Realtime invalidation plus `refetchOnWindowFocus`. Pending-action counts are independent of read/unread notification state.
+
+## Marketplace coverage and catalog
+
+Coverage: Agusan del Norte and Agusan del Sur cooperatives only. Development demo cooperatives and QA records were removed. The marketplace lists 20 sample products (IDs 50–69) across Fruit, Vegetable, Grain, Spice, Beverage, and Fiber categories, priced per kg, each with a dedicated WebP image in the `product-images` Supabase Storage bucket (`catalog/<id>-<slug>.webp`) sourced from Wikimedia Commons free licenses.

@@ -17,6 +17,8 @@ type MobileMenuOverlayProps = {
   navItems: NavItem[];
   user: MobileMenuUser;
   onLogout?: () => void;
+  /** Pending-count badges keyed by nav href */
+  badges?: Record<string, number>;
   /** Header toggle button — used for focus return and aria-controls pairing */
   toggleRef: React.RefObject<HTMLButtonElement | null>;
 };
@@ -73,6 +75,7 @@ export function MobileMenuOverlay({
   navItems,
   user,
   onLogout,
+  badges,
   toggleRef,
 }: MobileMenuOverlayProps) {
   const [location] = useLocation();
@@ -193,17 +196,25 @@ export function MobileMenuOverlay({
           className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center justify-center gap-2 px-6 py-8"
           data-testid="mobile-menu-nav"
         >
-          {navItems.map(item => (
-            <Link
-              key={item.href + item.label}
-              href={item.href}
-              onClick={onClose}
-              className={`${itemClass} ${isNavActive(location, item) ? "bg-[#e7f1df] text-[#1f5a3c]" : ""}`}
-              data-testid={`mobile-menu-link-${item.label}`}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {navItems.map(item => {
+            const badge = badges?.[item.href] ?? 0;
+            return (
+              <Link
+                key={item.href + item.label}
+                href={item.href}
+                onClick={onClose}
+                className={`${itemClass} ${isNavActive(location, item) ? "bg-[#e7f1df] text-[#1f5a3c]" : ""}`}
+                data-testid={`mobile-menu-link-${item.label}`}
+              >
+                {item.label}
+                {badge > 0 && (
+                  <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#a34838] px-1 text-[10px] font-extrabold text-white" aria-label={`${badge} pending`}>
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
         </nav>
 
         <div

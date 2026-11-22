@@ -18,7 +18,9 @@ describe("admin sidebar navigation role separation", () => {
   });
 
   it("keeps daily marketplace ops out of the SuperAdmin sidebar", () => {
-    for (const banned of ["buyers", "sellers", "orders", "payments", "products"]) {
+    // "products" is allowed: platform-wide product moderation is a SuperAdmin
+    // ownership function, not day-to-day cooperative operations.
+    for (const banned of ["buyers", "sellers", "orders", "payments"]) {
       expect(superadminSections).not.toContain(banned);
     }
   });
