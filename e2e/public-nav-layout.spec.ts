@@ -12,8 +12,10 @@ const sellerEmail = process.env.QA_SELLER_EMAIL?.trim() ?? "";
 const sellerPassword = process.env.QA_SELLER_PASSWORD ?? "";
 const adminEmail = process.env.QA_ADMIN_EMAIL?.trim() ?? "";
 const adminPassword = process.env.QA_ADMIN_PASSWORD ?? "";
-const superadminEmail = process.env.QA_SUPERADMIN_EMAIL?.trim() ?? process.env.QA_ADMIN_EMAIL?.trim() ?? "";
-const superadminPassword = process.env.QA_SUPERADMIN_PASSWORD ?? process.env.QA_ADMIN_PASSWORD ?? "";
+// SuperAdmin must use dedicated credentials — falling back to officer creds
+// would sign in as admin and fail superadmin nav assertions misleadingly.
+const superadminEmail = process.env.QA_SUPERADMIN_EMAIL?.trim() ?? "";
+const superadminPassword = process.env.QA_SUPERADMIN_PASSWORD ?? "";
 
 async function assertNoHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => {
@@ -215,7 +217,7 @@ test.describe("Support logged-in role nav", () => {
       role: "superadmin",
       email: superadminEmail,
       password: superadminPassword,
-      envKeys: ["QA_SUPERADMIN_EMAIL|QA_ADMIN_EMAIL", "QA_SUPERADMIN_PASSWORD|QA_ADMIN_PASSWORD"],
+      envKeys: ["QA_SUPERADMIN_EMAIL", "QA_SUPERADMIN_PASSWORD"],
     },
   ];
 
@@ -227,6 +229,9 @@ test.describe("Support logged-in role nav", () => {
       await signIn(page, entry.email, entry.password);
       await page.goto("/support");
       await expect(page.getByTestId("site-header")).toBeVisible();
+      // Full page loads re-resolve auth; the header shows logged-out actions
+      // while auth.me is in flight. Wait for the resolved logged-in state first.
+      await expect(page.getByTestId("nav-profile-menu")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("nav-login")).toHaveCount(0);
       await expect(page.getByTestId("nav-join")).toHaveCount(0);
       await expect(page.getByTestId("nav-profile-menu")).toBeVisible();
