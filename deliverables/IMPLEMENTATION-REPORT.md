@@ -320,3 +320,14 @@ All disposable QA payment options, QR reports, generated notifications (includin
 - Playwright `e2e/coop-transparency-qr.spec.ts`: **15/15 project runs** — all 5 viewports × 3 tests (buyer transparency, officer scoping, superadmin coop selector).
 - DB post-cleanup: `paymentOptions` = 2 legitimate rows (ids 2, 53, coop 3), 0 NULL-coop, 0 QA fixture rows, 0 QR reports, orders max id 69 (all QA orders 70–80 and their payments/transactions/items/history/conversations/notifications removed). `scripts/qa-fixture-cleanup.mts` provided for future runs.
 - Note: local `pnpm build` output does not inline `VITE_SUPABASE_*` when `.env.local` is absent from the build env — production builds on Vercel inject env vars at build time; verified unrelated to app code.
+
+---
+
+# Production deployment — commit 1514f2c (2026-11-24)
+
+- **Commit:** `1514f2c3ac9c76704474f03cf61a2cb70d923053` on `finish/agricoop-complete` (HEAD == origin at deploy time).
+- **Deployment:** `dpl_AudEwvw53WsixfTopYdyXJPzvYn8`, Vercel project `agricoop-marketplace-final-capstone` (`prj_LCxJgY2qeXdRNBgOnTeXvJbgXXDI`, team `ejay5`), `target: production`, state `READY`, serving `https://agricoop-marketplace-final-capstone.vercel.app/` (HTTP 200). Built from pinned gitSource SHA via `create_deployment`.
+- **Scope:** includes `bf0b0d2` (coop-scoped QR isolation, QR auto-hide, pickup details) and `1514f2c` (RLS fix for QR auto-hide + persisted checkout E2E). Previous production was `dpl_em2qzXV8MMvuVafjxuQJCHMNuPDk` (commit `242318a`) — retained as rollback candidate.
+- **Smoke (production, read-only + one controlled fixture):** buyer sign-in, marketplace search/cooperative filter, product-detail cooperative identity, cart "By seller · coop", checkout "Sold by" + pickup card + missing-address warning, coop-scoped payment options (coop-1 basket showed only coop-1 options; coop-3 GCash/Maya not leaked). QR report smoke: disposable fixture `paymentOptions` id 58 (coop 1) reported via real buyer UI → `isActive=false` through `deactivate_reported_payment_option`, report id 32 pending; SuperAdmin reports tab showed it; coop-3 options unaffected. Fixture + report + notifications deleted afterwards; `paymentOptions` back to ids 2/53 only, 0 reports.
+- **Note:** checkout still shows the pre-existing "AgriCoop platform payment account" fallback (systemOnlinePaymentAccounts, introduced before this work) when a cooperative has published no QR — clearly labeled, receipt still verified by the cooperative. Not introduced or changed by this deployment.
+- **Data safety:** no legitimate records modified; no real orders/payments created; all QA fixtures removed.
