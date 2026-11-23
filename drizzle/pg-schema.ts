@@ -63,6 +63,9 @@ export const cooperatives = appSchema.table("cooperatives", {
   location: varchar("location", { length: 180 }).notNull(),
   address: varchar("address", { length: 255 }).notNull().default(""),
   normalizedLocation: varchar("normalizedLocation", { length: 180 }).notNull().default(""),
+  pickupContactNumber: varchar("pickupContactNumber", { length: 40 }),
+  pickupInstructions: text("pickupInstructions"),
+  operatingHours: varchar("operatingHours", { length: 160 }),
   status: cooperativeStatus("status").default("active").notNull(),
   createdBy: integer("createdBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   source: varchar("source", { length: 32 }).notNull().default("seed"),
@@ -240,6 +243,7 @@ export const orders = appSchema.table("orders", {
   fulfillmentMethod: varchar("fulfillmentMethod", { length: 32 }),
   sellerConfirmationStatus: varchar("sellerConfirmationStatus", { length: 32 }),
   deliveryDetails: jsonb("deliveryDetails"),
+  pickupDetails: jsonb("pickupDetails"),
   totalCents: integer("totalCents").notNull(),
   buyerNote: text("buyerNote"),
   demoSeedKey: varchar("demoSeedKey", { length: 80 }),
@@ -288,7 +292,7 @@ export const orderItems = appSchema.table("orderItems", {
 
 export const paymentOptions = appSchema.table("paymentOptions", {
   id: serial("id").primaryKey(),
-  cooperativeId: integer("cooperativeId").references(() => cooperatives.id, { onDelete: "restrict" }),
+  cooperativeId: integer("cooperativeId").notNull().references(() => cooperatives.id, { onDelete: "restrict" }),
   paymentMethod: varchar("paymentMethod", { length: 50 }).notNull().default("gcash"),
   displayName: varchar("displayName", { length: 150 }).notNull(),
   accountName: varchar("accountName", { length: 150 }),

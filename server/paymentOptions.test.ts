@@ -49,7 +49,9 @@ describe("payment option storage scope", () => {
     expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, 12)).toBe(false);
     expect(isGcashCheckoutOption({ ...option, isActive: false }, 12)).toBe(false);
     expect(isGcashCheckoutOption({ ...option, paymentMethod: "bank" }, 12)).toBe(false);
-    expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, null)).toBe(true);
+    // Platform-wide (unassigned) options are never checkout-eligible.
+    expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, null)).toBe(false);
+    expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, 12)).toBe(false);
   });
 
   it("exposes every active QR provider option assigned to the order's cooperative", () => {
@@ -61,7 +63,8 @@ describe("payment option storage scope", () => {
       expect(isQrCheckoutOption({ ...option, isActive: false }, 12)).toBe(false);
       expect(isQrCheckoutOption({ ...option, paymentMethod: "bank" }, 12)).toBe(false);
     }
-    expect(isQrCheckoutOption({ cooperativeId: null, paymentMethod: "gcash", isActive: true }, null)).toBe(true);
+    expect(isQrCheckoutOption({ cooperativeId: null, paymentMethod: "gcash", isActive: true }, null)).toBe(false);
+    expect(isQrCheckoutOption({ cooperativeId: null, paymentMethod: "gcash", isActive: true }, 12)).toBe(false);
   });
 
   it("detects payment-detail changes that must be blocked after an option is used", () => {

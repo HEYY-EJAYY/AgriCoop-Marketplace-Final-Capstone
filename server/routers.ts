@@ -1270,6 +1270,27 @@ export const appRouter = router({
   cooperatives: router({
     list: publicProcedure.query(() => getCooperatives()),
     listActive: publicProcedure.query(() => getCooperatives()),
+    pickupInfo: publicProcedure
+      .input(z.object({ cooperativeId: z.number().int().positive() }))
+      .query(async ({ input }) => {
+        const db = await dbOrThrow();
+        const [cooperative] = await db.select({
+          id: cooperatives.id,
+          name: cooperatives.name,
+          location: cooperatives.location,
+          address: cooperatives.address,
+          pickupContactNumber: cooperatives.pickupContactNumber,
+          pickupInstructions: cooperatives.pickupInstructions,
+          operatingHours: cooperatives.operatingHours,
+        }).from(cooperatives)
+          .where(and(
+            eq(cooperatives.id, input.cooperativeId),
+            eq(cooperatives.status, "active"),
+            isNull(cooperatives.deletedAt),
+          ))
+          .limit(1);
+        return cooperative ?? null;
+      }),
     previewCreate: publicProcedure
       .input(z.object({
         cooperativeId: z.number().int().positive().optional(),
@@ -1384,6 +1405,9 @@ export const appRouter = router({
             address: cooperative.address,
             location: cooperative.location,
             description: cooperative.description,
+            pickupContactNumber: cooperative.pickupContactNumber,
+            pickupInstructions: cooperative.pickupInstructions,
+            operatingHours: cooperative.operatingHours,
             status: cooperative.status,
             slug: cooperative.normalizedName,
           },
@@ -1447,6 +1471,9 @@ export const appRouter = router({
         location: z.string().min(3).max(180).optional(),
         address: z.string().min(3).max(255).optional(),
         description: z.string().max(600).nullable().optional(),
+        pickupContactNumber: z.string().trim().max(40).nullable().optional(),
+        pickupInstructions: z.string().trim().max(2000).nullable().optional(),
+        operatingHours: z.string().trim().max(160).nullable().optional(),
         confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
@@ -1496,6 +1523,9 @@ export const appRouter = router({
         }
         if (input.address !== undefined) patch.address = normalizeCooperativeAddress(input.address);
         if (input.description !== undefined) patch.description = input.description;
+        if (input.pickupContactNumber !== undefined) patch.pickupContactNumber = input.pickupContactNumber || null;
+        if (input.pickupInstructions !== undefined) patch.pickupInstructions = input.pickupInstructions || null;
+        if (input.operatingHours !== undefined) patch.operatingHours = input.operatingHours || null;
         if (!Object.keys(patch).length) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Provide at least one cooperative field to update." });
         }
@@ -2263,6 +2293,45 @@ export const appRouter = router({
             }
           }
 
+          // Immutable pickup snapshot: buyers must always see the cooperative
+          // pickup details that applied when the order was placed, even if the
+          // cooperative updates its profile later.
+          let pickupDetails: {
+            cooperativeId: number;
+            cooperativeName: string;
+            location: string | null;
+            address: string | null;
+            contactNumber: string | null;
+            instructions: string | null;
+            operatingHours: string | null;
+            capturedAt: string;
+          } | null = null;
+          if (fulfillmentMethod === "pickup" && currentOrder.cooperativeId !== null) {
+            const [coop] = await tx.select({
+              id: cooperatives.id,
+              name: cooperatives.name,
+              location: cooperatives.location,
+              address: cooperatives.address,
+              pickupContactNumber: cooperatives.pickupContactNumber,
+              pickupInstructions: cooperatives.pickupInstructions,
+              operatingHours: cooperatives.operatingHours,
+            }).from(cooperatives)
+              .where(eq(cooperatives.id, currentOrder.cooperativeId))
+              .limit(1);
+            if (coop) {
+              pickupDetails = {
+                cooperativeId: coop.id,
+                cooperativeName: coop.name,
+                location: coop.location || null,
+                address: coop.address || null,
+                contactNumber: coop.pickupContactNumber || null,
+                instructions: coop.pickupInstructions || null,
+                operatingHours: coop.operatingHours || null,
+                capturedAt: new Date().toISOString(),
+              };
+            }
+          }
+
           let currentQuotedPrice: number | undefined;
           if (input.quotationId !== undefined) {
             const quotationRows = Array.from(await tx.execute(sql`
@@ -2291,6 +2360,7 @@ export const appRouter = router({
             fulfillmentMethod,
             paymentStatus: initialPaymentStatus,
             deliveryDetails: fulfillmentMethod === "delivery" ? input.deliveryDetails : null,
+            pickupDetails,
           }).returning({ id: orders.id });
           await tx.insert(transactions).values({
             orderId: newOrder.id,
@@ -4868,9 +4938,10 @@ export const appRouter = router({
             message: "Payment options are unavailable for this checkout basket.",
           });
         }
-        const scope = input.cooperativeId === null
-          ? isNull(paymentOptions.cooperativeId)
-          : eq(paymentOptions.cooperativeId, input.cooperativeId);
+        // QR payment options must belong to a cooperative; baskets without a
+        // cooperative never see payment options.
+        if (input.cooperativeId === null) return [];
+        const scope = eq(paymentOptions.cooperativeId, input.cooperativeId);
         return db.select({
           id: paymentOptions.id,
           cooperativeId: paymentOptions.cooperativeId,
@@ -4899,7 +4970,10 @@ export const appRouter = router({
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
-        if (cooperativeId !== null) {
+        if (cooperativeId === null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Select the cooperative this QR image belongs to." });
+        }
+        {
           const [cooperative] = await db.select({ id: cooperatives.id })
             .from(cooperatives)
             .where(eq(cooperatives.id, cooperativeId))
@@ -4942,7 +5016,10 @@ export const appRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
         }
         const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
-        if (cooperativeId !== null) {
+        if (cooperativeId === null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Every payment option must be assigned to a cooperative." });
+        }
+        {
           const [cooperative] = await db.select({ id: cooperatives.id })
             .from(cooperatives)
             .where(and(eq(cooperatives.id, cooperativeId), isNull(cooperatives.deletedAt)))
@@ -5136,20 +5213,33 @@ export const appRouter = router({
             message: "You already reported this QR code and it is being reviewed. Please try another QR code or wait for the review.",
           });
         }
-        const [report] = await db.insert(qrIssueReports).values({
-          paymentOptionId: option.id,
-          cooperativeId: option.cooperativeId,
-          orderId: input.orderId ?? null,
-          reportedBy: actor.id,
-          paymentProvider: option.paymentMethod,
-          paymentOptionLabel: option.displayName,
-          accountName: option.accountName,
-          accountNumber: option.accountNumber,
-          qrImagePath: option.qrImagePath,
-          reason: input.reason,
-          details: input.details || null,
-          status: "pending",
-        }).returning({ id: qrIssueReports.id });
+        // A valid report immediately hides the QR from new checkout selections
+        // for every buyer of that cooperative. Only an explicit admin re-enable
+        // (updateOption isActive) restores it; resolving/dismissing a report
+        // never re-activates the option.
+        const report = await db.transaction(async tx => {
+          const [row] = await tx.insert(qrIssueReports).values({
+            paymentOptionId: option.id,
+            cooperativeId: option.cooperativeId,
+            orderId: input.orderId ?? null,
+            reportedBy: actor.id,
+            paymentProvider: option.paymentMethod,
+            paymentOptionLabel: option.displayName,
+            accountName: option.accountName,
+            accountNumber: option.accountNumber,
+            qrImagePath: option.qrImagePath,
+            reason: input.reason,
+            details: input.details || null,
+            status: "pending",
+          }).returning({ id: qrIssueReports.id });
+          if (option.isActive) {
+            await tx.update(paymentOptions).set({
+              isActive: false,
+              updatedAt: new Date(),
+            }).where(and(eq(paymentOptions.id, option.id), eq(paymentOptions.isActive, true)));
+          }
+          return row;
+        });
         const [reporter] = await db.select({ name: users.name, email: users.email })
           .from(users)
           .where(eq(users.id, actor.id))

@@ -768,6 +768,10 @@ export default function Marketplace() {
                           <X size={16} />
                         </button>
                       </div>
+                      <p className="mt-0.5 text-[10px] font-semibold text-[#718174]">
+                        By {item.sellerName || "Verified seller"}
+                        {item.cooperativeName ? ` · ${item.cooperativeName}` : ""}
+                      </p>
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
                         <CartQuantityInput
                           productName={item.name}
@@ -865,6 +869,10 @@ export default function Marketplace() {
                           <X size={16} />
                         </button>
                       </div>
+                      <p className="mt-0.5 text-[10px] font-semibold text-[#718174]">
+                        By {item.sellerName || "Verified seller"}
+                        {item.cooperativeName ? ` · ${item.cooperativeName}` : ""}
+                      </p>
                       <div className="mt-2">
                         <CartQuantityInput
                           productName={item.name}

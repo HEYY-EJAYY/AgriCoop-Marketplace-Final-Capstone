@@ -175,7 +175,7 @@ describe("PostgreSQL identity lookup schema", () => {
     expect(config.columns.find(column => column.name === "paymentMethod")?.length).toBe(50);
     expect(config.columns.find(column => column.name === "displayName")?.length).toBe(150);
     expect(config.columns.find(column => column.name === "id")?.hasDefault).toBe(true);
-    expect(config.columns.find(column => column.name === "cooperativeId")?.notNull).toBe(false);
+    expect(config.columns.find(column => column.name === "cooperativeId")?.notNull).toBe(true);
     expect(config.columns.find(column => column.name === "paymentMethod")?.default).toBe("gcash");
     expect(config.columns.find(column => column.name === "isActive")?.default).toBe(true);
     expect(config.columns.find(column => column.name === "createdAt")?.notNull).toBe(true);

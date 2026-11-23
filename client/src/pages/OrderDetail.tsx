@@ -84,6 +84,15 @@ type OrderDetailPayload = {
       streetAddress?: string;
       instructions?: string;
     } | null;
+    pickupDetails?: {
+      cooperativeName?: string;
+      location?: string | null;
+      address?: string | null;
+      contactNumber?: string | null;
+      instructions?: string | null;
+      operatingHours?: string | null;
+      capturedAt?: string;
+    } | null;
     createdAt: Date | string;
     updatedAt?: Date | string | null;
   };
@@ -92,6 +101,13 @@ type OrderDetailPayload = {
   seller?: OrderParty;
   cooperative?: { id?: number; name?: string | null; location?: string | null; slug?: string | null } | null;
   payment?: { status?: string | null; amountCents?: number | null; paymentMethod?: string | null } | null;
+  paymentOption?: {
+    paymentMethod?: string;
+    displayName?: string;
+    accountName?: string | null;
+    accountNumber?: string | null;
+    cooperativeId?: number;
+  } | null;
   proof?: {
     id?: number;
     signedUrl?: string | null;
@@ -238,7 +254,7 @@ export default function OrderDetail() {
     );
   }
 
-  const { order, items, buyer, seller, cooperative, payment, proof } = data;
+  const { order, items, buyer, seller, cooperative, payment, paymentOption, proof } = data;
   const history: HistoryRow[] = (data.history?.length ? data.history : data.events) ?? [];
   const fulfillment =
     order.fulfillmentMethod
@@ -255,6 +271,15 @@ export default function OrderDetail() {
     barangay?: string;
     streetAddress?: string;
     instructions?: string;
+  } | null;
+  const pickupDetails = (order.pickupDetails ?? null) as {
+    cooperativeName?: string;
+    location?: string | null;
+    address?: string | null;
+    contactNumber?: string | null;
+    instructions?: string | null;
+    operatingHours?: string | null;
+    capturedAt?: string;
   } | null;
 
   const role = user?.role;
@@ -382,6 +407,19 @@ export default function OrderDetail() {
               {deliveryDetails.instructions && <p className="mt-1 italic">Instructions: {deliveryDetails.instructions}</p>}
             </div>
           )}
+          {pickupDetails && (
+            <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4 text-sm text-[#45614e]">
+              <p className="font-bold text-[#315640]">Pickup location</p>
+              <p className="mt-1">Pickup from {pickupDetails.cooperativeName || cooperative?.name || "the cooperative"}</p>
+              <p>{[pickupDetails.address, pickupDetails.location].filter(Boolean).join(", ") || "Pickup address not recorded."}</p>
+              {pickupDetails.contactNumber && <p className="mt-1">Contact: {pickupDetails.contactNumber}</p>}
+              {pickupDetails.instructions && <p className="mt-1">Instructions: {pickupDetails.instructions}</p>}
+              {pickupDetails.operatingHours && <p className="mt-1">Hours: {pickupDetails.operatingHours}</p>}
+              {pickupDetails.capturedAt && (
+                <p className="mt-1 text-xs text-[#718174]">Saved when the order was placed · {formatDateTimeManila(pickupDetails.capturedAt)}</p>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="mt-8 agri-card p-5 sm:p-6">
@@ -404,6 +442,19 @@ export default function OrderDetail() {
               )}
             </div>
           </div>
+          {paymentOption && (
+            <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4 text-sm text-[#45614e]">
+              <p className="font-bold text-[#315640]">Payment details</p>
+              <p className="mt-1">
+                {paymentOption.displayName || paymentMethodLabel(paymentOption.paymentMethod || paymentMethod)}
+                {paymentOption.accountName ? ` · ${paymentOption.accountName}` : ""}
+                {paymentOption.accountNumber ? ` · ${paymentOption.accountNumber}` : ""}
+              </p>
+              <p className="mt-1 text-xs text-[#718174]">
+                The QR/account details shown here are the cooperative payment option recorded for this order.
+              </p>
+            </div>
+          )}
           {receiptUrl ? (
             <a href={receiptUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex text-sm font-bold text-[#397549] underline">
               View payment receipt

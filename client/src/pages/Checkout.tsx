@@ -137,6 +137,7 @@ function SellerCheckoutGroup({
   const [receiptError, setReceiptError] = useState("");
 
   const cooperativeId = items[0]?.cooperativeId ?? null;
+  const cooperativeName = items[0]?.cooperativeName ?? null;
   const productIds = useMemo(() => items.map(item => item.productId), [items]);
   const qrOptionsQuery = trpc.adminPayment.checkoutOptions.useQuery(
     { cooperativeId, productIds },
@@ -144,6 +145,7 @@ function SellerCheckoutGroup({
   );
   const qrOptions = qrOptionsQuery.data ?? [];
   const selectedQrOption = qrOptions.find(option => option.id === choice.paymentOptionId) ?? null;
+  const utils = trpc.useUtils();
   const [qrNotice, setQrNotice] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState<QrIssueReason>("cannot_scan");
@@ -175,7 +177,10 @@ function SellerCheckoutGroup({
       setReportOpen(false);
       setReportDetails("");
       setReportSentFor(selectedQrOption.id);
-      toast.success("Your QR report was sent to the cooperative administrators.");
+      // The reported QR is deactivated server-side; refresh so it disappears
+      // from this and every other buyer's checkout for the cooperative.
+      void utils.adminPayment.checkoutOptions.invalidate();
+      toast.success("Your QR report was sent to the cooperative administrators. This QR is now hidden until it is reviewed.");
     } catch (problem) {
       toast.error(toUserFacingErrorMessage(problem instanceof Error ? problem.message : "Could not send the report."));
     }
@@ -310,6 +315,17 @@ function SellerCheckoutGroup({
     }
   };
 
+  const showAnotherQr = () => {
+    if (!selectedQrOption || qrOptions.length < 2) return;
+    const index = qrOptions.findIndex(option => option.id === selectedQrOption.id);
+    const next = qrOptions[(index + 1) % qrOptions.length];
+    if (!next) return;
+    setQrNotice(null);
+    setReportOpen(false);
+    setReportSentFor(null);
+    onChoiceChange({ ...choice, paymentOptionId: next.id });
+  };
+
   const showOnline = choice.paymentMethod === "online";
   const displayQr = selectedQrOption
     ? {
@@ -319,11 +335,16 @@ function SellerCheckoutGroup({
         accountNumber: selectedQrOption.accountNumber ?? "",
         instructions: selectedQrOption.instructions,
       }
-    : onlineDetails ?? null;
+    : onlineDetails
+      ? { ...onlineDetails, label: `AgriCoop platform payment account — ${onlineDetails.accountName || onlineDetails.label || "online payment"}` }
+      : null;
 
   return (
     <section className="rounded-2xl border border-[#e1e9dd] bg-[#f7faf4] p-4 sm:p-5">
       <h3 className="font-display text-xl font-bold text-[#264f37]">{sellerName}</h3>
+      {cooperativeName && (
+        <p className="mt-0.5 text-xs font-bold text-[#5f7a5f]">Sold by {cooperativeName}</p>
+      )}
       <p className="mt-1 text-xs text-[#6d7d70]">
         {items.length} listing{items.length === 1 ? "" : "s"} · {peso(groupTotal)}
       </p>
@@ -346,6 +367,14 @@ function SellerCheckoutGroup({
           deliveryBlockedReason={deliveryBlockedReason}
         />
       </div>
+
+      {cooperativeId !== null && (
+        <PickupLocationCard
+          cooperativeId={cooperativeId}
+          cooperativeName={cooperativeName}
+          fulfillmentMethod={choice.fulfillmentMethod}
+        />
+      )}
 
       <div className="mt-5">
         <fieldset className="min-w-0">
@@ -442,6 +471,13 @@ function SellerCheckoutGroup({
                   </div>
                 </div>
               )}
+              {!qrOptionsQuery.isLoading && qrOptions.length === 0 && (
+                <p className="mt-3 rounded-lg bg-[#fdf3e7] p-3 text-xs font-semibold text-[#8c5a2b]">
+                  {cooperativeName ?? "This cooperative"} has not published a QR payment code yet.
+                  The AgriCoop platform payment account is shown below — the cooperative will still verify your receipt.
+                  You can also choose Cash on Pickup or Cash on Delivery above.
+                </p>
+              )}
               {qrOptions.length > 0 && !selectedQrOption ? (
                 <p className="mt-3 text-xs font-semibold text-[#8c574c]">Select a payment QR code above to continue.</p>
               ) : displayQr?.qrImageUrl ? (
@@ -469,7 +505,7 @@ function SellerCheckoutGroup({
               )}
               {selectedQrOption && reportSentFor === selectedQrOption.id && !reportOpen && (
                 <p className="mt-3 rounded-lg bg-[#e6f3e5] p-3 text-xs font-semibold text-[#2f5c39]">
-                  Thank you. Your report has been sent to the cooperative administrators for review. You may select another available QR code to continue your payment.
+                  Thank you. Your report has been sent to the cooperative administrators for review. This QR code is now hidden until it is re-enabled — another available QR code was selected automatically.
                 </p>
               )}
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -477,6 +513,15 @@ function SellerCheckoutGroup({
                 <button type="button" className="agri-ghost px-2 py-1 text-xs" onClick={() => void copyAmount()}>
                   <Copy size={14} /> Copy amount
                 </button>
+                {selectedQrOption && qrOptions.length > 1 && (
+                  <button
+                    type="button"
+                    className="agri-ghost px-2 py-1 text-xs"
+                    onClick={showAnotherQr}
+                  >
+                    <QrCode size={13} className="mr-1 inline" /> Show another QR
+                  </button>
+                )}
                 {selectedQrOption && (
                   <button
                     type="button"
@@ -604,6 +649,56 @@ function FulfillmentPicker({
         <p className="mt-2 text-xs leading-5 text-[#8c574c]" role="alert">{deliveryBlockedReason}</p>
       )}
     </fieldset>
+  );
+}
+
+function PickupLocationCard({
+  cooperativeId,
+  cooperativeName,
+  fulfillmentMethod,
+}: {
+  cooperativeId: number;
+  cooperativeName: string | null;
+  fulfillmentMethod: FulfillmentMethod;
+}) {
+  const query = trpc.cooperatives.pickupInfo.useQuery(
+    { cooperativeId },
+    { enabled: fulfillmentMethod === "pickup" },
+  );
+  if (fulfillmentMethod !== "pickup") return null;
+  const info = query.data ?? null;
+  return (
+    <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-white p-4">
+      <h4 className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Pickup location</h4>
+      {query.isLoading ? (
+        <Loader2 className="mt-3 animate-spin text-[#4e8257]" size={18} />
+      ) : !info ? (
+        <p className="mt-2 text-sm text-[#8c574c]">
+          Pickup information is unavailable for this cooperative right now. Please contact the cooperative through AgriCoop Messages before choosing pickup.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-1 text-sm text-[#45614e]">
+          <p className="font-bold text-[#315640]">Pickup from {info.name}</p>
+          <p>
+            {[info.address, info.location].filter(Boolean).join(", ")
+              || "The cooperative has not added a pickup address yet."}
+          </p>
+          {info.address ? null : (
+            <p className="text-xs font-semibold text-[#8c574c]">
+              This cooperative has not configured a detailed pickup address. Confirm the exact pickup point with {info.name} before pickup.
+            </p>
+          )}
+          {info.pickupContactNumber && <p>Contact: {info.pickupContactNumber}</p>}
+          {info.pickupInstructions && <p>Pickup instructions: {info.pickupInstructions}</p>}
+          {info.operatingHours && <p>Hours: {info.operatingHours}</p>}
+          {!info.address && !info.pickupContactNumber && (
+            <p className="text-xs text-[#6d7d70]">
+              You can also reach the cooperative through AgriCoop Messages.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -34,6 +34,7 @@ export const OFFICER_ADMIN_NAV: AdminNavItem[] = [
   { id: "orders", label: "Order Management", icon: ClipboardList, section: "orders" },
   { id: "payments", label: "Payment Verification", icon: BadgeCheck, section: "payments" },
   { id: "payment-options", label: "Cooperative Payment Options", icon: QrCode, href: "/admin/payment-options" },
+  { id: "cooperative", label: "My Cooperative", icon: Store, section: "cooperative" },
   { id: "products", label: "Products & Listings", icon: Package, section: "products" },
   { id: "reports", label: "Reports & Transactions", icon: BarChart3, href: "/reports" },
   { id: "support", label: "Support & Messages", icon: LifeBuoy, href: "/support-tickets" },

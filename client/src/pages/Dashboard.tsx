@@ -673,7 +673,7 @@ function BuyerDashboard() {
           <div className="flex items-center justify-between"><div><h2 className="font-display text-2xl font-bold text-[#264f37]">Your orders</h2><p className="mt-1 text-sm text-[#6a796e]">Seller confirmations and fulfillment updates appear here.</p></div><Link href="/marketplace" className="agri-ghost text-sm no-underline">Browse listings</Link></div>
           <div className="mt-5 space-y-3">
             {isLoading ? <Loader2 className="mx-auto my-10 animate-spin text-[#5d8a5e]"/> : orders.length ? orders.map(row => <div className="rounded-2xl border border-[#e3e9de] p-4" key={row.order.id}>
-              <div className="flex flex-wrap items-start justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#30573e] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.sellerName || "Farm seller"}</Link><p className="mt-1 text-xs text-[#6d7d70]">{formatEnumLabel(row.order.orderType)} Order · {fulfillmentLabel(row.order.fulfillmentMethod)} · {paymentMethodLabel(row.order.paymentMethod)} · {when(row.order.createdAt)}</p></div><Status value={row.order.status}/></div>
+              <div className="flex flex-wrap items-start justify-between gap-2"><div><Link href={`/orders/${row.order.id}`} className="font-bold text-[#30573e] no-underline hover:text-[#1f5a3c]">Order #{row.order.id} · {row.sellerName || "Farm seller"}</Link>{row.cooperativeName && <p className="mt-0.5 text-[11px] font-bold text-[#5f7a5f]">{row.cooperativeName}</p>}<p className="mt-1 text-xs text-[#6d7d70]">{formatEnumLabel(row.order.orderType)} Order · {fulfillmentLabel(row.order.fulfillmentMethod)} · {paymentMethodLabel(row.order.paymentMethod)} · {when(row.order.createdAt)}</p></div><Status value={row.order.status}/></div>
               <div className="mt-3 flex flex-wrap gap-2">{row.items.map(item => <span key={item.item.id} className="rounded-lg bg-[#f0f5ed] px-2.5 py-1.5 text-xs text-[#45614e]">{item.productName} × {item.item.quantity} {item.unit}</span>)}</div>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#edf0e9] pt-3"><p className="font-display font-bold text-[#27573a]">{peso(row.order.totalCents)}</p><button type="button" className="agri-ghost min-h-11 px-3 text-xs" disabled={openOrderChat.isPending} onClick={() => openOrderChat.mutate({ orderId: row.order.id })}>{openOrderChat.isPending ? <Loader2 className="animate-spin" size={14}/> : <MessageCircle size={14}/>} Message</button></div>
             </div>) : <Empty icon={ClipboardList} title="No orders yet" body="Explore local cooperative listings and submit your first order when ready."/>}
@@ -1723,6 +1723,22 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
     },
     onError: error => toast.error(error.message),
   });
+  const [pickupEdit, setPickupEdit] = useState<{
+    id: number;
+    name: string;
+    pickupContactNumber: string;
+    pickupInstructions: string;
+    operatingHours: string;
+  } | null>(null);
+  const updatePickup = trpc.cooperatives.update.useMutation({
+    onSuccess: () => {
+      toast.success("Pickup details saved.");
+      setPickupEdit(null);
+      void manageQuery.refetch();
+      void utils.cooperatives.list.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
 
   const runCreate = (confirmSimilarNormalizedName?: string) => {
     createCooperative.mutate({
@@ -1787,6 +1803,31 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
       </div>
       {manageQuery.isLoading && <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]" />}
       {manageQuery.error && <p role="alert" className="mt-3 text-sm text-[#a34838]">{manageQuery.error.message}</p>}
+      {pickupEdit && <form
+        className="agri-card mb-5 grid gap-4 p-5 sm:grid-cols-2 sm:p-6"
+        onSubmit={event => {
+          event.preventDefault();
+          updatePickup.mutate({
+            id: pickupEdit.id,
+            pickupContactNumber: pickupEdit.pickupContactNumber.trim() || null,
+            pickupInstructions: pickupEdit.pickupInstructions.trim() || null,
+            operatingHours: pickupEdit.operatingHours.trim() || null,
+          });
+        }}
+      >
+        <div className="sm:col-span-2">
+          <h3 className="font-display text-xl font-bold text-[#264f37]">Pickup details — {pickupEdit.name}</h3>
+          <p className="mt-1 text-sm text-[#6a796e]">Shown to buyers at checkout when they choose pickup for this cooperative's orders.</p>
+        </div>
+        <label className="field-label">Pickup contact number<input maxLength={40} className="field-control" value={pickupEdit.pickupContactNumber} onChange={e => setPickupEdit({ ...pickupEdit, pickupContactNumber: e.target.value })} placeholder="e.g. 0917 123 4567" /></label>
+        <label className="field-label">Operating hours<input maxLength={160} className="field-control" value={pickupEdit.operatingHours} onChange={e => setPickupEdit({ ...pickupEdit, operatingHours: e.target.value })} placeholder="e.g. Mon–Sat, 7:00 AM – 5:00 PM" /></label>
+        <label className="field-label sm:col-span-2">Pickup instructions<textarea maxLength={2000} className="field-control min-h-24" value={pickupEdit.pickupInstructions} onChange={e => setPickupEdit({ ...pickupEdit, pickupInstructions: e.target.value })} placeholder="e.g. Proceed to the cooperative office; bring a valid ID and your order number." /></label>
+        <div className="flex gap-2 sm:col-span-2">
+          <button type="submit" className="agri-button text-sm" disabled={updatePickup.isPending}>{updatePickup.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Save pickup details</button>
+          <button type="button" className="agri-ghost text-sm" onClick={() => setPickupEdit(null)}>Cancel</button>
+        </div>
+      </form>}
+
       <div className="mt-4 overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="border-b border-[#e2e9dd] text-xs uppercase text-[#718174]">
@@ -1809,18 +1850,33 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
                   {row.deletedAt ? (
                     <button type="button" className="agri-ghost px-2 py-1 text-xs" disabled={restore.isPending} onClick={() => restore.mutate({ id: row.id })}>Restore</button>
                   ) : (
-                    <button
-                      type="button"
-                      className="agri-ghost px-2 py-1 text-xs text-[#a34838]"
-                      onClick={() => setDeleteTarget({
-                        id: row.id,
-                        name: row.name,
-                        sellerCount: row.sellerCount,
-                        listingCount: row.listingCount,
-                      })}
-                    >
-                      Delete
-                    </button>
+                    <span className="inline-flex gap-1">
+                      <button
+                        type="button"
+                        className="agri-ghost px-2 py-1 text-xs"
+                        onClick={() => setPickupEdit({
+                          id: row.id,
+                          name: row.name,
+                          pickupContactNumber: row.pickupContactNumber ?? "",
+                          pickupInstructions: row.pickupInstructions ?? "",
+                          operatingHours: row.operatingHours ?? "",
+                        })}
+                      >
+                        Pickup
+                      </button>
+                      <button
+                        type="button"
+                        className="agri-ghost px-2 py-1 text-xs text-[#a34838]"
+                        onClick={() => setDeleteTarget({
+                          id: row.id,
+                          name: row.name,
+                          sellerCount: row.sellerCount,
+                          listingCount: row.listingCount,
+                        })}
+                      >
+                        Delete
+                      </button>
+                    </span>
                   )}
                 </td>
               </tr>
@@ -1856,6 +1912,74 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
       </AlertDialogContent>
     </AlertDialog>
   </div>
+  );
+}
+
+function OfficerCooperativePanel() {
+  const utils = trpc.useUtils();
+  const manageQuery = trpc.cooperatives.manageList.useQuery();
+  const cooperative = manageQuery.data?.[0] ?? null;
+  const [form, setForm] = useState({
+    pickupContactNumber: "",
+    pickupInstructions: "",
+    operatingHours: "",
+  });
+  const [loadedFor, setLoadedFor] = useState<number | null>(null);
+  useEffect(() => {
+    if (cooperative && loadedFor !== cooperative.id) {
+      setForm({
+        pickupContactNumber: cooperative.pickupContactNumber ?? "",
+        pickupInstructions: cooperative.pickupInstructions ?? "",
+        operatingHours: cooperative.operatingHours ?? "",
+      });
+      setLoadedFor(cooperative.id);
+    }
+  }, [cooperative, loadedFor]);
+  const updatePickup = trpc.cooperatives.update.useMutation({
+    onSuccess: () => {
+      toast.success("Pickup details saved.");
+      void manageQuery.refetch();
+      void utils.cooperatives.list.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+
+  return (
+    <section className="agri-card p-5 sm:p-6">
+      <h2 className="font-display text-2xl font-bold text-[#264f37]">My cooperative</h2>
+      <p className="mt-1 text-sm text-[#6a796e]">Pickup details shown to buyers at checkout when they choose pickup for your cooperative's orders.</p>
+      {manageQuery.isLoading && <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]" />}
+      {manageQuery.error && <p role="alert" className="mt-3 text-sm text-[#a34838]">{manageQuery.error.message}</p>}
+      {!manageQuery.isLoading && !cooperative && (
+        <p className="mt-4 text-sm text-[#6d7d70]">No cooperative is assigned to your account yet.</p>
+      )}
+      {cooperative && (
+        <form
+          className="mt-5 grid gap-4 sm:grid-cols-2"
+          onSubmit={event => {
+            event.preventDefault();
+            updatePickup.mutate({
+              id: cooperative.id,
+              pickupContactNumber: form.pickupContactNumber.trim() || null,
+              pickupInstructions: form.pickupInstructions.trim() || null,
+              operatingHours: form.operatingHours.trim() || null,
+            });
+          }}
+        >
+          <div className="rounded-xl bg-[#f2f6ef] p-4 sm:col-span-2">
+            <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">Cooperative</p>
+            <p className="mt-1 font-bold text-[#315640]">{cooperative.name}</p>
+            <p className="mt-1 text-sm text-[#65766b]">{[cooperative.address, cooperative.location].filter(Boolean).join(" · ")}</p>
+          </div>
+          <label className="field-label">Pickup contact number<input maxLength={40} className="field-control" value={form.pickupContactNumber} onChange={e => setForm({ ...form, pickupContactNumber: e.target.value })} placeholder="e.g. 0917 123 4567" /></label>
+          <label className="field-label">Operating hours<input maxLength={160} className="field-control" value={form.operatingHours} onChange={e => setForm({ ...form, operatingHours: e.target.value })} placeholder="e.g. Mon–Sat, 7:00 AM – 5:00 PM" /></label>
+          <label className="field-label sm:col-span-2">Pickup instructions<textarea maxLength={2000} className="field-control min-h-24" value={form.pickupInstructions} onChange={e => setForm({ ...form, pickupInstructions: e.target.value })} placeholder="e.g. Proceed to the cooperative office; bring a valid ID and your order number." /></label>
+          <div className="sm:col-span-2">
+            <button type="submit" className="agri-button text-sm" disabled={updatePickup.isPending}>{updatePickup.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Save pickup details</button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 
@@ -2494,6 +2618,7 @@ function AdminDashboard() {
     products: panels.products,
     applications: panels.applications,
     cooperatives: <CooperativesAdminPanel canCreateCooperative={user?.role === "superadmin"} />,
+    cooperative: <OfficerCooperativePanel />,
     settings: <AdminSystemPaymentsPanel />,
     health: <SystemHealthPanel />,
   };

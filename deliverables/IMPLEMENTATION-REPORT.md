@@ -235,3 +235,50 @@ All disposable QA payment options, QR reports, generated notifications (includin
 - **Method:** `create_deployment` with `gitSource` pinned to the exact SHA; `request_promote` on preview `dpl_HQinBujB5QqiydPJCQrSKjUokw5y` returned 422 (sourceless git link), so a fresh production-target build of the same commit was used — consistent with prior production deploys on this project.
 - **Rollback:** previous production `dpl_8QuCcoywmBBYSCGrMihfe9QxoDCJ` (commit `c3e662e`) preserved as rollback target.
 - **Smoke results (production browser + DB):** 26/26 desktop, 5/5 mobile — full notification delivery/navigation/read/lifecycle loop, cooperative-scoped permissions, SuperAdmin selector, buyer QR picker/report. All disposable QA data removed; shared DB left clean (only pre-existing payment option id 2).
+
+---
+
+# Follow-up: Cooperative-scoped QR isolation, QR issue auto-hide, and cooperative pickup details
+
+**Basis:** attached capstone manuscript (`AgriCoop_Final_Manuscript_A4 (2).pdf`) — per-cooperative payment configuration (Fig. 4-11), pickup/delivery coordination within scope (§1.5), external payment settlement, seller-group checkout (§1.6/§3.4), cooperative oversight. No new business modules were introduced.
+
+## Changes implemented
+
+### 1. Cooperative payment isolation (manuscript: per-cooperative payment options)
+
+- `paymentOptions."cooperativeId"` is now `NOT NULL` (`drizzle/pg-schema.ts`, migration `supabase/migrations/20261211000000_coop_pickup_qr_scope.sql`, applied to the app database). Platform-wide (NULL) payment options no longer exist in the data model.
+- `adminPayment.createOption` / `uploadQrImage` reject a missing cooperative with `BAD_REQUEST`; SuperAdmin must explicitly select a cooperative (UI: required `<select>`, "Platform-wide" option removed). OfficerAdmin remains pinned to `actor.cooperativeId`.
+- `adminPayment.checkoutOptions` returns `[]` for baskets without a cooperative and only ever matches `paymentOptions.cooperativeId === order cooperativeId`; `isQrCheckoutOption`/`isGcashCheckoutOption` now hard-require a non-null cooperative match, so a manipulated `paymentOptionId` cannot select another cooperative's QR (`orders.create` re-validates through `order_create_lock_payment_option` + `assertPaymentOptionSelection`).
+- Live DB verified: 0 NULL-cooperative options; the two pre-existing options (ids 2 GCash, 53 Maya) already belonged to cooperative 3 and were preserved untouched.
+
+### 2. QR issue reporting → automatic hide + re-enable (implied safeguard for "eligible payment evidence")
+
+- `adminPayment.reportIssue` now deactivates the reported option inside the same transaction that records the report (`isActive=false`), preserving the full report snapshot (provider, label, account, QR path, reason, details). Duplicate-report window (15 min, pending/under_review) retained.
+- Checkout already auto-selects another eligible QR when the selected one disappears; the buyer UI now also offers an explicit "Show another QR" switcher and explains that the reported QR is hidden until reviewed. Resolving/dismissing a report never re-activates the option — only an explicit admin `updateOption isActive=true` ("Available at checkout") restores it. PaymentOptions UI documents this in the reports tab and edit form.
+
+### 3. Cooperative pickup information (implied by documented pickup coordination)
+
+- `cooperatives` gained `pickupContactNumber`, `pickupInstructions`, `operatingHours` (column-level grants added for `authenticated`).
+- `cooperatives.update` accepts the three fields; `assertCooperativeManagementScope` keeps OfficerAdmin writes limited to its own cooperative; SuperAdmin manages all.
+- New public `cooperatives.pickupInfo` query and pickup fields on `cooperatives.bySlug`; public cooperative page shows a "Pickup information" card.
+- OfficerAdmin gained a **My Cooperative** dashboard section (`?section=cooperative`) with the pickup editor; SuperAdmin's Cooperative Management table gained a per-row **Pickup** editor.
+- Checkout renders a "Pickup location" card per seller group when fulfillment is pickup (address/location, contact, instructions, hours, and an explicit warning when the cooperative has not configured a detailed pickup address). Pickup is not hard-blocked when data is missing — the card warns instead, matching the manuscript's coordination (not logistics) model.
+- `orders.create` snapshots pickup details into `orders.pickupDetails` (jsonb) at order time; `orders.byId`/`OrderDetail` shows the historical snapshot plus the recorded payment option (provider, label, account name/number) so later cooperative edits cannot rewrite order history.
+
+### 4. Buyer transparency (explicit cooperative affiliation/oversight)
+
+- Marketplace cart rows (desktop + mobile) now show "By {seller} · {cooperative}"; checkout group headers show "Sold by {cooperative}"; buyer order cards in the dashboard show the cooperative name; order detail already showed cooperative identity and now also shows pickup + payment-option snapshots.
+- `prepareOrder` now rejects mixed-cooperative baskets server-side ("submit a separate order for each cooperative"), complementing the existing single-seller rule; cart rows now return the real `cooperativeSlug` (was hardcoded `null`).
+- Deferred: visual grouping of marketplace listings by cooperative — the flat grid already identifies each cooperative per card and supports cooperative filtering/sorting; sectioned grouping would conflict with price sorting and pagination without adding documented functionality.
+
+## Verification
+
+- `tsc --noEmit` (`pnpm check`): **pass**.
+- `pnpm test` (vitest): **81 files / 524 passed / 22 skipped** — includes new coverage: NULL-cooperative checkout returns `[]`, SuperAdmin create/upload without cooperative rejected, report-triggered `isActive=false`, inactive option not re-toggled, `paymentOptions.cooperativeId` NOT NULL schema assertion, platform-wide QR ineligibility.
+- `pnpm build`: **pass**.
+- Playwright `e2e/coop-transparency-qr.spec.ts` (new, credentials-gated): **3/3 desktop-1280 and 3/3 mobile-375** — buyer sees cooperative on cards/cart/checkout and the pickup card; OfficerAdmin sees scoped payment options + My Cooperative pickup editor; SuperAdmin sees a required cooperative selector with no platform-wide option. `e2e/four-role-acceptance.spec.ts` re-run: all role sign-ins and dashboard loads pass (2 initial sign-in timeouts passed on retry — flaky auth redirect timing, unrelated to these changes).
+- DB inspection post-migration: new columns present, `paymentOptions."cooperativeId"` `is_nullable=NO`, 0 orders carry `pickupDetails` yet (snapshot applies to new pickup orders only).
+
+## Data safety
+
+- No QA/demo/test records were created or left behind: the browser tests are read-only UI assertions; the only DB writes were the schema migration itself. Pre-existing payment options (ids 2, 53), cooperatives, products, orders, and users were not modified. Temporary `_`-prefixed inspection scripts used during this session were deleted.

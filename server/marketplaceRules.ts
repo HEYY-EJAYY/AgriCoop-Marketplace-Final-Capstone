@@ -137,6 +137,10 @@ export function prepareOrder(products: AvailableProduct[], items: OrderItemReque
   if (sellerId === null) {
     throw new Error("One or more selected items are no longer available.");
   }
+  const cooperativeIds = new Set(products.map(product => product.cooperativeId));
+  if (cooperativeIds.size > 1) {
+    throw new Error("Products in this order belong to different cooperatives. Please submit a separate order for each cooperative.");
+  }
   const productMap = new Map(products.map(product => [product.id, product]));
   for (const item of aggregatedItems) {
     const product = productMap.get(item.productId);

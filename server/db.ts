@@ -1075,6 +1075,25 @@ export async function getOrderDetail(orderId: number) {
         }).from(cooperatives).where(eq(cooperatives.id, orderRow.cooperativeId)).limit(1),
   ]);
   const [payment] = await db.select().from(transactions).where(eq(transactions.orderId, orderId)).limit(1);
+  let paymentOption: {
+    paymentMethod: string;
+    displayName: string;
+    accountName: string | null;
+    accountNumber: string | null;
+    cooperativeId: number;
+  } | null = null;
+  if (payment?.paymentOptionId != null) {
+    const [option] = await db.select({
+      paymentMethod: paymentOptions.paymentMethod,
+      displayName: paymentOptions.displayName,
+      accountName: paymentOptions.accountName,
+      accountNumber: paymentOptions.accountNumber,
+      cooperativeId: paymentOptions.cooperativeId,
+    }).from(paymentOptions)
+      .where(eq(paymentOptions.id, payment.paymentOptionId))
+      .limit(1);
+    paymentOption = option ?? null;
+  }
   const [proof] = await db.select({
     id: paymentProofs.id,
     storagePath: paymentProofs.storagePath,
@@ -1137,6 +1156,7 @@ export async function getOrderDetail(orderId: number) {
     seller: seller[0] ?? null,
     cooperative,
     payment: payment ?? null,
+    paymentOption,
     proof: proof ?? null,
     items,
     events,

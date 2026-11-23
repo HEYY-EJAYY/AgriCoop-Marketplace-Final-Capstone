@@ -31,6 +31,10 @@ type CooperativeBySlugPayload = {
     slug?: string | null;
     description?: string | null;
     status?: string | null;
+    address?: string | null;
+    pickupContactNumber?: string | null;
+    pickupInstructions?: string | null;
+    operatingHours?: string | null;
   };
   products: CoopProduct[];
 };
@@ -135,6 +139,17 @@ export default function CooperativePage() {
           <p className="mt-2 text-[#65766b]">{cooperative.location}</p>
           {cooperative.description && (
             <p className="mt-4 max-w-3xl leading-7 text-[#66766b]">{cooperative.description}</p>
+          )}
+          {(cooperative.address || cooperative.pickupContactNumber || cooperative.pickupInstructions || cooperative.operatingHours) && (
+            <div className="mt-5 rounded-xl bg-[#f2f6ef] p-4 text-sm text-[#45614e]">
+              <p className="font-bold text-[#315640]">Pickup information</p>
+              <p className="mt-1">
+                {[cooperative.address, cooperative.location].filter(Boolean).join(", ") || "Address not yet provided"}
+              </p>
+              {cooperative.pickupContactNumber && <p className="mt-1">Contact: {cooperative.pickupContactNumber}</p>}
+              {cooperative.pickupInstructions && <p className="mt-1">Instructions: {cooperative.pickupInstructions}</p>}
+              {cooperative.operatingHours && <p className="mt-1">Hours: {cooperative.operatingHours}</p>}
+            </div>
           )}
         </section>
 
