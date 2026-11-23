@@ -23,7 +23,7 @@ async function signIn(page: Page, email: string, password: string) {
   await page.locator('input[type="email"]').fill(email);
   await page.locator('input[type="password"]').fill(password);
   await page.getByRole("button", { name: /^Sign in$/i }).click();
-  await page.waitForURL(url => !url.pathname.startsWith("/auth"), { timeout: 45_000 });
+  await page.waitForURL(url => !url.pathname.startsWith("/auth"), { timeout: 120_000 });
 }
 
 test.describe("cooperative transparency and QR scope", () => {

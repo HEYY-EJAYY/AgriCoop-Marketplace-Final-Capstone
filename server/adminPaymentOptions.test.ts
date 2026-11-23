@@ -611,8 +611,13 @@ describe("admin payment option router authorization", () => {
     })).resolves.toEqual({ success: true, reportId: 1 });
 
     // One create_notification call per eligible recipient: coop-12 admin + superadmin.
-    // The coop-99 admin and the pending admin are excluded.
-    expect(db.execute).toHaveBeenCalledTimes(2);
+    // The coop-99 admin and the pending admin are excluded. The reported QR is
+    // deactivated through the guarded SECURITY DEFINER function (one extra
+    // execute call), since buyers cannot UPDATE paymentOptions under RLS.
+    const executedSql = db.execute.mock.calls.map(call =>
+      new PgDialect().sqlToQuery(call[0] as SQL).sql);
+    expect(executedSql.filter(text => text.includes("create_notification"))).toHaveLength(2);
+    expect(executedSql.filter(text => text.includes("deactivate_reported_payment_option"))).toHaveLength(1);
   });
 
   it("rejects a duplicate QR report within the review window", async () => {
@@ -731,7 +736,7 @@ describe("admin payment option router authorization", () => {
       qrImagePath: null,
       isActive: true,
     };
-    const { db, updateSets } = createDb([
+    const { db } = createDb([
       [option],
       [],
       [{ name: "Buyer One", email: "buyer@example.test" }],
@@ -748,8 +753,10 @@ describe("admin payment option router authorization", () => {
       reason: "cannot_scan",
     })).resolves.toEqual({ success: true, reportId: 1 });
 
-    expect(updateSets).toEqual(expect.arrayContaining([
-      expect.objectContaining({ isActive: false }),
+    const executedSql = db.execute.mock.calls.map(call =>
+      new PgDialect().sqlToQuery(call[0] as SQL).sql);
+    expect(executedSql).toEqual(expect.arrayContaining([
+      expect.stringContaining("deactivate_reported_payment_option"),
     ]));
   });
 

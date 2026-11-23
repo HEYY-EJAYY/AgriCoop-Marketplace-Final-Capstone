@@ -5233,10 +5233,9 @@ export const appRouter = router({
             status: "pending",
           }).returning({ id: qrIssueReports.id });
           if (option.isActive) {
-            await tx.update(paymentOptions).set({
-              isActive: false,
-              updatedAt: new Date(),
-            }).where(and(eq(paymentOptions.id, option.id), eq(paymentOptions.isActive, true)));
+            // Buyers/sellers cannot UPDATE paymentOptions under RLS, so the
+            // deactivation runs through a guarded SECURITY DEFINER function.
+            await tx.execute(sql`select agricoop_app.deactivate_reported_payment_option(${option.id})`);
           }
           return row;
         });

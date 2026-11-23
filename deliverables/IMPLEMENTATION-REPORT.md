@@ -282,3 +282,41 @@ All disposable QA payment options, QR reports, generated notifications (includin
 ## Data safety
 
 - No QA/demo/test records were created or left behind: the browser tests are read-only UI assertions; the only DB writes were the schema migration itself. Pre-existing payment options (ids 2, 53), cooperatives, products, orders, and users were not modified. Temporary `_`-prefixed inspection scripts used during this session were deleted.
+
+---
+
+# Final review round — QR auto-hide RLS fix, persisted checkout E2E, pickup assessment
+
+**Basis:** re-read of the attached manuscript; live DB inspection; persisted browser workflows against the shared dev database with disposable fixtures only.
+
+## Genuine bug found and fixed: QR auto-hide was a no-op under RLS
+
+- `reportIssue` deactivated the reported option with `tx.update(paymentOptions)` inside the report transaction, but buyers/sellers have no UPDATE policy on `paymentOptions` (staff/superadmin only), so the update silently affected 0 rows — reported QRs stayed visible at checkout.
+- Fix: migration `supabase/migrations/20261212000000_qr_report_hide_function.sql` adds `agricoop_app.deactivate_reported_payment_option(integer)` — SECURITY DEFINER, guarded (requires the caller's own pending report for that option), only ever sets `isActive=false`, EXECUTE granted to `authenticated` only. `reportIssue` now calls it in the same transaction as the report insert. Applied to the app DB (function verified present, `prosecdef=true`).
+- `server/adminPaymentOptions.test.ts` updated: asserts the guarded function SQL is executed and notification calls are unchanged; deactivation path covered.
+
+## Persisted end-to-end verification (real browser, shared DB, disposable fixtures)
+
+- New spec `e2e/checkout-workflow.spec.ts` (credentials-gated, serial): marketplace search + cooperative filter (desktop sidebar and mobile bottom sheet), product detail cooperative identity, cart add/quantity/min-order, checkout "Sold by" cooperative header, pickup card with explicit missing-address warning, 20 kg delivery minimum enforcement, coop-scoped QR listing, QR switching, QR issue report → auto-hide, cash-pickup order creation → order detail → superadmin review/approve.
+- Disposable fixtures: two `paymentOptions` rows (`QA Fixture GCash A`/`QA Fixture Maya B`, coop 1) created for the test; `beforeAll` self-heals them (reactivates + clears QA reports) so reruns are deterministic. One cash-pickup order created per run; id recorded to `scripts/_qa-order-id.txt` and removed by `scripts/_qa-cleanup.mts`.
+- Fixture state was verified dirty-then-clean during the run: a reported fixture (id 57) was confirmed `isActive=false` with report row preserved, then reset.
+
+## Pickup information assessment
+
+- Manuscript requires "pickup and delivery coordination" (§1.5) — coordination, not a logistics/address-management module.
+- Cooperatives have `location` + `address` + new `pickupContactNumber`/`pickupInstructions`/`operatingHours`. Live data: coop 1 has `location` only; coop 13 has `location` + a short `address`. No province/city/barangay decomposition exists or is required by the manuscript.
+- Decision: keep pickup non-blocking; checkout shows a clear "has not configured a detailed pickup address" warning rather than implying a verified address, and orders snapshot whatever the cooperative had at order time. No new address module added — that would exceed documented scope. Officers/SuperAdmins can fill in contact/instructions/hours today; `address` remains the free-text pickup address.
+
+## Marketplace grouping assessment
+
+- Manuscript documents cooperative affiliation/oversight and seller-group checkout, but does not require visually grouped catalog sections. The flat grid already shows cooperative identity per card, supports cooperative filtering, search, category, sort, and pagination. Visual sectioning would conflict with global price sort + pagination. Deferred — compliant as implemented.
+
+## Final verification results (this review round)
+
+- `pnpm check` (tsc --noEmit): **pass**.
+- `pnpm test` (vitest): **81 files / 524 passed / 22 skipped** — includes updated `adminPaymentOptions` coverage for the SECURITY DEFINER deactivation path.
+- `pnpm build`: **pass**.
+- Playwright `e2e/checkout-workflow.spec.ts` (persisted workflows, real sign-in, shared DB, disposable fixtures): **10/10 project runs** — mobile-360, mobile-375, tablet-768, desktop-1280, desktop-1920 × 2 tests (marketplace→cart→checkout→QR report; cash-pickup order→order detail→superadmin review). Spec self-heals fixtures via `beforeAll`; mobile filter sheet selectors handled.
+- Playwright `e2e/coop-transparency-qr.spec.ts`: **15/15 project runs** — all 5 viewports × 3 tests (buyer transparency, officer scoping, superadmin coop selector).
+- DB post-cleanup: `paymentOptions` = 2 legitimate rows (ids 2, 53, coop 3), 0 NULL-coop, 0 QA fixture rows, 0 QR reports, orders max id 69 (all QA orders 70–80 and their payments/transactions/items/history/conversations/notifications removed). `scripts/qa-fixture-cleanup.mts` provided for future runs.
+- Note: local `pnpm build` output does not inline `VITE_SUPABASE_*` when `.env.local` is absent from the build env — production builds on Vercel inject env vars at build time; verified unrelated to app code.
