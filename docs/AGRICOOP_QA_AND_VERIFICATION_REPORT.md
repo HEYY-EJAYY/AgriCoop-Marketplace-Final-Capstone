@@ -253,3 +253,12 @@ Repository hygiene and re-verification before the final commit:
 - **Re-verification:** `pnpm check` 0 errors; `pnpm test` 81 files / **524 passed / 22 skipped** (one transient failure in `nestedDatabaseScope.test.ts` caused by the `types/` move was fixed by restoring the file at its tracked path); `pnpm build` success (`dist/index.js` 481.4 kB, smaller than the 485.2 kB baseline after dead-code removal).
 - **Docs updated:** `docs/AGRICOOP_FILE_BY_FILE_REFERENCE.md` reflects the removed files.
 - **Not performed:** browser E2E re-run and live-DB QA — no isolated QA Supabase project was available in this environment; `.env.local` points at the shared production database, which was not used for disposable writes.
+
+## Release deployment — production defect found and fixed (2026-11-24)
+
+- **Deployed commit:** `9f4a7ff96d30513827cc176663e16efc0ca43114` via `create_deployment` (`target: production`, git source). `request_promote` on the git-triggered preview returned 422 (same as prior releases); the preview also lacks `DATABASE_URL` because project env vars are production-scoped only — expected, not a defect.
+- **Production deployment:** `dpl_ER6chojM473X4Dw6hXz4zswa6Pej` — `READY`, aliased to `agricoop-marketplace-final-capstone.vercel.app`.
+- **Defect found in post-deploy smoke:** anonymous `marketplace.categories`/`marketplace.list`/product-detail returned HTTP 500. Root cause: the seller-verification purchase filter added in `ec6c507` reads `users."verificationStatus"` in marketplace WHERE clauses, but the `anon` role only held column-level SELECT on `id/name/approvalStatus/role` — `authenticated` already had the grant. Public (logged-out) browsing hit `permission denied for column verificationStatus`.
+- **Fix:** new migration `supabase/migrations/20261213000000_anon_users_verification_status_grant.sql` grants `anon` SELECT on `users."verificationStatus"` only. Row visibility stays constrained by the existing `agricoop_mkt_users_anon_public_seller` RLS policy. Applied to the shared production DB (privilege change only, no data writes; reversible via `REVOKE SELECT ("verificationStatus") ON agricoop_app.users FROM anon`).
+- **Verified after fix:** `marketplace.categories` 200 with 6 categories, `marketplace.list` 200 with published products, `/api/health` `{"status":"ok","database":"available"}` on the production domain.
+- **Rollback target:** previous production deployment `dpl_AudEwvw53WsixfTopYdyXJPzvYn8` (commit `1514f2c`) remains available.
