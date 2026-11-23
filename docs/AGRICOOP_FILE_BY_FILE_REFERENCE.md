@@ -22,7 +22,6 @@ Inventory of the repository's relevant files, their purpose, key contents, and m
 | `vercel.json` | Vercel build/route config. |
 | `vite.config.ts` | Vite + React plugin, alias, dev proxy. |
 | `vitest.config.ts` | Unit test config. |
-| `template.json` | Manus/Forge template metadata (legacy scaffold). |
 | `todo.md` | Working notes scratch file. |
 | `LICENSE` | Project license — keep. |
 | `README.md` | Project intro + quickstart. |
@@ -62,8 +61,6 @@ Inventory of the repository's relevant files, their purpose, key contents, and m
 - **`ProductImage.tsx`** (+test) — Product image w/ fallback to `product-default.svg`.
 - **`PasswordVisibilityInput.tsx`** (+test) — Password field with show/hide toggle.
 - **`SupportTicketStatusSelect.tsx`** (+test) — Ticket status dropdown.
-- **`Map.tsx`** — Map embed component.
-- **`AIChatBox.tsx`** — AI assistant chat widget (legacy Manus feature; uses `_core/llm` if configured).
 - **`analytics/DashboardAnalytics.tsx`** — Charts/metrics for dashboards (lazy-loaded).
 - **`ui/*.tsx`** (~45 files) — shadcn/ui primitives (button, dialog, sheet, sidebar, table, form, chart, etc.). Stock components; safe to update via shadcn CLI. `chart.tsx` backs dashboard analytics.
 
@@ -109,7 +106,7 @@ Inventory of the repository's relevant files, their purpose, key contents, and m
 - **`PaymentOptions.tsx`** — OfficerAdmin payment-method/QR management.
 - **`Reports.tsx`** — Role-scoped reports + CSV export.
 - **`AuditLogs.tsx`** — SuperAdmin audit trail.
-- **`About.tsx`, `NotFound.tsx`, `ComponentShowcase.tsx`** — Static/showcase pages.
+- **`About.tsx`, `NotFound.tsx`** — Static pages.
 
 ## `server/` — backend
 
@@ -119,12 +116,11 @@ Inventory of the repository's relevant files, their purpose, key contents, and m
 - **`app.ts`** — App assembly, router mounting.
 - **`context.ts`** — tRPC context: auth token → user resolution.
 - **`trpc.ts`** — tRPC init, `publicProcedure`/`protectedProcedure`, error formatting.
-- **`env.ts`, `cookies.ts`, `types/cookie.d.ts`, `types/manusTypes.ts`** — Env access, cookie helpers, legacy types.
+- **`env.ts`, `cookies.ts`, `types/cookie.d.ts`** — Env access, cookie helpers, cookie module types.
 - **`storageProxy.ts` / `storageProxyAuth.ts`** — Authenticated Supabase Storage proxy; per-resource authorization (product images public-ish, proofs/docs private).
-- **`notification.ts`, `conversationStream.ts`, `heartbeat.ts`** — Notification helpers, streaming, keepalive.
+- **`notification.ts`, `conversationStream.ts`** — Notification helpers, streaming, keepalive.
 - **`systemRouter.ts`** — System/health procedures.
 - **`vite.ts`, `vercelApi.ts`** — Dev vite middleware; serverless handler for Vercel.
-- **`imageGeneration.ts`, `llm.ts`, `voiceTranscription.ts`, `map.ts`, `dataApi.ts`** — Optional Manus/Forge integrations (AI chat, image gen, maps); inert unless env keys set.
 
 ### Domain modules
 

@@ -240,3 +240,16 @@ Follow-up pass on commit `c47e54f` verifying actual inbox delivery and navigatio
 - All remaining `window.confirm` calls replaced with the shared `AlertDialog`-backed `ConfirmDialog`/`useConfirmDialog` (OfficerApplicationsPanel bulk/single delete, SellerProductCard delete, SellerDashboard bulk queue removal, AdminDashboard listing delete).
 - `pnpm check`, `pnpm test` (524 passed / 22 skipped), and `pnpm build` all pass.
 - NOT verified in this pass: live browser E2E for OfficerAdmin registration and buyer/seller verification flows (requires an isolated database; the shared production DB may not receive QA users/applications), mobile dashboard visual check at all required viewports, and RLS tests against a live DB.
+
+## Final release cleanup pass (2026-11-24)
+
+Repository hygiene and re-verification before the final commit:
+
+- **Removed dead scaffold code:** `client/src/pages/ComponentShowcase.tsx` and `client/src/components/AIChatBox.tsx` (unrouted/unreferenced), `client/src/components/Map.tsx` (unreferenced Manus demo), `server/_core/{dataApi,heartbeat,imageGeneration,llm,map,voiceTranscription}.ts` and `server/_core/types/manusTypes.ts` (no importers), `client/public/__manus__/debug-collector.js`.
+- **Removed Manus dev tooling:** `vite-plugin-manus-runtime`, `@builder.io/vite-plugin-jsx-loc`, and the in-vite debug log collector were removed from `vite.config.ts` (they only ran in dev; production builds never included them). Manus allowed-hosts entries removed.
+- **Removed unused dependencies:** `vite-plugin-manus-runtime`, `@builder.io/vite-plugin-jsx-loc`, `add`, `streamdown`, `@types/google.maps`.
+- **Removed legacy artifacts:** `template.json` (Manus scaffold snapshot), untracked `scripts/_vstatus.mts` and `docs/template-extracted.txt`.
+- **Retained:** `server/_core/types/cookie.d.ts` (required by module resolution), all migrations, `ship-*` migration helpers (documented runbook tooling), `backups/` (untouched, untracked), manuscript/user working files.
+- **Re-verification:** `pnpm check` 0 errors; `pnpm test` 81 files / **524 passed / 22 skipped** (one transient failure in `nestedDatabaseScope.test.ts` caused by the `types/` move was fixed by restoring the file at its tracked path); `pnpm build` success (`dist/index.js` 481.4 kB, smaller than the 485.2 kB baseline after dead-code removal).
+- **Docs updated:** `docs/AGRICOOP_FILE_BY_FILE_REFERENCE.md` reflects the removed files.
+- **Not performed:** browser E2E re-run and live-DB QA — no isolated QA Supabase project was available in this environment; `.env.local` points at the shared production database, which was not used for disposable writes.
