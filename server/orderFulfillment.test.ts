@@ -274,6 +274,38 @@ describe("orders.create fulfillment/payment separation", () => {
     });
   });
 
+  it("rejects blank, whitespace-only, and incomplete delivery addresses for cash and online", async () => {
+    mockDatabase(product);
+    const blankAddress = {
+      ...deliveryDetails,
+      recipientName: "   ",
+      contactNumber: "",
+      province: " ",
+      city: "",
+      barangay: "   ",
+      streetAddress: "     ",
+    };
+    for (const method of ["cash_delivery", "online"] as const) {
+      await expect(caller().orders.create({
+        items: [{ productId: 7, quantity: 2 }],
+        paymentMethod: method,
+        fulfillmentMethod: "delivery",
+        deliveryDetails: blankAddress,
+        ...(method === "online" ? { receiptUploadIntent: checkoutReceiptIntent() } : {}),
+      })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    for (const field of ["recipientName", "contactNumber", "province", "city", "barangay", "streetAddress"] as const) {
+      const { [field]: _omitted, ...rest } = deliveryDetails;
+      void _omitted;
+      await expect(caller().orders.create({
+        items: [{ productId: 7, quantity: 2 }],
+        paymentMethod: "cash_delivery",
+        fulfillmentMethod: "delivery",
+        deliveryDetails: rest,
+      })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+  });
+
   it("rejects online payment without an explicit fulfillment selection", async () => {
     await expect(caller().orders.create({
       items: [{ productId: 7, quantity: 2 }],
