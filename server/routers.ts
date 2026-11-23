@@ -52,6 +52,7 @@ import {
   normalizeCooperativeName,
 } from "./cooperativeNames";
 import { isProductImageSizeAllowed, MAX_PRODUCT_IMAGE_SIZE_BYTES, MAX_PRODUCT_IMAGES, PRODUCT_UNITS } from "../shared/productOptions";
+import { DELIVERY_MIN_WEIGHT_GRAMS, formatWeightKg, orderWeightGrams } from "../shared/orderWeight";
 import { isProfileImageSizeAllowed, MAX_PROFILE_IMAGE_SIZE_BYTES } from "../shared/profileImage";
 import {
   assertPaymentOptionSelection,
@@ -2169,6 +2170,25 @@ export const appRouter = router({
           }
           if (paymentMethod === "cash_delivery" && fulfillmentMethod !== "delivery") {
             throw new TRPCError({ code: "BAD_REQUEST", message: "Cash on Delivery requires delivery fulfillment." });
+          }
+          if (fulfillmentMethod === "delivery") {
+            const productUnitById = new Map(currentProducts.map(product => [product.id, product.unit]));
+            const orderWeight = orderWeightGrams(input.items.map(item => ({
+              quantity: item.quantity,
+              unit: productUnitById.get(item.productId) ?? "",
+            })));
+            if (orderWeight.unknownUnits.length > 0) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `Delivery is unavailable because the weight of items sold by ${orderWeight.unknownUnits.join(", ")} cannot be determined.`,
+              });
+            }
+            if (orderWeight.totalGrams < DELIVERY_MIN_WEIGHT_GRAMS) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `Delivery requires a minimum order weight of 20 kg. This order weighs ${formatWeightKg(orderWeight.totalGrams)}.`,
+              });
+            }
           }
 
           let selectedPaymentOptionId: number | undefined;

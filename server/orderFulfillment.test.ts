@@ -209,7 +209,7 @@ describe("orders.create fulfillment/payment separation", () => {
   });
 
   const caller = () => appRouter.createCaller(buyerContext());
-  const product = purchasableProduct(7, SELLER_ID);
+  const product = { ...purchasableProduct(7, SELLER_ID), stockQty: 100 };
 
   it("accepts Cash on Pickup with pickup fulfillment and no delivery details", async () => {
     const { insertedOrders } = mockDatabase(product);
@@ -229,7 +229,7 @@ describe("orders.create fulfillment/payment separation", () => {
   it("accepts Cash on Delivery with delivery fulfillment and a complete address", async () => {
     const { insertedOrders } = mockDatabase(product);
     await expect(caller().orders.create({
-      items: [{ productId: 7, quantity: 2 }],
+      items: [{ productId: 7, quantity: 20 }],
       paymentMethod: "cash_delivery",
       fulfillmentMethod: "delivery",
       deliveryDetails,
@@ -260,7 +260,7 @@ describe("orders.create fulfillment/payment separation", () => {
   it("accepts Online Payment + Delivery, persisting fulfillment and the delivery address", async () => {
     const { insertedOrders } = mockDatabase(product);
     await expect(caller().orders.create({
-      items: [{ productId: 7, quantity: 2 }],
+      items: [{ productId: 7, quantity: 20 }],
       paymentMethod: "online",
       fulfillmentMethod: "delivery",
       deliveryDetails,
@@ -287,7 +287,7 @@ describe("orders.create fulfillment/payment separation", () => {
     };
     for (const method of ["cash_delivery", "online"] as const) {
       await expect(caller().orders.create({
-        items: [{ productId: 7, quantity: 2 }],
+        items: [{ productId: 7, quantity: 20 }],
         paymentMethod: method,
         fulfillmentMethod: "delivery",
         deliveryDetails: blankAddress,
@@ -366,6 +366,63 @@ describe("orders.create fulfillment/payment separation", () => {
       items: [{ productId: 7, quantity: 2 }],
       paymentMethod: "online",
       fulfillmentMethod: "pickup",
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("rejects delivery orders below the 20 kg minimum for cash and online", async () => {
+    mockDatabase(product);
+    for (const quantity of [2, 10, 19]) {
+      await expect(caller().orders.create({
+        items: [{ productId: 7, quantity }],
+        paymentMethod: "cash_delivery",
+        fulfillmentMethod: "delivery",
+        deliveryDetails,
+      })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    await expect(caller().orders.create({
+      items: [{ productId: 7, quantity: 19 }],
+      paymentMethod: "online",
+      fulfillmentMethod: "delivery",
+      deliveryDetails,
+      receiptUploadIntent: checkoutReceiptIntent(),
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("allows pickup below 20 kg while rejecting the same cart for delivery", async () => {
+    mockDatabase(product);
+    await expect(caller().orders.create({
+      items: [{ productId: 7, quantity: 5 }],
+      paymentMethod: "cash_pickup",
+      fulfillmentMethod: "pickup",
+    })).resolves.toMatchObject({ success: true });
+    await expect(caller().orders.create({
+      items: [{ productId: 7, quantity: 5 }],
+      paymentMethod: "cash_delivery",
+      fulfillmentMethod: "delivery",
+      deliveryDetails,
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("rejects delivery when a product's weight cannot be determined", async () => {
+    const pieceProduct = { ...purchasableProduct(8, SELLER_ID), unit: "piece" };
+    mockDatabase(pieceProduct);
+    await expect(caller().orders.create({
+      items: [{ productId: 8, quantity: 100 }],
+      paymentMethod: "cash_delivery",
+      fulfillmentMethod: "delivery",
+      deliveryDetails,
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("ignores client-submitted weight hints when enforcing the delivery minimum", async () => {
+    mockDatabase(product);
+    await expect(caller().orders.create({
+      items: [{ productId: 7, quantity: 19 }],
+      paymentMethod: "cash_delivery",
+      fulfillmentMethod: "delivery",
+      deliveryDetails,
+      // @ts-expect-error intentionally forged field — must not bypass validation
+      totalWeightGrams: 99_999_999,
     })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });

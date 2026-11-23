@@ -144,3 +144,45 @@ Verified on the local dev server (`pnpm dev`, Node v22.23.5) against the develop
 - Automated coverage: `server/orderFulfillment.test.ts` (10 tests) exercises `orders.create` for all four valid combinations plus rejections — missing fulfillment for online, delivery without address (cash and online), incompatible cash/fulfillment pairs, online without active account, and online without receipt intent. `pnpm check`/`pnpm test`/`pnpm build` re-run green (79 files, 481 passed, 22 skipped).
 
 Limitations: browser pass did not submit real orders (order submission covered by the automated router tests); no production deployment or production data was touched.
+
+---
+
+## Delivery minimum weight + realistic inventory (2026-11-23, dev only)
+
+### 20 kg delivery minimum
+
+- New shared util `shared/orderWeight.ts`: weight derived from product selling unit — `kg`→qty, `metric ton`→×1000; `piece`/`bunch`/`sack`/unknown → weight undetermined (blocks delivery, never assumed). Integer-gram math, no float drift.
+- Backend: `orders.create` recomputes weight from DB product units per seller group and rejects `delivery` < 20,000 g or with unknown-weight units; Pickup exempt; client-submitted weight fields ignored.
+- Frontend: checkout disables the Delivery radio below 20 kg with the exact explanation ("Minimum order weight for Delivery is 20 kg. Your current order weighs X. Add Y kg more…"), keeps Pickup selected, and auto-coerces a stale Delivery selection back to Pickup when the cart drops below the minimum.
+- Live API (dev): 10 kg → 400 "weighs 10 kg"; 19 kg → 400; 20 kg → order created (cancelled after verification).
+- Browser (dev, desktop 1366 + mobile 390): 10 kg → Delivery disabled + message; 20 kg → enabled; Delivery → address form; drop to 19 kg → auto-Pickup + message. Screenshots: `deliverables/screenshots/delivery-minimum/`.
+- Tests: `shared/orderWeight.test.ts` (14), `orderFulfillment.test.ts` +4 cases (below-min reject cash+online, pickup exemption, unknown-unit reject, forged-weight reject); `Checkout.deliveryAddress.test.tsx` +3 source assertions. Suite: 81 files / 507 passed / 22 skipped; `pnpm check` clean; `pnpm build` OK.
+
+### Inventory adjustment (dev DB only, unit = kg for all 20 products)
+
+Stock is stored in the product's selling unit — all catalog products sell by `kg`, so `stockQty` is kg. Open-order reservations were factored in (products 54, 58, 62, 64, 65, 69 have reserved stock; adjusted values keep `stock − reserved ≥ minOrderQty`).
+
+| ID | Product | Was | Now | Note |
+|---|---|---|---|---|
+| 50 | Banana | 5000 | 120 | common stock |
+| 51 | Banana | 2500 | 80 | |
+| 52 | Banana | 3000 | 60 | |
+| 53 | Banana | 4500 | 150 | |
+| 54 | Coconut | 8000 | 220 | reserved 100 |
+| 55 | Young Coconut | 1500 | 45 | |
+| 56 | Mango | 1175 | 90 | seasonal |
+| 57 | Calamansi | 880 | 35 | |
+| 58 | Pineapple | 2000 | 120 | reserved 50 |
+| 59 | Avocado | 750 | 25 | limited |
+| 60 | Durian | 1475 | 40 | seasonal |
+| 61 | Cacao | 790 | 60 | |
+| 62 | Coffee | 600 | 30 | reserved 10, high-value |
+| 63 | Abaca | 975 | 55 | |
+| 64 | Rubber | 2000 | 160 | reserved 50 |
+| 65 | Sugarcane | 10000 | 320 | reserved 200 |
+| 66 | Palay | 5000 | 300 | |
+| 67 | Yellow Corn | 3000 | 180 | |
+| 68 | Cassava | 2000 | 140 | |
+| 69 | Ginger | 500 | 25 | reserved 10, scarce |
+
+All 20 products (IDs 50–69), images, prices, names, and ownership unchanged. No production data touched; no commit/push/deploy.

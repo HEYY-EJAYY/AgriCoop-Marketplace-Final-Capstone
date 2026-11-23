@@ -31,3 +31,24 @@ describe("Checkout delivery-address enforcement", () => {
     expect(source).toContain("Complete all required address fields to place a delivery order.");
   });
 });
+
+describe("Checkout delivery minimum weight", () => {
+  it("computes weight via the shared orderWeight utility and blocks delivery below 20 kg", () => {
+    expect(source).toContain("orderWeightGrams");
+    expect(source).toContain("DELIVERY_MIN_WEIGHT_GRAMS");
+    expect(source).toContain("deliveryWeightBlockReason");
+    expect(source).toContain("fulfillmentOptionsForCart");
+    expect(source).toContain("Minimum order weight for Delivery is 20 kg.");
+  });
+
+  it("disables the Delivery radio and explains why instead of hiding it", () => {
+    expect(source).toContain("deliveryBlockedReason");
+    expect(source).toMatch(/disabled=\{blocked\}/);
+    expect(source).toContain('option === "delivery" && Boolean(deliveryBlockedReason)');
+  });
+
+  it("keeps Pickup available and coerces stale delivery selections through fulfillmentOptionsForCart", () => {
+    expect(source).toContain('base.filter(option => option !== "delivery")');
+    expect(source).toContain('?? "pickup"');
+  });
+});

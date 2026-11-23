@@ -43,7 +43,7 @@ You can browse products, build a cart, place orders, pay (online transfer with p
 
 1. On a product page, set the quantity and tap **Add to Cart**.
 2. Open **Cart** to review items. Change quantities or remove items.
-3. Tap **Checkout**. First choose **Fulfillment**: **Pickup** (you collect the order) or **Delivery** (the order is delivered to your address).
+3. Tap **Checkout**. First choose **Fulfillment**: **Pickup** (you collect the order) or **Delivery** (the order is delivered to your address). **Delivery requires a combined order weight of at least 20 kg** — below that, Delivery is disabled with an explanation showing your current weight and how much more you need; Pickup always remains available.
 4. Then choose a compatible **payment method**:
    - For **Pickup**: **Online Payment** or **Cash on Pickup**.
    - For **Delivery**: **Online Payment** or **Cash on Delivery**.

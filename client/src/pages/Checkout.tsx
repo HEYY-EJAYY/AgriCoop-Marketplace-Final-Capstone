@@ -28,6 +28,11 @@ import {
   PAYMENT_PROOF_MAX_BYTES,
 } from "../../../shared/paymentProofs";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import {
+  DELIVERY_MIN_WEIGHT_GRAMS,
+  formatWeightKg,
+  orderWeightGrams,
+} from "../../../shared/orderWeight";
 import { ArrowLeft, Copy, Loader2, QrCode, ShoppingBag, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -70,6 +75,31 @@ function listingFlags(items: CheckoutCartItem[]) {
   }));
 }
 
+/**
+ * Reason Delivery is unavailable for this seller group despite the listings
+ * supporting it — null when weight rules allow delivery (or delivery isn't
+ * offered at all). Mirrors the server-side check in orders.create.
+ */
+function deliveryWeightBlockReason(items: CheckoutCartItem[]): string | null {
+  const base = fulfillmentOptionsForListings(listingFlags(items));
+  if (!base.includes("delivery")) return null;
+  const weight = orderWeightGrams(items);
+  if (weight.unknownUnits.length > 0) {
+    return `Delivery is unavailable because the weight of items sold by ${weight.unknownUnits.join(", ")} cannot be determined.`;
+  }
+  if (weight.totalGrams < DELIVERY_MIN_WEIGHT_GRAMS) {
+    const remainingGrams = DELIVERY_MIN_WEIGHT_GRAMS - weight.totalGrams;
+    return `Minimum order weight for Delivery is 20 kg. Your current order weighs ${formatWeightKg(weight.totalGrams)}. Add ${formatWeightKg(remainingGrams)} more to qualify for Delivery, or choose Pickup.`;
+  }
+  return null;
+}
+
+function fulfillmentOptionsForCart(items: CheckoutCartItem[]): FulfillmentMethod[] {
+  const base = fulfillmentOptionsForListings(listingFlags(items));
+  if (deliveryWeightBlockReason(items)) return base.filter(option => option !== "delivery");
+  return base;
+}
+
 function SellerCheckoutGroup({
   sellerId,
   sellerName,
@@ -91,7 +121,9 @@ function SellerCheckoutGroup({
 }) {
   const flags = useMemo(() => listingFlags(items), [items]);
   const methods = useMemo(() => methodsForListings(flags, availability), [flags, availability]);
-  const fulfillmentOptions = fulfillmentOptionsForListings(flags);
+  const deliveryBlockedReason = useMemo(() => deliveryWeightBlockReason(items), [items]);
+  const fulfillmentOptions = useMemo(() => fulfillmentOptionsForCart(items), [items]);
+  const pickerOptions = useMemo(() => fulfillmentOptionsForListings(flags), [flags]);
   const groupTotal = items.reduce((sum, item) => sum + item.priceCents * item.quantity, 0);
 
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -249,9 +281,10 @@ function SellerCheckoutGroup({
 
       <div className="mt-5">
         <FulfillmentPicker
-          options={fulfillmentOptions}
+          options={pickerOptions}
           value={choice.fulfillmentMethod}
           onChange={setFulfillmentMethod}
+          deliveryBlockedReason={deliveryBlockedReason}
         />
       </div>
 
@@ -391,10 +424,12 @@ function FulfillmentPicker({
   options,
   value,
   onChange,
+  deliveryBlockedReason,
 }: {
   options: FulfillmentMethod[];
   value: FulfillmentMethod;
   onChange: (value: FulfillmentMethod) => void;
+  deliveryBlockedReason?: string | null;
 }) {
   return (
     <fieldset className="min-w-0">
@@ -403,13 +438,16 @@ function FulfillmentPicker({
         {options.map(option => {
           const copy = FULFILLMENT_COPY[option];
           const selected = value === option;
+          const blocked = option === "delivery" && Boolean(deliveryBlockedReason);
           return (
             <label
               key={option}
-              className={`flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm font-bold ${
-                selected
-                  ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
-                  : "border-[#e3e9de] bg-white text-[#66766b]"
+              className={`flex min-h-11 items-start gap-3 rounded-xl border p-3 text-sm font-bold ${
+                blocked
+                  ? "cursor-not-allowed border-[#e3e9de] bg-[#f4f4f1] text-[#9aa49b]"
+                  : selected
+                    ? "cursor-pointer border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
+                    : "cursor-pointer border-[#e3e9de] bg-white text-[#66766b]"
               }`}
             >
               <input
@@ -417,6 +455,7 @@ function FulfillmentPicker({
                 name="fulfillment"
                 className="mt-1 accent-[#4e8257]"
                 checked={selected}
+                disabled={blocked}
                 onChange={() => onChange(option)}
               />
               <span>
@@ -427,6 +466,9 @@ function FulfillmentPicker({
           );
         })}
       </div>
+      {deliveryBlockedReason && (
+        <p className="mt-2 text-xs leading-5 text-[#8c574c]" role="alert">{deliveryBlockedReason}</p>
+      )}
     </fieldset>
   );
 }
@@ -454,7 +496,7 @@ export default function Checkout() {
     const map = new Map<number, SellerGroupChoice>();
     Array.from(sellerMap.entries()).forEach(([sellerId, items]) => {
       const flags = listingFlags(items);
-      const fulfillmentOptions = fulfillmentOptionsForListings(flags);
+      const fulfillmentOptions = fulfillmentOptionsForCart(items);
       const fulfillmentMethod = fulfillmentOptions[0] ?? "pickup";
       const methods = paymentMethodsForFulfillment(methodsForListings(flags, availability), fulfillmentMethod);
       const paymentMethod = methods[0] ?? "cash_pickup";

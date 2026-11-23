@@ -93,6 +93,8 @@ Inventory of the repository's relevant files, their purpose, key contents, and m
 ### `pages/`
 
 - **`Home.tsx`** — Landing page (hero, features, CTA incl. Contact Us).
+- **`shared/orderWeight.ts`** — 20 kg delivery-minimum rules: unit→gram conversion (kg, metric ton; other units = unknown weight), `orderWeightGrams`, `meetsDeliveryMinimumWeight`, `formatWeightKg`. Used by Checkout UI and `orders.create`.
+- **`shared/orderWeight.test.ts`** — unit tests for weight math and the 20 kg threshold.
 - **`Marketplace.tsx`** — Product grid, search/filters, cart panel (`#order`); lazy-loaded route; unfiltered default query shares the `undefined` cache key with Home to avoid a duplicate catalog fetch.
 - **`ProductDetails.tsx`** — Gallery, pricing, add-to-cart, favorite, quote/message.
 - **`Checkout.tsx`** (+cashCopy.test) — Checkout form, per-seller payment method selection (cash pickup/delivery/online), AgriCoop QR details + receipt upload intent, order submit.
