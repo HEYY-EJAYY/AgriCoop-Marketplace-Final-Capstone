@@ -304,6 +304,34 @@ export const paymentOptions = appSchema.table("paymentOptions", {
   index("paymentOptionsIsActiveIdx").on(table.isActive),
 ]);
 
+export const qrIssueReports = appSchema.table("qrIssueReports", {
+  id: serial("id").primaryKey(),
+  paymentOptionId: integer("paymentOptionId").references(() => paymentOptions.id, { onDelete: "set null" }),
+  cooperativeId: integer("cooperativeId").references(() => cooperatives.id, { onDelete: "set null" }),
+  orderId: integer("orderId").references(() => orders.id, { onDelete: "set null" }),
+  reportedBy: integer("reportedBy").references(() => users.id, { onDelete: "set null" }),
+  paymentProvider: varchar("paymentProvider", { length: 50 }),
+  paymentOptionLabel: varchar("paymentOptionLabel", { length: 150 }),
+  accountName: varchar("accountName", { length: 150 }),
+  accountNumber: varchar("accountNumber", { length: 100 }),
+  qrImagePath: text("qrImagePath"),
+  reason: varchar("reason", { length: 60 }).notNull(),
+  details: text("details"),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  adminNote: text("adminNote"),
+  reviewedBy: integer("reviewedBy").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewedAt", { mode: "date" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
+}, table => [
+  check("qrIssueReportsStatusCheck", sql`${table.status} in ('pending', 'under_review', 'resolved', 'dismissed')`),
+  index("qrIssueReportsCooperativeIdIdx").on(table.cooperativeId),
+  index("qrIssueReportsStatusIdx").on(table.status),
+  index("qrIssueReportsPaymentOptionIdIdx").on(table.paymentOptionId),
+  index("qrIssueReportsReportedByIdx").on(table.reportedBy),
+  index("qrIssueReportsOrderIdIdx").on(table.orderId),
+]);
+
 export const transactions = appSchema.table("transactions", {
   id: serial("id").primaryKey(),
   orderId: integer("orderId").notNull().references(() => orders.id),

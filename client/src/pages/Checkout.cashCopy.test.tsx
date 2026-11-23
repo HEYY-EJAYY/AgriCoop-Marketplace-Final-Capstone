@@ -13,7 +13,8 @@ describe("Checkout cash copy", () => {
     expect(source).not.toContain("Sellers record cash received");
     expect(source).toContain('"cash_pickup"');
     expect(source).toContain('"cash_delivery"');
-    expect(source).not.toContain("adminPayment.checkoutOptions");
+    // Buyer-facing QR option picker (adminPayment.checkoutOptions allows buyer/seller roles).
+    expect(source).toContain("adminPayment.checkoutOptions");
   });
 
   it("does not include the removed sentence in Marketplace cart UI source", () => {

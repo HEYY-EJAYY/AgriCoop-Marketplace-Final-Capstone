@@ -31,7 +31,7 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { cartItems, conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { cartItems, conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, qrIssueReports, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
 import { previewUserCooperativeSelection, resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
 import {
@@ -40,6 +40,9 @@ import {
   isPaymentSettled,
   methodsForListings,
   normalizePaymentMethodInput,
+  QR_ISSUE_REASONS,
+  QR_ISSUE_REPORT_STATUSES,
+  QR_PAYMENT_PROVIDERS,
   type FulfillmentMethod,
   type PaymentMethod,
 } from "../shared/paymentMethods";
@@ -58,7 +61,7 @@ import {
   assertPaymentOptionSelection,
   getPaymentOptionCooperativeId,
   getPaymentQrStoragePrefix,
-  isGcashCheckoutOption,
+  isQrCheckoutOption,
   paymentOptionDetailsChanged,
 } from "./paymentOptions";
 import { isStorageKeyWithinPrefix, isStoragePublicUrlWithinPrefix, storageCreateSignedUploadUrl, storageDeleteObject, storageDeletePublicUrl, storageDownloadPrivateObject, storageDownloadPrivateProof, storageGet, storageGetSignedUrl, storageKeyFromPublicUrlWithinPrefix, storagePut } from "./storage";
@@ -354,7 +357,14 @@ async function createNotification(db: Awaited<ReturnType<typeof dbOrThrow>>, inp
 /** Officers only. Uses order_status_updated because the DB allowlist rejects ad-hoc payment types for non-buyer recipients. */
 export async function notifyApprovedOfficers(
   db: Awaited<ReturnType<typeof dbOrThrow>>,
-  input: { title: string; content: string; link: string; relatedEntityId: number },
+  input: {
+    title: string;
+    content: string;
+    link: string;
+    relatedEntityId: number;
+    type?: string;
+    relatedEntityType?: string;
+  },
   cooperativeId: number | null,
 ) {
   const officers = await db.select({
@@ -375,12 +385,12 @@ export async function notifyApprovedOfficers(
   for (const officer of recipients) {
     await createNotification(db, {
       userId: officer.id,
-      type: "order_status_updated",
+      type: input.type ?? "order_status_updated",
       title: input.title,
       content: input.content,
       link: input.link,
       relatedEntityId: input.relatedEntityId,
-      relatedEntityType: "order",
+      relatedEntityType: input.relatedEntityType ?? "order",
     });
   }
 }
@@ -2202,8 +2212,7 @@ export const appRouter = router({
               isActive: boolean;
             }>;
             const selectedOption = optionRows[0];
-            if (selectedOption && (selectedOption.paymentMethod === "gcash" || selectedOption.paymentMethod === "online")
-              && isGcashCheckoutOption({ ...selectedOption, paymentMethod: "gcash" }, currentOrder.cooperativeId)) {
+            if (selectedOption && isQrCheckoutOption(selectedOption, currentOrder.cooperativeId)) {
               selectedPaymentOptionId = selectedOption.id;
             }
           }
@@ -2211,7 +2220,9 @@ export const appRouter = router({
             assertPaymentOptionSelection(
               paymentMethod,
               input.paymentOptionId,
-              selectedPaymentOptionId !== undefined || (isOnlinePaymentMethod(paymentMethod) && availability.onlineAccountReady),
+              input.paymentOptionId !== undefined
+                ? selectedPaymentOptionId !== undefined
+                : isOnlinePaymentMethod(paymentMethod) && availability.onlineAccountReady,
             );
           } catch (error) {
             throw new TRPCError({
@@ -4863,14 +4874,15 @@ export const appRouter = router({
         return db.select({
           id: paymentOptions.id,
           cooperativeId: paymentOptions.cooperativeId,
+          paymentMethod: paymentOptions.paymentMethod,
           methodName: paymentOptions.displayName,
           accountName: paymentOptions.accountName,
           accountNumber: paymentOptions.accountNumber,
           qrImagePath: paymentOptions.qrImagePath,
           instructions: paymentOptions.instructions,
         }).from(paymentOptions)
-          .where(and(eq(paymentOptions.isActive, true), eq(paymentOptions.paymentMethod, "gcash"), scope))
-          .orderBy(asc(paymentOptions.displayName))
+          .where(and(eq(paymentOptions.isActive, true), scope))
+          .orderBy(asc(paymentOptions.paymentMethod), asc(paymentOptions.displayName))
           .then(options => Promise.all(options.map(async ({ qrImagePath, ...option }) => ({
             ...option,
             qrImageUrl: qrImagePath ? (await storageGet(qrImagePath)).url : null,
@@ -4884,7 +4896,7 @@ export const appRouter = router({
         base64: z.string().min(1).max(Math.ceil(MAX_PRODUCT_IMAGE_SIZE_BYTES / 3) * 4),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
         if (cooperativeId !== null) {
@@ -4915,6 +4927,7 @@ export const appRouter = router({
     createOption: protectedProcedure
       .input(z.object({
         cooperativeId: z.number().int().positive().nullable().optional(),
+        paymentMethod: z.enum(QR_PAYMENT_PROVIDERS).optional(),
         methodName: z.string().trim().min(1).max(150),
         accountName: z.string().trim().max(150).optional(),
         accountNumber: z.string().max(100).optional(),
@@ -4923,7 +4936,7 @@ export const appRouter = router({
         isActive: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && actor.cooperativeId === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
@@ -4937,7 +4950,7 @@ export const appRouter = router({
         }
         await db.insert(paymentOptions).values({
           cooperativeId,
-          paymentMethod: "gcash",
+          paymentMethod: input.paymentMethod ?? "gcash",
           displayName: input.methodName,
           accountName: input.accountName?.trim() || null,
           accountNumber: input.accountNumber?.trim() || null,
@@ -4951,6 +4964,7 @@ export const appRouter = router({
     updateOption: protectedProcedure
       .input(z.object({
         id: z.number().int().positive(),
+        paymentMethod: z.enum(QR_PAYMENT_PROVIDERS).optional(),
         methodName: z.string().trim().min(1).max(150),
         accountName: z.string().trim().max(150).nullable(),
         accountNumber: z.string().max(100).nullable(),
@@ -4959,7 +4973,7 @@ export const appRouter = router({
         isActive: z.boolean(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && actor.cooperativeId === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
@@ -4987,8 +5001,9 @@ export const appRouter = router({
             .from(transactions)
             .where(eq(transactions.paymentOptionId, input.id))
             .limit(1);
+          const nextPaymentMethod = input.paymentMethod ?? previous.paymentMethod;
           const nextDetails = {
-            paymentMethod: "gcash",
+            paymentMethod: nextPaymentMethod,
             displayName: input.methodName,
             accountName: input.accountName?.trim() || null,
             accountNumber: input.accountNumber?.trim() || null,
@@ -5027,7 +5042,7 @@ export const appRouter = router({
     deleteOption: protectedProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin"]);
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
         if (actor.role === "admin" && actor.cooperativeId === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
@@ -5072,6 +5087,138 @@ export const appRouter = router({
           }
         }
         return { success: true, cleanupWarning };
+      }),
+    reportIssue: protectedProcedure
+      .input(z.object({
+        paymentOptionId: z.number().int().positive(),
+        reason: z.enum(QR_ISSUE_REASONS),
+        details: z.string().trim().max(1000).optional(),
+        orderId: z.number().int().positive().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const db = await dbOrThrow();
+        const [option] = await db.select().from(paymentOptions)
+          .where(eq(paymentOptions.id, input.paymentOptionId))
+          .limit(1);
+        if (!option) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "That payment option is no longer available." });
+        }
+        if (input.orderId !== undefined) {
+          const [order] = await db.select({ id: orders.id, buyerId: orders.buyerId })
+            .from(orders)
+            .where(eq(orders.id, input.orderId))
+            .limit(1);
+          if (!order || order.buyerId !== actor.id) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "You can only attach your own orders to a report." });
+          }
+        }
+        const duplicateWindow = new Date(Date.now() - 15 * 60 * 1000);
+        const [duplicate] = await db.select({ id: qrIssueReports.id })
+          .from(qrIssueReports)
+          .where(and(
+            eq(qrIssueReports.reportedBy, actor.id),
+            eq(qrIssueReports.paymentOptionId, option.id),
+            inArray(qrIssueReports.status, ["pending", "under_review"]),
+            gte(qrIssueReports.createdAt, duplicateWindow),
+          ))
+          .limit(1);
+        if (duplicate) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "You already reported this QR code and it is being reviewed. Please try another QR code or wait for the review.",
+          });
+        }
+        const [report] = await db.insert(qrIssueReports).values({
+          paymentOptionId: option.id,
+          cooperativeId: option.cooperativeId,
+          orderId: input.orderId ?? null,
+          reportedBy: actor.id,
+          paymentProvider: option.paymentMethod,
+          paymentOptionLabel: option.displayName,
+          accountName: option.accountName,
+          accountNumber: option.accountNumber,
+          qrImagePath: option.qrImagePath,
+          reason: input.reason,
+          details: input.details || null,
+          status: "pending",
+        }).returning({ id: qrIssueReports.id });
+        const [reporter] = await db.select({ name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.id, actor.id))
+          .limit(1);
+        const reporterLabel = reporter?.name || reporter?.email || "A buyer";
+        const providerLabel = option.paymentMethod ? formatEnumLabel(option.paymentMethod) : "Online payment";
+        await notifyApprovedOfficers(db, {
+          type: "qr_issue_reported",
+          relatedEntityType: "qr_issue_report",
+          title: "QR code reported as not working",
+          content: `${reporterLabel} reported the ${providerLabel} QR "${option.displayName}"${option.cooperativeId ? "" : " (platform)"} as unusable${input.orderId ? ` on order #${input.orderId}` : ""}. Reason: ${formatEnumLabel(input.reason)}. Review it under Cooperative Payment Options.`,
+          link: "/admin/payment-options",
+          relatedEntityId: report.id,
+        }, option.cooperativeId);
+        return { success: true, reportId: report.id };
+      }),
+    listReports: protectedProcedure
+      .input(z.object({ cooperativeId: z.number().int().positive().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        if (actor.role === "admin" && actor.cooperativeId === null) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before viewing QR reports." });
+        }
+        const scope = actor.role === "superadmin"
+          ? (input?.cooperativeId ? eq(qrIssueReports.cooperativeId, input.cooperativeId) : undefined)
+          : eq(qrIssueReports.cooperativeId, actor.cooperativeId!);
+        const rows = await db.select({
+          report: qrIssueReports,
+          reporterName: users.name,
+          reporterEmail: users.email,
+          cooperativeName: cooperatives.name,
+        }).from(qrIssueReports)
+          .leftJoin(users, eq(qrIssueReports.reportedBy, users.id))
+          .leftJoin(cooperatives, eq(qrIssueReports.cooperativeId, cooperatives.id))
+          .where(scope)
+          .orderBy(desc(qrIssueReports.createdAt))
+          .limit(200);
+        return Promise.all(rows.map(async row => {
+          let qrImageUrl: string | null = null;
+          if (row.report.qrImagePath) {
+            try {
+              qrImageUrl = (await storageGet(row.report.qrImagePath)).url;
+            } catch {
+              qrImageUrl = null;
+            }
+          }
+          return { ...row, qrImageUrl };
+        }));
+      }),
+    updateReport: protectedProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        status: z.enum(QR_ISSUE_REPORT_STATUSES),
+        adminNote: z.string().trim().max(2000).nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
+        const db = await dbOrThrow();
+        if (actor.role === "admin" && actor.cooperativeId === null) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing QR reports." });
+        }
+        const scope = actor.role === "superadmin"
+          ? eq(qrIssueReports.id, input.id)
+          : and(eq(qrIssueReports.id, input.id), eq(qrIssueReports.cooperativeId, actor.cooperativeId!));
+        const updated = await db.update(qrIssueReports).set({
+          status: input.status,
+          ...(input.adminNote !== undefined ? { adminNote: input.adminNote } : {}),
+          reviewedBy: actor.id,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(scope).returning({ id: qrIssueReports.id });
+        if (!updated.length) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "QR report was not found." });
+        }
+        return { success: true };
       }),
   }),
 

@@ -43,6 +43,18 @@ export function isGcashCheckoutOption(
     && option.cooperativeId === orderCooperativeId;
 }
 
+const QR_CHECKOUT_PROVIDERS = new Set(["gcash", "online", "maya", "maribank", "gotyme", "other"]);
+
+/** Any active cooperative/platform QR option usable for an online payment order. */
+export function isQrCheckoutOption(
+  option: { cooperativeId: number | null; paymentMethod: string; isActive: boolean },
+  orderCooperativeId: number | null,
+): boolean {
+  return option.isActive
+    && QR_CHECKOUT_PROVIDERS.has(option.paymentMethod)
+    && option.cooperativeId === orderCooperativeId;
+}
+
 export function paymentOptionDetailsChanged(
   previous: {
     paymentMethod: string;

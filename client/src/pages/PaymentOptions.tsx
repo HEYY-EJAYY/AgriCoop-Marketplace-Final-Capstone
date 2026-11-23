@@ -18,8 +18,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { MAX_PRODUCT_IMAGE_SIZE_BYTES } from "../../../shared/productOptions";
 import { toUserFacingErrorMessage } from "../../../shared/userFacingErrors";
+import {
+  QR_ISSUE_REPORT_STATUSES,
+  QR_PAYMENT_PROVIDERS,
+  qrIssueReasonLabel,
+  qrPaymentProviderLabel,
+  type QrPaymentProvider,
+} from "../../../shared/paymentMethods";
 
 type PaymentOptionDraft = {
+  paymentMethod: string;
   methodName: string;
   accountName: string;
   accountNumber: string;
@@ -30,6 +38,7 @@ type PaymentOptionDraft = {
 };
 
 const blankDraft = (): PaymentOptionDraft => ({
+  paymentMethod: "gcash",
   methodName: "",
   accountName: "",
   accountNumber: "",
@@ -38,6 +47,13 @@ const blankDraft = (): PaymentOptionDraft => ({
   isActive: true,
   cooperativeId: null,
 });
+
+const REPORT_STATUS_LABELS: Record<string, string> = {
+  pending: "Pending",
+  under_review: "Under review",
+  resolved: "Resolved",
+  dismissed: "Dismissed",
+};
 
 function readImageAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,7 +67,9 @@ function readImageAsBase64(file: File): Promise<string> {
 export default function PaymentOptions() {
   const { user, loading } = useAuth();
   const utils = trpc.useUtils();
-  const enabled = !loading && user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const enabled = !loading && isAdmin;
+  const [tab, setTab] = useState<"options" | "reports">("options");
   const {
     data: options,
     isLoading,
@@ -97,6 +115,20 @@ export default function PaymentOptions() {
   const uploadQrImage = trpc.adminPayment.uploadQrImage.useMutation({
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
+  const {
+    data: reports,
+    isLoading: reportsLoading,
+    error: reportsError,
+    refetch: refetchReports,
+  } = trpc.adminPayment.listReports.useQuery(undefined, { enabled: enabled && tab === "reports" });
+  const updateReport = trpc.adminPayment.updateReport.useMutation({
+    onSuccess: () => {
+      toast.success("Report updated.");
+      void utils.adminPayment.listReports.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const [reportEdits, setReportEdits] = useState<Record<number, { status: string; adminNote: string }>>({});
 
   const uploadImage = async (
     event: ChangeEvent<HTMLInputElement>,
@@ -133,6 +165,7 @@ export default function PaymentOptions() {
     event.preventDefault();
     createOption.mutate({
       cooperativeId: user?.role === "superadmin" ? draft.cooperativeId : undefined,
+      paymentMethod: draft.paymentMethod as QrPaymentProvider,
       methodName: draft.methodName,
       accountName: draft.accountName,
       accountNumber: draft.accountNumber || undefined,
@@ -147,6 +180,7 @@ export default function PaymentOptions() {
     if (!editing) return;
     updateOption.mutate({
       id: editing.id,
+      paymentMethod: editing.paymentMethod as QrPaymentProvider,
       methodName: editing.methodName,
       accountName: editing.accountName,
       accountNumber: editing.accountNumber || null,
@@ -159,8 +193,8 @@ export default function PaymentOptions() {
   if (loading) {
     return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
   }
-  if (!user || user.role !== "admin") {
-    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Payment management is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Only an approved OfficerAdmin assigned to a cooperative can manage payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
+  if (!user || (user.role !== "admin" && user.role !== "superadmin")) {
+    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Payment management is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Only an approved OfficerAdmin or SuperAdmin can manage payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
   }
   const restriction = getAccountAccessRestriction(user);
   if (restriction) {
@@ -171,13 +205,31 @@ export default function PaymentOptions() {
     <div className={shellContainerClass}>
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link href="/dashboard" className="agri-ghost text-sm no-underline"><ArrowLeft size={16}/> Return to dashboard</Link>
-        <button className="agri-button text-sm" disabled={Boolean(optionsError)} onClick={() => { setCreating(value => !value); setDraft(blankDraft()); }}>
+        <button className="agri-button text-sm" disabled={Boolean(optionsError) || tab !== "options"} onClick={() => { setCreating(value => !value); setDraft(blankDraft()); }}>
           {creating ? <X size={16}/> : <ImagePlus size={16}/>} {creating ? "Close form" : "Add payment option"}
         </button>
       </div>
 
-      {creating && <form onSubmit={submitCreate} className="agri-card mb-6 grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
+      <div className="mb-6 flex gap-2" role="tablist" aria-label="Payment management sections">
+        {([["options", "QR codes"], ["reports", "QR reports"]] as const).map(([value, label]) => (
+          <button
+            key={value}
+            role="tab"
+            aria-selected={tab === value}
+            className={`rounded-full px-4 py-2 text-sm font-bold ${tab === value ? "bg-[#315640] text-white" : "border border-[#dfe6da] bg-white text-[#5d7062]"}`}
+            onClick={() => setTab(value)}
+          >{label}</button>
+        ))}
+      </div>
+
+      {tab === "options" && creating && <form onSubmit={submitCreate} className="agri-card mb-6 grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
+        <label className="field-label">Payment provider
+          <select className="field-control" value={draft.paymentMethod} onChange={event => setDraft({ ...draft, paymentMethod: event.target.value })}>
+            {QR_PAYMENT_PROVIDERS.map(provider => <option key={provider} value={provider}>{qrPaymentProviderLabel(provider)}</option>)}
+          </select>
+        </label>
         <label className="field-label">Payment option name<input required maxLength={150} className="field-control" value={draft.methodName} onChange={event => setDraft({ ...draft, methodName: event.target.value })}/></label>
+        {user?.role === "superadmin" && <label className="field-label">Cooperative ID (optional — blank for platform-wide)<input type="number" min={1} className="field-control" value={draft.cooperativeId ?? ""} onChange={event => setDraft({ ...draft, cooperativeId: event.target.value ? Number(event.target.value) : null })}/></label>}
         <label className="field-label">Account name (optional)<input maxLength={150} className="field-control" value={draft.accountName} onChange={event => setDraft({ ...draft, accountName: event.target.value })}/></label>
         <label className="field-label">Account number or identifier<input maxLength={100} className="field-control" value={draft.accountNumber} onChange={event => setDraft({ ...draft, accountNumber: event.target.value })}/></label>
         <label className="field-label">Payment instructions<textarea maxLength={5000} className="field-control" value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })}/></label>
@@ -187,10 +239,15 @@ export default function PaymentOptions() {
         <div className="sm:col-span-2"><button className="agri-button" disabled={createOption.isPending || uploadQrImage.isPending || Boolean(optionsError)}>{createOption.isPending ? <Loader2 className="animate-spin" size={16}/> : <QrCode size={16}/>} Save payment option</button></div>
       </form>}
 
-      {optionsError ? <div className="agri-card p-6 text-sm text-[#a34838]"><p role="alert">Payment options could not be loaded: {optionsError.message}</p><button type="button" className="agri-ghost mt-3 text-sm" disabled={isFetching} onClick={() => void refetchOptions()}>Retry</button></div> : isLoading ? <div className="grid min-h-40 place-items-center"><Loader2 className="animate-spin text-[#4e8257]"/></div> : (options?.length ?? 0) === 0
+      {tab === "options" && (optionsError ? <div className="agri-card p-6 text-sm text-[#a34838]"><p role="alert">Payment options could not be loaded: {optionsError.message}</p><button type="button" className="agri-ghost mt-3 text-sm" disabled={isFetching} onClick={() => void refetchOptions()}>Retry</button></div> : isLoading ? <div className="grid min-h-40 place-items-center"><Loader2 className="animate-spin text-[#4e8257]"/></div> : (options?.length ?? 0) === 0
         ? <div className="agri-card p-8 text-center"><QrCode className="mx-auto text-[#8ba17c]" size={32}/><h2 className="mt-3 font-display text-xl font-bold text-[#315640]">No payment options yet</h2><p className="mt-2 text-sm text-[#6d7d70]">Add a method and optional QR image to make it available during buyer checkout.</p></div>
         : <div className="space-y-4">{options?.map(option => <article key={option.id} className="agri-card p-5 sm:p-6">
           {editing?.id === option.id ? <form onSubmit={submitUpdate} className="grid gap-4 sm:grid-cols-2">
+            <label className="field-label">Payment provider
+              <select className="field-control" value={editing.paymentMethod} onChange={event => setEditing({ ...editing, paymentMethod: event.target.value })}>
+                {QR_PAYMENT_PROVIDERS.map(provider => <option key={provider} value={provider}>{qrPaymentProviderLabel(provider)}</option>)}
+              </select>
+            </label>
             <label className="field-label">Payment option name<input required maxLength={150} className="field-control" value={editing.methodName} onChange={event => setEditing({ ...editing, methodName: event.target.value })}/></label>
             <label className="field-label">Account name (optional)<input maxLength={150} className="field-control" value={editing.accountName} onChange={event => setEditing({ ...editing, accountName: event.target.value })}/></label>
             <label className="field-label">Account number or identifier<input maxLength={100} className="field-control" value={editing.accountNumber} onChange={event => setEditing({ ...editing, accountNumber: event.target.value })}/></label>
@@ -201,10 +258,59 @@ export default function PaymentOptions() {
             <div className="flex gap-2 sm:col-span-2"><button className="agri-button text-sm" disabled={updateOption.isPending || uploadQrImage.isPending}><Upload size={15}/> Save changes</button><button type="button" className="agri-ghost text-sm" onClick={() => setEditing(null)}>Cancel</button></div>
           </form> : <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             {option.qrImageUrl ? <img src={option.qrImageUrl} alt={`${option.methodName} QR code`} className="h-28 w-28 rounded-xl border border-[#dce4d6] object-contain"/> : <div className="grid h-28 w-28 place-items-center rounded-xl bg-[#f0f5ed] text-[#82987a]"><QrCode size={34}/></div>}
-            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold text-[#264f37]">{option.methodName}</h2><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${option.isActive ? "bg-[#e6f3e5] text-[#397347]" : "bg-[#f3eee6] text-[#806b4e]"}`}>{option.isActive ? "Available" : "Inactive"}</span><span className="text-xs text-[#738174]">{option.cooperativeId === null ? "Platform-wide" : `Cooperative #${option.cooperativeId}`}</span></div><p className="mt-2 text-sm text-[#5d7062]">{option.accountName}{option.accountNumber ? ` · ${option.accountNumber}` : ""}</p>{option.instructions && <p className="mt-1 whitespace-pre-wrap text-sm text-[#6a796e]">{option.instructions}</p>}</div>
-            <div className="flex gap-2"><button className="agri-ghost text-sm" onClick={() => setEditing({ id: option.id, methodName: option.methodName, accountName: option.accountName ?? "", accountNumber: option.accountNumber ?? "", qrImageUrl: option.qrImageUrl, instructions: option.instructions ?? "", isActive: option.isActive, cooperativeId: option.cooperativeId })}><Pencil size={15}/> Edit</button><button className="agri-ghost text-sm text-[#a34838]" disabled={deleteOption.isPending} onClick={() => setDeleteTarget({ id: option.id, methodName: option.methodName })}><Trash2 size={15}/> Delete</button></div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold text-[#264f37]">{option.methodName}</h2><span className="rounded-full bg-[#e8f0e4] px-2.5 py-1 text-xs font-bold text-[#3d6b45]">{qrPaymentProviderLabel(option.paymentMethod)}</span><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${option.isActive ? "bg-[#e6f3e5] text-[#397347]" : "bg-[#f3eee6] text-[#806b4e]"}`}>{option.isActive ? "Available" : "Inactive"}</span><span className="text-xs text-[#738174]">{option.cooperativeId === null ? "Platform-wide" : `Cooperative #${option.cooperativeId}`}</span></div><p className="mt-2 text-sm text-[#5d7062]">{option.accountName}{option.accountNumber ? ` · ${option.accountNumber}` : ""}</p>{option.instructions && <p className="mt-1 whitespace-pre-wrap text-sm text-[#6a796e]">{option.instructions}</p>}</div>
+            <div className="flex gap-2"><button className="agri-ghost text-sm" onClick={() => setEditing({ id: option.id, paymentMethod: option.paymentMethod, methodName: option.methodName, accountName: option.accountName ?? "", accountNumber: option.accountNumber ?? "", qrImageUrl: option.qrImageUrl, instructions: option.instructions ?? "", isActive: option.isActive, cooperativeId: option.cooperativeId })}><Pencil size={15}/> Edit</button><button className="agri-ghost text-sm text-[#a34838]" disabled={deleteOption.isPending} onClick={() => setDeleteTarget({ id: option.id, methodName: option.methodName })}><Trash2 size={15}/> Delete</button></div>
           </div>}
-        </article>)}</div>}
+        </article>)}</div>)}
+
+      {tab === "reports" && (reportsError ? <div className="agri-card p-6 text-sm text-[#a34838]"><p role="alert">QR reports could not be loaded: {reportsError.message}</p><button type="button" className="agri-ghost mt-3 text-sm" onClick={() => void refetchReports()}>Retry</button></div> : reportsLoading ? <div className="grid min-h-40 place-items-center"><Loader2 className="animate-spin text-[#4e8257]"/></div> : (reports?.length ?? 0) === 0
+        ? <div className="agri-card p-8 text-center"><QrCode className="mx-auto text-[#8ba17c]" size={32}/><h2 className="mt-3 font-display text-xl font-bold text-[#315640]">No QR reports</h2><p className="mt-2 text-sm text-[#6d7d70]">Buyer reports about QR codes that do not work will appear here.</p></div>
+        : <div className="space-y-4">{reports?.map(row => {
+          const report = row.report;
+          const edit = reportEdits[report.id] ?? { status: report.status, adminNote: report.adminNote ?? "" };
+          const dirty = edit.status !== report.status || edit.adminNote !== (report.adminNote ?? "");
+          return <article key={report.id} className="agri-card p-5 sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+              {row.qrImageUrl ? <img src={row.qrImageUrl} alt={`${report.paymentOptionLabel} QR`} className="h-24 w-24 rounded-xl border border-[#dce4d6] object-contain"/> : <div className="grid h-24 w-24 place-items-center rounded-xl bg-[#f0f5ed] text-[#82987a]"><QrCode size={30}/></div>}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-display text-lg font-bold text-[#264f37]">{report.paymentOptionLabel}</h2>
+                  <span className="rounded-full bg-[#e8f0e4] px-2.5 py-1 text-xs font-bold text-[#3d6b45]">{qrPaymentProviderLabel(report.paymentProvider)}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${report.status === "pending" ? "bg-[#fdf0e0] text-[#8a5a1e]" : report.status === "under_review" ? "bg-[#e8eefb] text-[#3c5a94]" : report.status === "resolved" ? "bg-[#e6f3e5] text-[#397347]" : "bg-[#f0efec] text-[#6d6a60]"}`}>{REPORT_STATUS_LABELS[report.status] ?? report.status}</span>
+                </div>
+                <p className="mt-2 text-sm text-[#5d7062]">
+                  {qrIssueReasonLabel(report.reason)}
+                  {report.accountName ? ` · ${report.accountName}` : ""}
+                  {report.accountNumber ? ` · ${report.accountNumber}` : ""}
+                </p>
+                {report.details && <p className="mt-1 whitespace-pre-wrap text-sm text-[#6a796e]">{report.details}</p>}
+                <p className="mt-2 text-xs text-[#738174]">
+                  Reported by {row.reporterName ?? row.reporterEmail ?? "a buyer"}
+                  {row.cooperativeName ? ` · ${row.cooperativeName}` : " · Platform"}
+                  {report.orderId ? ` · Order #${report.orderId}` : ""}
+                  {` · ${new Date(report.createdAt).toLocaleString()}`}
+                </p>
+                {report.status !== "pending" && report.reviewedAt && (
+                  <p className="mt-1 text-xs text-[#738174]">Reviewed {new Date(report.reviewedAt).toLocaleString()}</p>
+                )}
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 border-t border-[#edf0e9] pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+              <label className="field-label text-xs">Internal note<textarea maxLength={2000} className="field-control" value={edit.adminNote} onChange={event => setReportEdits(current => ({ ...current, [report.id]: { ...edit, adminNote: event.target.value } }))}/></label>
+              <div className="flex flex-wrap items-center gap-2">
+                <select className="field-control w-auto text-sm" value={edit.status} onChange={event => setReportEdits(current => ({ ...current, [report.id]: { ...edit, status: event.target.value } }))}>
+                  {QR_ISSUE_REPORT_STATUSES.map(status => <option key={status} value={status}>{REPORT_STATUS_LABELS[status]}</option>)}
+                </select>
+                <button
+                  type="button"
+                  className="agri-button text-sm"
+                  disabled={!dirty || updateReport.isPending}
+                  onClick={() => updateReport.mutate({ id: report.id, status: edit.status as (typeof QR_ISSUE_REPORT_STATUSES)[number], adminNote: edit.adminNote.trim() || null })}
+                >{updateReport.isPending ? <Loader2 className="animate-spin" size={15}/> : <Upload size={15}/>} Save review</button>
+              </div>
+            </div>
+          </article>;
+        })}</div>)}
     </div>
     <AlertDialog open={deleteTarget !== null} onOpenChange={open => {
       if (!open && !deleteOption.isPending) setDeleteTarget(null);

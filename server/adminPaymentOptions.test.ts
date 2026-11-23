@@ -56,6 +56,7 @@ function createDb(
       const builder = {
         from: () => builder,
         innerJoin: () => builder,
+        leftJoin: () => builder,
         where: (condition: SQL) => {
           const query = dialect.sqlToQuery(condition);
           conditions.push({ sql: query.sql, params: query.params });
@@ -166,13 +167,24 @@ describe("admin payment option router authorization", () => {
     );
   });
 
-  it("rejects SuperAdmin payment-option management (OfficerAdmin-only policy)", async () => {
-    const { db } = createDb([]);
-    mocks.getDb.mockResolvedValue(db);
+  it("allows SuperAdmin upload with a platform or chosen cooperative QR prefix", async () => {
+    const platformDb = createDb([[]]);
+    mocks.getDb.mockResolvedValueOnce(platformDb.db);
+    await caller("superadmin", null).adminPayment.uploadQrImage(qrUpload);
+    expect(mocks.storagePut).toHaveBeenCalledWith(
+      expect.stringMatching(/^payment-options\/platform\/1\//),
+      expect.any(Buffer),
+      "image/png",
+    );
 
-    await expect(caller("superadmin", null).adminPayment.uploadQrImage(qrUpload))
-      .rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.storagePut).not.toHaveBeenCalled();
+    const coopDb = createDb([[{ id: 12 }]]);
+    mocks.getDb.mockResolvedValueOnce(coopDb.db);
+    await caller("superadmin", null).adminPayment.uploadQrImage({ ...qrUpload, cooperativeId: 12 });
+    expect(mocks.storagePut).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^payment-options\/cooperative-12\/1\//),
+      expect.any(Buffer),
+      "image/png",
+    );
   });
 
   it("returns active options only when the submitted basket belongs to the requested cooperative", async () => {
@@ -180,6 +192,7 @@ describe("admin payment option router authorization", () => {
       id: 8,
       cooperativeId: 12,
       methodName: "GCash",
+      paymentMethod: "gcash",
       accountName: "AgriCoop",
       accountNumber: "123",
       qrImagePath: "payment-options/cooperative-12/qr.png",
@@ -208,6 +221,7 @@ describe("admin payment option router authorization", () => {
     })).resolves.toEqual([{
       id: 8,
       cooperativeId: 12,
+      paymentMethod: "gcash",
       methodName: "GCash",
       accountName: "AgriCoop",
       accountNumber: "123",
@@ -551,13 +565,161 @@ describe("admin payment option router authorization", () => {
     expect(mocks.storageDeleteObject).not.toHaveBeenCalled();
   });
 
-  it("rejects SuperAdmin deletion (OfficerAdmin-only policy)", async () => {
-    const { db } = createDb([]);
+  it("allows SuperAdmin deletion across cooperatives", async () => {
+    const { db, conditions } = createDb([
+      [{ cooperativeId: 99, qrImagePath: "payment-options/cooperative-99/qr.png" }],
+      [],
+    ]);
     mocks.getDb.mockResolvedValue(db);
 
     await expect(caller("superadmin", null).adminPayment.deleteOption({ id: 4 }))
+      .resolves.toMatchObject({ success: true });
+
+    expect(conditions[0].params).toEqual([4]);
+    expect(db.delete).toHaveBeenCalled();
+    expect(mocks.storageDeleteObject).toHaveBeenCalledWith(
+      "payment-options/cooperative-99/qr.png",
+      "payment-options/cooperative-99/",
+    );
+  });
+
+  it("lets a buyer report a QR issue and notifies only scoped officers and superadmins", async () => {
+    const option = {
+      id: 8,
+      cooperativeId: 12,
+      paymentMethod: "maya",
+      displayName: "Maya — Main Cooperative Account",
+      accountName: "AgriCoop",
+      accountNumber: "123",
+      qrImagePath: null,
+      isActive: true,
+    };
+    const { db } = createDb([
+      [option],
+      [],
+      [{ name: "Buyer One", email: "buyer@example.test" }],
+      [
+        { id: 30, role: "admin", cooperativeId: 12, approvalStatus: "approved", deletedAt: null },
+        { id: 31, role: "admin", cooperativeId: 99, approvalStatus: "approved", deletedAt: null },
+        { id: 32, role: "admin", cooperativeId: 12, approvalStatus: "pending", deletedAt: null },
+        { id: 1, role: "superadmin", cooperativeId: null, approvalStatus: "approved", deletedAt: null },
+      ],
+    ]);
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(caller("buyer", null).adminPayment.reportIssue({
+      paymentOptionId: 8,
+      reason: "cannot_scan",
+      details: "Camera will not focus.",
+    })).resolves.toEqual({ success: true, reportId: 1 });
+
+    // One create_notification call per eligible recipient: coop-12 admin + superadmin.
+    // The coop-99 admin and the pending admin are excluded.
+    expect(db.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a duplicate QR report within the review window", async () => {
+    const option = {
+      id: 8,
+      cooperativeId: 12,
+      paymentMethod: "gcash",
+      displayName: "GCash — Main",
+      accountName: null,
+      accountNumber: null,
+      qrImagePath: null,
+      isActive: true,
+    };
+    const { db } = createDb([[option], [{ id: 5 }]]);
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(caller("buyer", null).adminPayment.reportIssue({
+      paymentOptionId: 8,
+      reason: "blurry_or_damaged",
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("rejects attaching another buyer's order to a QR report", async () => {
+    const option = {
+      id: 8,
+      cooperativeId: 12,
+      paymentMethod: "gcash",
+      displayName: "GCash — Main",
+      accountName: null,
+      accountNumber: null,
+      qrImagePath: null,
+      isActive: true,
+    };
+    const { db } = createDb([[option], [{ id: 9, buyerId: 77 }]]);
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(caller("buyer", null).adminPayment.reportIssue({
+      paymentOptionId: 8,
+      reason: "other",
+      orderId: 9,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("scopes QR report listing and updates to the officer's cooperative", async () => {
+    const reportRow = {
+      report: {
+        id: 4,
+        paymentOptionId: 8,
+        cooperativeId: 12,
+        orderId: null,
+        reportedBy: 50,
+        paymentProvider: "maya",
+        paymentOptionLabel: "Maya — Main",
+        accountName: "AgriCoop",
+        accountNumber: "123",
+        qrImagePath: "payment-options/cooperative-12/qr.png",
+        reason: "cannot_scan",
+        details: null,
+        status: "pending",
+        adminNote: null,
+        reviewedBy: null,
+        reviewedAt: null,
+        createdAt: new Date("2026-12-01T00:00:00Z"),
+        updatedAt: new Date("2026-12-01T00:00:00Z"),
+      },
+      reporterName: "Buyer One",
+      reporterEmail: "buyer@example.test",
+      cooperativeName: "AgriCoop",
+    };
+    const listDb = createDb([[reportRow]]);
+    mocks.getDb.mockResolvedValueOnce(listDb.db);
+    mocks.storageGet.mockResolvedValueOnce({
+      key: "qr.png",
+      url: "https://storage.example.test/qr.png",
+    });
+
+    const listed = await caller("admin", 12).adminPayment.listReports();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      reporterName: "Buyer One",
+      cooperativeName: "AgriCoop",
+      qrImageUrl: "https://storage.example.test/qr.png",
+    });
+    expect(listDb.conditions[0].params).toContain(12);
+
+    const updateDb = createDb([], [], [[{ id: 4 }]]);
+    mocks.getDb.mockResolvedValueOnce(updateDb.db);
+    await expect(caller("admin", 12).adminPayment.updateReport({
+      id: 4,
+      status: "under_review",
+      adminNote: "Checking with the cooperative.",
+    })).resolves.toEqual({ success: true });
+    expect(updateDb.conditions[0].params).toEqual(expect.arrayContaining([4, 12]));
+
+    const crossDb = createDb([], [], [[]]);
+    mocks.getDb.mockResolvedValueOnce(crossDb.db);
+    await expect(caller("admin", 12).adminPayment.updateReport({
+      id: 9,
+      status: "resolved",
+    })).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    await expect(caller("buyer", null).adminPayment.listReports())
       .rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(db.delete).not.toHaveBeenCalled();
-    expect(mocks.storageDeleteObject).not.toHaveBeenCalled();
   });
 });

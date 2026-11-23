@@ -4,6 +4,7 @@ import {
   getPaymentOptionCooperativeId,
   getPaymentQrStoragePrefix,
   isGcashCheckoutOption,
+  isQrCheckoutOption,
   paymentOptionDetailsChanged,
 } from "./paymentOptions";
 
@@ -49,6 +50,18 @@ describe("payment option storage scope", () => {
     expect(isGcashCheckoutOption({ ...option, isActive: false }, 12)).toBe(false);
     expect(isGcashCheckoutOption({ ...option, paymentMethod: "bank" }, 12)).toBe(false);
     expect(isGcashCheckoutOption({ ...option, cooperativeId: null }, null)).toBe(true);
+  });
+
+  it("exposes every active QR provider option assigned to the order's cooperative", () => {
+    for (const paymentMethod of ["gcash", "maya", "maribank", "gotyme", "other"]) {
+      const option = { cooperativeId: 12, paymentMethod, isActive: true };
+      expect(isQrCheckoutOption(option, 12)).toBe(true);
+      expect(isQrCheckoutOption({ ...option, cooperativeId: 99 }, 12)).toBe(false);
+      expect(isQrCheckoutOption({ ...option, cooperativeId: null }, 12)).toBe(false);
+      expect(isQrCheckoutOption({ ...option, isActive: false }, 12)).toBe(false);
+      expect(isQrCheckoutOption({ ...option, paymentMethod: "bank" }, 12)).toBe(false);
+    }
+    expect(isQrCheckoutOption({ cooperativeId: null, paymentMethod: "gcash", isActive: true }, null)).toBe(true);
   });
 
   it("detects payment-detail changes that must be blocked after an option is used", () => {

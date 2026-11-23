@@ -200,3 +200,51 @@ export const PAYMENT_METHOD_HELPERS: Record<PaymentMethod, string> = {
   cash_delivery: "Pay in cash when your order is delivered. An officer confirms cash received.",
   online: "Pay via the AgriCoop QR code and upload your receipt before placing the order.",
 };
+
+/** Providers a cooperative payment-option QR code can represent. */
+export const QR_PAYMENT_PROVIDERS = ["gcash", "maya", "maribank", "gotyme", "other"] as const;
+export type QrPaymentProvider = (typeof QR_PAYMENT_PROVIDERS)[number];
+
+export function isQrPaymentProvider(value: string | null | undefined): value is QrPaymentProvider {
+  return value === "gcash" || value === "maya" || value === "maribank" || value === "gotyme" || value === "other";
+}
+
+export function qrPaymentProviderLabel(value: string | null | undefined): string {
+  switch (value) {
+    case "gcash": return "GCash";
+    case "maya": return "Maya";
+    case "maribank": return "MariBank";
+    case "gotyme": return "GoTyme";
+    case "other": return "Other";
+    default: return value ? formatEnumLabel(value) : "Online payment";
+  }
+}
+
+export const QR_ISSUE_REASONS = [
+  "cannot_scan",
+  "blurry_or_damaged",
+  "invalid_account",
+  "account_unavailable",
+  "appears_expired",
+  "other",
+] as const;
+export type QrIssueReason = (typeof QR_ISSUE_REASONS)[number];
+
+export function isQrIssueReason(value: string): value is QrIssueReason {
+  return (QR_ISSUE_REASONS as readonly string[]).includes(value);
+}
+
+export function qrIssueReasonLabel(value: string | null | undefined): string {
+  switch (value) {
+    case "cannot_scan": return "QR code cannot be scanned";
+    case "blurry_or_damaged": return "QR image is blurry or damaged";
+    case "invalid_account": return "Payment account is invalid";
+    case "account_unavailable": return "Payment account is unavailable";
+    case "appears_expired": return "QR code appears expired";
+    case "other": return "Other";
+    default: return value ? formatEnumLabel(value) : "Not specified";
+  }
+}
+
+export const QR_ISSUE_REPORT_STATUSES = ["pending", "under_review", "resolved", "dismissed"] as const;
+export type QrIssueReportStatus = (typeof QR_ISSUE_REPORT_STATUSES)[number];
