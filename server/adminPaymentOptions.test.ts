@@ -598,6 +598,7 @@ describe("admin payment option router authorization", () => {
       [option],
       [],
       [{ name: "Buyer One", email: "buyer@example.test" }],
+      [{ name: "AgriCoop Cooperative" }],
       [
         { id: 30, role: "admin", cooperativeId: 12, approvalStatus: "approved", deletedAt: null },
         { id: 31, role: "admin", cooperativeId: 99, approvalStatus: "approved", deletedAt: null },

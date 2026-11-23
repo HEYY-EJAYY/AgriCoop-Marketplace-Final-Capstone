@@ -4942,6 +4942,13 @@ export const appRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Assign this Admin to a cooperative before managing payment options." });
         }
         const cooperativeId = getPaymentOptionCooperativeId(actor.role, actor.cooperativeId, input.cooperativeId);
+        if (cooperativeId !== null) {
+          const [cooperative] = await db.select({ id: cooperatives.id })
+            .from(cooperatives)
+            .where(and(eq(cooperatives.id, cooperativeId), isNull(cooperatives.deletedAt)))
+            .limit(1);
+          if (!cooperative) throw new TRPCError({ code: "NOT_FOUND", message: "The selected cooperative was not found." });
+        }
         const qrImagePath = input.qrImageUrl
           ? storageKeyFromPublicUrlWithinPrefix(input.qrImageUrl, getPaymentQrStoragePrefix(cooperativeId))
           : null;
@@ -5148,13 +5155,21 @@ export const appRouter = router({
           .where(eq(users.id, actor.id))
           .limit(1);
         const reporterLabel = reporter?.name || reporter?.email || "A buyer";
+        let cooperativeLabel = "platform-wide";
+        if (option.cooperativeId !== null) {
+          const [coop] = await db.select({ name: cooperatives.name })
+            .from(cooperatives)
+            .where(eq(cooperatives.id, option.cooperativeId))
+            .limit(1);
+          cooperativeLabel = coop?.name ?? `cooperative #${option.cooperativeId}`;
+        }
         const providerLabel = option.paymentMethod ? formatEnumLabel(option.paymentMethod) : "Online payment";
         await notifyApprovedOfficers(db, {
           type: "qr_issue_reported",
           relatedEntityType: "qr_issue_report",
           title: "QR code reported as not working",
-          content: `${reporterLabel} reported the ${providerLabel} QR "${option.displayName}"${option.cooperativeId ? "" : " (platform)"} as unusable${input.orderId ? ` on order #${input.orderId}` : ""}. Reason: ${formatEnumLabel(input.reason)}. Review it under Cooperative Payment Options.`,
-          link: "/admin/payment-options",
+          content: `${reporterLabel} reported the ${providerLabel} QR "${option.displayName}" for ${cooperativeLabel} as unusable${input.orderId ? ` on order #${input.orderId}` : ""}. Reason: ${formatEnumLabel(input.reason)}. Review it under Cooperative Payment Options.`,
+          link: `/admin/payment-options?tab=reports&report=${report.id}`,
           relatedEntityId: report.id,
         }, option.cooperativeId);
         return { success: true, reportId: report.id };

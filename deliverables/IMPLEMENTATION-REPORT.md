@@ -194,3 +194,34 @@ Counts reflect actionable records (pending approvals, orders awaiting review, pr
 
 - `pnpm check`: pass. `pnpm vitest run` (nav/badge-related): pass; full suite previously 447 passed / 22 skipped (one nav test updated to reflect the intentional SuperAdmin Product Management item).
 - DB audit: 0 orders, transactions, payments, conversations, notifications, quotations, carts, tickets, applications; 5 cooperatives; 20 products with images; 5 active users.
+
+---
+
+# Follow-up: QR payment feature — end-to-end verification and hardening (commit pending)
+
+## What changed since `c47e54f`
+
+- `server/routers.ts`: `reportIssue` notifications now name the affected cooperative and deep-link to `/admin/payment-options?tab=reports&report=<id>`; `createOption` validates that a SuperAdmin-selected cooperative exists before insert.
+- `client/src/pages/PaymentOptions.tsx`: replaced the numeric cooperative-ID input with a cooperative-name `<select>` backed by `cooperatives.listActive` ("Platform-wide (all cooperatives)" + real names); option cards show cooperative names; the page reads `?tab=reports&report=<id>` to open the reports tab and highlight the target report card; reports query/mutation declarations reordered (no behavior change).
+- `server/adminPaymentOptions.test.ts`: report-notification test updated for the added cooperative-name lookup.
+
+## Verified end-to-end (browser + DB, disposable QA data)
+
+- Buyer checkout UI report → unread `qr_issue_reported` notifications for exactly the correct OfficerAdmin + both SuperAdmins; unrelated cooperative OfficerAdmin excluded (verified per-report in both directions).
+- OfficerAdmin notification bell → click → deep link opens reports tab with the report card highlighted → unread count decrements, `isRead` persisted → Pending → Under review → Resolved lifecycle with internal notes persisted (`reviewedBy`/`reviewedAt` set).
+- SuperAdmin bell → same deep-link flow across cooperatives; cooperative selector lists platform-wide + all cooperative names; OfficerAdmin sees no selector.
+- Payment integrity (live API): invalid and foreign-cooperative `paymentOptionId` both rejected with HTTP 400; `checkoutOptions` returns only active, basket-cooperative options; selected ID persists on transaction/payment (code + prior QA).
+- Mobile 390px: buyer QR picker/report form and SuperAdmin selector usable (7/7).
+
+## Regression
+
+`pnpm check` clean · `pnpm test` 81 files / 520 passed / 22 skipped · `pnpm build` OK (entry 727.52 kB, gzip 207.59 kB).
+
+## Cleanup
+
+All disposable QA payment options, QR reports, generated notifications (including 39 orphaned test notifications from earlier runs), and cart lines removed; `qrIssueReports` empty; only the pre-existing GCash option (id 2) remains. No orders/receipts/payment records created. `backups/` untouched.
+
+## Known limitations
+
+- The coop-1 OfficerAdmin has no known credentials; its inbox was verified via DB rows (correct recipient, unread, deep link) while the identical bell UI was verified in-browser as coop-3 OfficerAdmin and SuperAdmin.
+- Only coop-1 products are published, so the checkout-UI report path was exercised against a coop-1 QA option; the coop-3 report used the same `reportIssue` API for officer-inbox verification.

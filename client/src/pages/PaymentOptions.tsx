@@ -3,9 +3,9 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { shellContainerClass } from "@/components/AgriShell";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, ImagePlus, Loader2, Pencil, QrCode, Trash2, Upload, X } from "lucide-react";
-import { ChangeEvent, FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -69,7 +69,41 @@ export default function PaymentOptions() {
   const utils = trpc.useUtils();
   const isAdmin = user?.role === "admin" || user?.role === "superadmin";
   const enabled = !loading && isAdmin;
+  const search = useSearch();
   const [tab, setTab] = useState<"options" | "reports">("options");
+  const [highlightReportId, setHighlightReportId] = useState<number | null>(null);
+  const coopsQuery = trpc.cooperatives.listActive.useQuery(undefined, { enabled });
+  const cooperativeNameById = new Map((coopsQuery.data ?? []).map(coop => [coop.id, coop.name]));
+  const {
+    data: reports,
+    isLoading: reportsLoading,
+    error: reportsError,
+    refetch: refetchReports,
+  } = trpc.adminPayment.listReports.useQuery(undefined, { enabled: enabled && tab === "reports" });
+  const updateReport = trpc.adminPayment.updateReport.useMutation({
+    onSuccess: () => {
+      toast.success("Report updated.");
+      void utils.adminPayment.listReports.invalidate();
+    },
+    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
+  });
+  const [reportEdits, setReportEdits] = useState<Record<number, { status: string; adminNote: string }>>({});
+
+  useEffect(() => {
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    if (params.get("tab") === "reports") setTab("reports");
+    const reportParam = Number(params.get("report"));
+    if (Number.isInteger(reportParam) && reportParam > 0) setHighlightReportId(reportParam);
+  }, [search]);
+
+  useEffect(() => {
+    if (tab !== "reports" || highlightReportId === null || !reports?.length) return;
+    const target = document.getElementById(`qr-report-${highlightReportId}`);
+    if (target) {
+      target.scrollIntoView({ block: "center" });
+      target.classList.add("ring-2", "ring-[#4e8257]");
+    }
+  }, [tab, highlightReportId, reports]);
   const {
     data: options,
     isLoading,
@@ -115,21 +149,6 @@ export default function PaymentOptions() {
   const uploadQrImage = trpc.adminPayment.uploadQrImage.useMutation({
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
-  const {
-    data: reports,
-    isLoading: reportsLoading,
-    error: reportsError,
-    refetch: refetchReports,
-  } = trpc.adminPayment.listReports.useQuery(undefined, { enabled: enabled && tab === "reports" });
-  const updateReport = trpc.adminPayment.updateReport.useMutation({
-    onSuccess: () => {
-      toast.success("Report updated.");
-      void utils.adminPayment.listReports.invalidate();
-    },
-    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
-  });
-  const [reportEdits, setReportEdits] = useState<Record<number, { status: string; adminNote: string }>>({});
-
   const uploadImage = async (
     event: ChangeEvent<HTMLInputElement>,
     cooperativeId: number | null,
@@ -229,7 +248,12 @@ export default function PaymentOptions() {
           </select>
         </label>
         <label className="field-label">Payment option name<input required maxLength={150} className="field-control" value={draft.methodName} onChange={event => setDraft({ ...draft, methodName: event.target.value })}/></label>
-        {user?.role === "superadmin" && <label className="field-label">Cooperative ID (optional — blank for platform-wide)<input type="number" min={1} className="field-control" value={draft.cooperativeId ?? ""} onChange={event => setDraft({ ...draft, cooperativeId: event.target.value ? Number(event.target.value) : null })}/></label>}
+        {user?.role === "superadmin" && <label className="field-label">Cooperative
+          <select className="field-control" value={draft.cooperativeId ?? ""} onChange={event => setDraft({ ...draft, cooperativeId: event.target.value ? Number(event.target.value) : null })}>
+            <option value="">Platform-wide (all cooperatives)</option>
+            {(coopsQuery.data ?? []).map(coop => <option key={coop.id} value={coop.id}>{coop.name}</option>)}
+          </select>
+        </label>}
         <label className="field-label">Account name (optional)<input maxLength={150} className="field-control" value={draft.accountName} onChange={event => setDraft({ ...draft, accountName: event.target.value })}/></label>
         <label className="field-label">Account number or identifier<input maxLength={100} className="field-control" value={draft.accountNumber} onChange={event => setDraft({ ...draft, accountNumber: event.target.value })}/></label>
         <label className="field-label">Payment instructions<textarea maxLength={5000} className="field-control" value={draft.instructions} onChange={event => setDraft({ ...draft, instructions: event.target.value })}/></label>
@@ -258,7 +282,7 @@ export default function PaymentOptions() {
             <div className="flex gap-2 sm:col-span-2"><button className="agri-button text-sm" disabled={updateOption.isPending || uploadQrImage.isPending}><Upload size={15}/> Save changes</button><button type="button" className="agri-ghost text-sm" onClick={() => setEditing(null)}>Cancel</button></div>
           </form> : <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             {option.qrImageUrl ? <img src={option.qrImageUrl} alt={`${option.methodName} QR code`} className="h-28 w-28 rounded-xl border border-[#dce4d6] object-contain"/> : <div className="grid h-28 w-28 place-items-center rounded-xl bg-[#f0f5ed] text-[#82987a]"><QrCode size={34}/></div>}
-            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold text-[#264f37]">{option.methodName}</h2><span className="rounded-full bg-[#e8f0e4] px-2.5 py-1 text-xs font-bold text-[#3d6b45]">{qrPaymentProviderLabel(option.paymentMethod)}</span><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${option.isActive ? "bg-[#e6f3e5] text-[#397347]" : "bg-[#f3eee6] text-[#806b4e]"}`}>{option.isActive ? "Available" : "Inactive"}</span><span className="text-xs text-[#738174]">{option.cooperativeId === null ? "Platform-wide" : `Cooperative #${option.cooperativeId}`}</span></div><p className="mt-2 text-sm text-[#5d7062]">{option.accountName}{option.accountNumber ? ` · ${option.accountNumber}` : ""}</p>{option.instructions && <p className="mt-1 whitespace-pre-wrap text-sm text-[#6a796e]">{option.instructions}</p>}</div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold text-[#264f37]">{option.methodName}</h2><span className="rounded-full bg-[#e8f0e4] px-2.5 py-1 text-xs font-bold text-[#3d6b45]">{qrPaymentProviderLabel(option.paymentMethod)}</span><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${option.isActive ? "bg-[#e6f3e5] text-[#397347]" : "bg-[#f3eee6] text-[#806b4e]"}`}>{option.isActive ? "Available" : "Inactive"}</span><span className="text-xs text-[#738174]">{option.cooperativeId === null ? "Platform-wide" : cooperativeNameById.get(option.cooperativeId) ?? `Cooperative #${option.cooperativeId}`}</span></div><p className="mt-2 text-sm text-[#5d7062]">{option.accountName}{option.accountNumber ? ` · ${option.accountNumber}` : ""}</p>{option.instructions && <p className="mt-1 whitespace-pre-wrap text-sm text-[#6a796e]">{option.instructions}</p>}</div>
             <div className="flex gap-2"><button className="agri-ghost text-sm" onClick={() => setEditing({ id: option.id, paymentMethod: option.paymentMethod, methodName: option.methodName, accountName: option.accountName ?? "", accountNumber: option.accountNumber ?? "", qrImageUrl: option.qrImageUrl, instructions: option.instructions ?? "", isActive: option.isActive, cooperativeId: option.cooperativeId })}><Pencil size={15}/> Edit</button><button className="agri-ghost text-sm text-[#a34838]" disabled={deleteOption.isPending} onClick={() => setDeleteTarget({ id: option.id, methodName: option.methodName })}><Trash2 size={15}/> Delete</button></div>
           </div>}
         </article>)}</div>)}
@@ -269,7 +293,7 @@ export default function PaymentOptions() {
           const report = row.report;
           const edit = reportEdits[report.id] ?? { status: report.status, adminNote: report.adminNote ?? "" };
           const dirty = edit.status !== report.status || edit.adminNote !== (report.adminNote ?? "");
-          return <article key={report.id} className="agri-card p-5 sm:p-6">
+          return <article key={report.id} id={`qr-report-${report.id}`} className="agri-card scroll-mt-24 p-5 sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
               {row.qrImageUrl ? <img src={row.qrImageUrl} alt={`${report.paymentOptionLabel} QR`} className="h-24 w-24 rounded-xl border border-[#dce4d6] object-contain"/> : <div className="grid h-24 w-24 place-items-center rounded-xl bg-[#f0f5ed] text-[#82987a]"><QrCode size={30}/></div>}
               <div className="min-w-0 flex-1">
