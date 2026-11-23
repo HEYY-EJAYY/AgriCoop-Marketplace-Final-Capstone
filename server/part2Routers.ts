@@ -246,13 +246,18 @@ export const officerApplicationsRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "Select an active cooperative." });
         }
 
-        const [existing] = await tx.select().from(cooperativeAdminApplications)
+        const existingRows = await tx.select().from(cooperativeAdminApplications)
           .where(and(
             eq(cooperativeAdminApplications.userId, actor.id),
             inArray(cooperativeAdminApplications.status, ["awaiting_documents", "pending", "rejected"]),
           ))
-          .orderBy(desc(cooperativeAdminApplications.id))
-          .limit(1);
+          .orderBy(desc(cooperativeAdminApplications.id));
+        const existing = existingRows.find(row => row.status === "pending")
+          ?? existingRows.find(row => row.status === "awaiting_documents")
+          ?? existingRows[0];
+        if (existing?.status === "pending") {
+          throw new TRPCError({ code: "CONFLICT", message: "This application is already under review. You cannot change it until a decision is made." });
+        }
 
         let applicationId: number;
         if (existing) {

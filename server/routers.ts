@@ -6,7 +6,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { formatEnumLabel } from "../shared/enumLabels";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCashReceipt, canManageCooperativeResource, canManageRefundRecord, canRecordCashReceipt, canReviewPaymentProof, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, canVerifyPaymentRecord, isPaymentOrderConsistent, isPaymentTransactionConsistent, isSellerApproved, requireOperationalRole } from "./authz";
+import { adminOverviewCooperativeScope, APP_ROLES, canAccessConversation, canAccessOrderForCooperative, canManageCashReceipt, canManageCooperativeResource, canManageRefundRecord, canRecordCashReceipt, canReviewPaymentProof, canSubmitProfileVerification, canUpdateCooperativeUser, canUpdateOrderStatus, canVerifyPaymentRecord, isPaymentOrderConsistent, isPaymentTransactionConsistent, isSellerApproved, requireOperationalRole, requireVerifiedTransactionActor } from "./authz";
 import { applyInventoryDeductions, assertInventorySufficient, assertNotSelfTransaction, assertOrderCanAcceptPaymentProof, assertPaymentProofReadyForReview, availableStockAfterReservations, canCancelOrderPayment, canDecideBuyerQuotation, canPlaceAcceptedQuotationOrder, canTransitionOrder, evaluateOfficerApproval, isQuotationOpen, prepareOrder, prepareOrderCompletion, prepareProductReview, prepareProductUpdateReviewState, priceOrderItems, productPurchaseBlockReason } from "./marketplaceRules";
 import {
   getAdminOverview,
@@ -660,17 +660,28 @@ export const appRouter = router({
                 const [appUser] = await db.select({ id: users.id }).from(users)
                   .where(eq(users.openId, authUserId!)).limit(1);
                 if (!appUser) throw new Error("Application user missing after registration upsert.");
-                await db.execute(sql`
-                  insert into agricoop_app."cooperativeAdminApplications"
-                    ("userId", "fullName", "cooperativeId", "positionTitle", status)
-                  values (
-                    ${appUser.id},
-                    ${input.name},
-                    ${cooperativeId},
-                    ${""},
-                    ${"awaiting_documents"}
-                  )
-                `);
+                // Re-registration / orphan-repair must not violate the partial
+                // unique index on open applications for the same user.
+                const [openApplication] = await db.select({ id: cooperativeAdminApplications.id })
+                  .from(cooperativeAdminApplications)
+                  .where(and(
+                    eq(cooperativeAdminApplications.userId, appUser.id),
+                    inArray(cooperativeAdminApplications.status, ["awaiting_documents", "pending"]),
+                  ))
+                  .limit(1);
+                if (!openApplication) {
+                  await db.execute(sql`
+                    insert into agricoop_app."cooperativeAdminApplications"
+                      ("userId", "fullName", "cooperativeId", "positionTitle", status)
+                    values (
+                      ${appUser.id},
+                      ${input.name},
+                      ${cooperativeId},
+                      ${""},
+                      ${"awaiting_documents"}
+                    )
+                  `);
+                }
               }
             });
         try {
@@ -2024,7 +2035,7 @@ export const appRouter = router({
     respond: protectedProcedure
       .input(quotationResponseInputSchema)
       .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const seller = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["seller"]));
         const db = await dbOrThrow();
         return db.transaction(async tx => {
           const [current] = await tx.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1);
@@ -2111,7 +2122,7 @@ export const appRouter = router({
         }).strict().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const buyer = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
         const paymentMethod = normalizePaymentMethodInput(input.paymentMethod);
         if (!paymentMethod) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a valid payment method." });
@@ -2569,7 +2580,7 @@ export const appRouter = router({
         }
       }))
       .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        const actor = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]));
         const db = await dbOrThrow();
         try {
           await db.transaction(async tx => {
@@ -2864,7 +2875,7 @@ export const appRouter = router({
         }
       }))
       .mutation(async ({ ctx, input }) => {
-        const seller = requireOperationalRole(ctx.user, ["seller"]);
+        const seller = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["seller"]));
         const db = await dbOrThrow();
         return db.transaction(async tx => {
           const [order] = await tx.select().from(orders)
@@ -3352,7 +3363,7 @@ export const appRouter = router({
       contentType: z.enum(PAYMENT_PROOF_CONTENT_TYPES),
     fileSizeBytes: z.number().int().min(1).max(PAYMENT_PROOF_MAX_BYTES),
     })).mutation(async ({ ctx, input }) => {
-      const actor = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      const actor = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
       const db = await dbOrThrow();
       const fileName = sanitizePaymentProofFileName(input.fileName);
     const upload = await db.transaction(async tx => {
@@ -3417,7 +3428,7 @@ export const appRouter = router({
     orderId: z.number().int().positive(),
     uploadIntent: z.string().min(1).max(2048),
     }).strict()).mutation(async ({ ctx, input }) => {
-    const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+    const buyer = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
     const intent = verifyPaymentProofUploadIntent(input.uploadIntent, buyer.id, input.orderId);
     if (!intent) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "The payment upload authorization is invalid or expired." });
@@ -3546,7 +3557,7 @@ export const appRouter = router({
       contentType: z.enum(PAYMENT_PROOF_CONTENT_TYPES),
       fileSizeBytes: z.number().int().min(1).max(PAYMENT_PROOF_MAX_BYTES),
     })).mutation(async ({ ctx, input }) => {
-      const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      const buyer = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
       try {
         assertNotSelfTransaction(buyer.id, input.sellerId);
       } catch (error) {
@@ -3578,7 +3589,7 @@ export const appRouter = router({
       sellerId: z.number().int().positive(),
       uploadIntent: z.string().min(1).max(2048),
     }).strict()).mutation(async ({ ctx, input }) => {
-      const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+      const buyer = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
       const intent = verifyCheckoutReceiptUploadIntent(input.uploadIntent, buyer.id, input.sellerId);
       if (!intent) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "The checkout receipt upload authorization is invalid or expired." });

@@ -315,17 +315,6 @@ function SellerCheckoutGroup({
     }
   };
 
-  const showAnotherQr = () => {
-    if (!selectedQrOption || qrOptions.length < 2) return;
-    const index = qrOptions.findIndex(option => option.id === selectedQrOption.id);
-    const next = qrOptions[(index + 1) % qrOptions.length];
-    if (!next) return;
-    setQrNotice(null);
-    setReportOpen(false);
-    setReportSentFor(null);
-    onChoiceChange({ ...choice, paymentOptionId: next.id });
-  };
-
   const showOnline = choice.paymentMethod === "online";
   const displayQr = selectedQrOption
     ? {
@@ -361,6 +350,7 @@ function SellerCheckoutGroup({
 
       <div className="mt-5">
         <FulfillmentPicker
+          name={`fulfillment-${sellerId}`}
           options={pickerOptions}
           value={choice.fulfillmentMethod}
           onChange={setFulfillmentMethod}
@@ -513,15 +503,6 @@ function SellerCheckoutGroup({
                 <button type="button" className="agri-ghost px-2 py-1 text-xs" onClick={() => void copyAmount()}>
                   <Copy size={14} /> Copy amount
                 </button>
-                {selectedQrOption && qrOptions.length > 1 && (
-                  <button
-                    type="button"
-                    className="agri-ghost px-2 py-1 text-xs"
-                    onClick={showAnotherQr}
-                  >
-                    <QrCode size={13} className="mr-1 inline" /> Show another QR
-                  </button>
-                )}
                 {selectedQrOption && (
                   <button
                     type="button"
@@ -600,11 +581,13 @@ const FULFILLMENT_COPY: Record<FulfillmentMethod, { title: string; body: string 
 };
 
 function FulfillmentPicker({
+  name,
   options,
   value,
   onChange,
   deliveryBlockedReason,
 }: {
+  name: string;
   options: FulfillmentMethod[];
   value: FulfillmentMethod;
   onChange: (value: FulfillmentMethod) => void;
@@ -631,7 +614,7 @@ function FulfillmentPicker({
             >
               <input
                 type="radio"
-                name="fulfillment"
+                name={name}
                 className="mt-1 accent-[#4e8257]"
                 checked={selected}
                 disabled={blocked}

@@ -279,6 +279,23 @@ export function canSubmitProfileVerification(user: Pick<OperationalUser, "role" 
   return user.verificationStatus === "unverified" || user.verificationStatus === "rejected";
 }
 
+export const TRANSACTION_VERIFICATION_MESSAGE =
+  "Your profile needs to be verified before you can place orders or complete transactions. You can continue browsing while your verification is pending.";
+
+/**
+ * Transaction gate: buyers and sellers must have an approved profile
+ * verification before they can create or advance orders/payments.
+ * Admin/superadmin operational actions are unaffected (officers are not
+ * subject to the buyer/seller verification flow).
+ */
+export function requireVerifiedTransactionActor(user: OperationalUser) {
+  if (user.role !== "buyer" && user.role !== "seller") return user;
+  if (user.verificationStatus !== "approved") {
+    throw new TRPCError({ code: "FORBIDDEN", message: TRANSACTION_VERIFICATION_MESSAGE });
+  }
+  return user;
+}
+
 export function requireOperationalRole(user: OperationalUser | null, allowed: readonly AppRole[]) {
   if (!user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in to continue." });

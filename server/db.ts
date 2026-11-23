@@ -243,6 +243,7 @@ export async function upsertUser(
       name = coalesce(excluded.name, agricoop_app.users.name),
       email = coalesce(excluded.email, agricoop_app.users.email),
       "loginMethod" = coalesce(excluded."loginMethod", agricoop_app.users."loginMethod"),
+      "requestedRole" = coalesce(agricoop_app.users."requestedRole", excluded."requestedRole"),
       "lastSignedIn" = excluded."lastSignedIn"
     returning role, "approvalStatus", "cooperativeId", "requestedRole"
   `);

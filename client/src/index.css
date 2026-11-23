@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@theme {
+  --color-sidebar: #fffdf8;
+  --color-sidebar-foreground: #163527;
+  --color-sidebar-accent: #edf3e9;
+  --color-sidebar-accent-foreground: #315640;
+  --color-sidebar-border: #e3e9de;
+  --color-sidebar-ring: #5d8a5e;
+}
+
 :root {
   font-family: "DM Sans", Arial, sans-serif;
   color: #163527;

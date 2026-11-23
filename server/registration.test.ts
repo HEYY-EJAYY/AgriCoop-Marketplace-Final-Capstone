@@ -27,7 +27,7 @@ vi.mock("./db", async importOriginal => {
 
 import type { TrpcContext } from "./_core/context";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { cooperatives, roles as rolesTable, users as usersTable } from "../drizzle/pg-schema";
+import { cooperativeAdminApplications, cooperatives, roles as rolesTable, users as usersTable } from "../drizzle/pg-schema";
 import {
   appRouter,
   publicRegistrationInputSchema,
@@ -100,6 +100,7 @@ function registrationDb(
               return [{ id: 99 }];
             }
             if (table === rolesTable) return roleRows;
+            if (table === cooperativeAdminApplications) return [];
             return roleRows;
           }),
         })),
