@@ -331,3 +331,11 @@ All disposable QA payment options, QR reports, generated notifications (includin
 - **Smoke (production, read-only + one controlled fixture):** buyer sign-in, marketplace search/cooperative filter, product-detail cooperative identity, cart "By seller · coop", checkout "Sold by" + pickup card + missing-address warning, coop-scoped payment options (coop-1 basket showed only coop-1 options; coop-3 GCash/Maya not leaked). QR report smoke: disposable fixture `paymentOptions` id 58 (coop 1) reported via real buyer UI → `isActive=false` through `deactivate_reported_payment_option`, report id 32 pending; SuperAdmin reports tab showed it; coop-3 options unaffected. Fixture + report + notifications deleted afterwards; `paymentOptions` back to ids 2/53 only, 0 reports.
 - **Note:** checkout still shows the pre-existing "AgriCoop platform payment account" fallback (systemOnlinePaymentAccounts, introduced before this work) when a cooperative has published no QR — clearly labeled, receipt still verified by the cooperative. Not introduced or changed by this deployment.
 - **Data safety:** no legitimate records modified; no real orders/payments created; all QA fixtures removed.
+
+## Follow-up hardening (post-91aaef0)
+
+- Payment-proof parity: `payments.finalizeProofUpload` now notifies the order cooperative's approved OfficerAdmin plus SuperAdmins, matching the checkout-receipt path; duplicates are impossible while a proof is pending.
+- Verification gate extended to `quotations.request`/`quotations.decide`.
+- Unverified sellers: drafts allowed; submit/reactivate blocked server-side; unverified sellers' listings excluded from marketplace, detail, categories, checkout options, quotation requests, and order creation without deleting records.
+- All native `window.confirm` dialogs replaced with shared AlertDialog-based `ConfirmDialog`/`useConfirmDialog`.
+- Verification: `pnpm check`, `pnpm test` (524 pass), `pnpm build` green. Live browser E2E for registration/verification and mobile visual checks were not run (no isolated DB; shared production DB write restrictions).

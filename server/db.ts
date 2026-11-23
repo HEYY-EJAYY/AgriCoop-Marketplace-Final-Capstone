@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -499,7 +499,7 @@ export async function getOpenOrderReservationQuantities(db: RootTransaction, pro
 export async function getMarketplace(category?: string, sort: "asc" | "desc" = "asc") {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), isNull(products.deletedAt), eq(users.approvalStatus, "approved"), isNull(users.deletedAt)];
+  const conditions = [eq(products.status, "published"), eq(products.verificationStatus, "approved"), eq(products.visibility, "visible"), isNull(products.deletedAt), eq(users.approvalStatus, "approved"), isNull(users.deletedAt), or(ne(users.role, "seller"), eq(users.verificationStatus, "approved"))];
   if (category && category !== "all") conditions.push(eq(products.category, category));
   const listings = await db
     .select({
@@ -635,6 +635,7 @@ export async function getMarketplaceProduct(productId: number) {
       isNull(products.deletedAt),
       eq(users.approvalStatus, "approved"),
       isNull(users.deletedAt),
+      or(ne(users.role, "seller"), eq(users.verificationStatus, "approved")),
     ))
     .limit(1);
   const listing = rows[0];
@@ -688,6 +689,7 @@ export async function getCategories() {
       isNull(products.deletedAt),
       eq(users.approvalStatus, "approved"),
       isNull(users.deletedAt),
+      or(ne(users.role, "seller"), eq(users.verificationStatus, "approved")),
     ))
     .orderBy(asc(products.category));
 }

@@ -28,6 +28,12 @@ describe("marketplace order rules", () => {
     expect(productPurchaseBlockReason({ ...listing, status: "archived" }, seller)).toContain("not currently listed");
     expect(productPurchaseBlockReason({ ...listing, allowsPickup: false, allowsDelivery: false }, seller))
       .toContain("no pickup or delivery option");
+    expect(productPurchaseBlockReason(listing, { ...seller, role: "seller", verificationStatus: "unverified" }))
+      .toContain("has not completed identity verification");
+    expect(productPurchaseBlockReason(listing, { ...seller, role: "seller", verificationStatus: "pending" }))
+      .toContain("has not completed identity verification");
+    expect(productPurchaseBlockReason(listing, { ...seller, role: "seller", verificationStatus: "approved" })).toBeNull();
+    expect(productPurchaseBlockReason(listing, { ...seller, role: "admin", verificationStatus: "unverified" })).toBeNull();
   });
 
   it("normalizes a multi-product order from one farmer and calculates its total", () => {

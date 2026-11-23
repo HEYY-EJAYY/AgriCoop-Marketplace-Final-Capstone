@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 type Category = { id: string; label: string; kind: "requests" | "cooperative"; cooperativeId?: number };
 
@@ -52,6 +53,11 @@ export function OfficerApplicationsPanel() {
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [reason, setReason] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [deleteRequest, setDeleteRequest] = useState<
+    | { kind: "bulk" }
+    | { kind: "user"; id: number; name: string }
+    | null
+  >(null);
 
   const requests = pending.data ?? [];
   const officers = (overview.data?.users ?? []).filter(row => row.user.role === "admin");
@@ -90,12 +96,20 @@ export function OfficerApplicationsPanel() {
     const id = Number(key.replace("app-", ""));
     await review.mutateAsync({ applicationId: id, decision: "approved" });
   });
-  const bulkDelete = () => {
-    if (!window.confirm(`Permanently delete ${selected.size} selected OfficerAdmin account${selected.size === 1 ? "" : "s"}? This cannot be undone — their account and personal data will be removed.`)) return;
-    void runBulk(async key => {
-      if (!key.startsWith("user-")) throw new Error("not a user");
-      await deleteUser.mutateAsync({ userId: Number(key.slice(5)), confirm: true });
-    });
+  const bulkDelete = () => setDeleteRequest({ kind: "bulk" });
+  const confirmDelete = () => {
+    if (!deleteRequest) return;
+    if (deleteRequest.kind === "bulk") {
+      setDeleteRequest(null);
+      void runBulk(async key => {
+        if (!key.startsWith("user-")) throw new Error("not a user");
+        await deleteUser.mutateAsync({ userId: Number(key.slice(5)), confirm: true });
+      });
+      return;
+    }
+    const target = deleteRequest;
+    setDeleteRequest(null);
+    deleteUser.mutate({ userId: target.id, confirm: true });
   };
   const bulkSuspend = () => runBulk(async key => {
     if (!key.startsWith("user-")) throw new Error("not a user");
@@ -210,13 +224,25 @@ export function OfficerApplicationsPanel() {
                 <button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={updateUser.isPending} onClick={() => updateUser.mutate({ userId: row.user.id, role: row.user.role, approvalStatus: "approved", cooperativeId: row.user.cooperativeId })}>Reactivate</button>
               )}
               {!row.user.deletedAt && row.user.id !== undefined && (
-                <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={deleteUser.isPending} onClick={() => { if (window.confirm(`Permanently delete ${row.user.name || row.user.email || "this OfficerAdmin"}? This cannot be undone — their account and personal data will be removed.`)) deleteUser.mutate({ userId: row.user.id, confirm: true }); }}>Delete</button>
+                <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={deleteUser.isPending} onClick={() => setDeleteRequest({ kind: "user", id: row.user.id, name: row.user.name || row.user.email || "this OfficerAdmin" })}>Delete</button>
               )}
             </div>
           </article>
         ))}
         {active.kind === "cooperative" && !visibleOfficers.length && <p className="py-6 text-center text-sm text-[#6d7d70]">No OfficerAdmins are assigned to this cooperative.</p>}
       </div>
+      <ConfirmDialog
+        open={deleteRequest !== null}
+        onOpenChange={open => { if (!open) setDeleteRequest(null); }}
+        title={deleteRequest?.kind === "bulk" ? "Delete selected OfficerAdmins?" : "Delete OfficerAdmin account?"}
+        description={deleteRequest?.kind === "bulk"
+          ? `Permanently delete ${selected.size} selected OfficerAdmin account${selected.size === 1 ? "" : "s"}? This cannot be undone — their accounts and personal data will be removed.`
+          : `Permanently delete ${deleteRequest?.kind === "user" ? deleteRequest.name : "this OfficerAdmin"}? This cannot be undone — their account and personal data will be removed.`}
+        confirmLabel="Delete permanently"
+        destructive
+        pending={deleteUser.isPending || bulkBusy}
+        onConfirm={confirmDelete}
+      />
     </section>
   );
 }

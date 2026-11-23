@@ -1390,6 +1390,7 @@ export const appRouter = router({
             isNull(products.deletedAt),
             eq(users.approvalStatus, "approved"),
             isNull(users.deletedAt),
+            or(ne(users.role, "seller"), eq(users.verificationStatus, "approved")),
           ));
         const reservations = await getOpenOrderReservationQuantities(db, candidateProducts.map(p => p.id));
         const productsForCoop = candidateProducts
@@ -1740,6 +1741,12 @@ export const appRouter = router({
       .input(newProductSchema)
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        if (seller.role === "seller" && seller.verificationStatus !== "approved" && input.submitForVerification) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Verify your identity before submitting listings for review. You can still save drafts.",
+          });
+        }
         if (seller.role === "seller" && seller.cooperativeId == null && input.submitForVerification) {
           throw new TRPCError({
             code: "FORBIDDEN",
@@ -1838,6 +1845,12 @@ export const appRouter = router({
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        if (seller.role === "seller" && seller.verificationStatus !== "approved") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Verify your identity before submitting listings for review. You can still save drafts.",
+          });
+        }
         if (seller.role === "seller" && seller.cooperativeId == null) {
           throw new TRPCError({
             code: "FORBIDDEN",
@@ -1940,6 +1953,12 @@ export const appRouter = router({
       .input(z.object({ id: z.number().int().positive() }))
       .mutation(async ({ ctx, input }) => {
         const seller = requireOperationalRole(ctx.user, ["seller", "admin", "superadmin"]);
+        if (seller.role === "seller" && seller.verificationStatus !== "approved") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Verify your identity before reactivating listings. You can still save drafts.",
+          });
+        }
         const db = await dbOrThrow();
         const restored = await db.update(products).set({ status: "published" }).where(and(
           eq(products.id, input.id),
@@ -1978,7 +1997,7 @@ export const appRouter = router({
     request: protectedProcedure
       .input(z.object({ productId: z.number().int().positive(), requestedQty: z.number().int().positive(), buyerNote: z.string().max(600).optional() }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const buyer = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
         const db = await dbOrThrow();
         return db.transaction(async tx => {
           await tx.execute(sql`select set_config('agricoop.quotation_request_scope', 'on', true)`);
@@ -1996,7 +2015,7 @@ export const appRouter = router({
           }
           const sellerRows = Array.from(await tx.execute(sql`
             select * from agricoop_app.quotation_request_lock_seller(${product.sellerId})
-          `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "approvalStatus" | "deletedAt">>;
+          `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "role" | "approvalStatus" | "verificationStatus" | "deletedAt">>;
           const seller = sellerRows[0];
           const reserved = await getOpenOrderReservationQuantities(tx, [product.id]);
           const availableQty = availableStockAfterReservations(
@@ -2017,6 +2036,8 @@ export const appRouter = router({
           }, {
             approvalStatus: seller?.approvalStatus ?? "suspended",
             deletedAt: seller?.deletedAt,
+            role: seller?.role ?? null,
+            verificationStatus: seller?.verificationStatus ?? null,
           });
           if (purchaseBlockReason) {
             throw new TRPCError({ code: "NOT_FOUND", message: purchaseBlockReason });
@@ -2060,7 +2081,7 @@ export const appRouter = router({
     decide: protectedProcedure
       .input(z.object({ quotationId: z.number().int().positive(), status: z.enum(["accepted", "declined"]) }))
       .mutation(async ({ ctx, input }) => {
-        const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
+        const buyer = requireVerifiedTransactionActor(requireOperationalRole(ctx.user, ["buyer", "seller"]));
         const db = await dbOrThrow();
         return db.transaction(async tx => {
           const [quotation] = await tx.select().from(quotations).where(eq(quotations.id, input.quotationId)).limit(1);
@@ -2156,7 +2177,7 @@ export const appRouter = router({
           const sellerIds = Array.from(new Set(availableProducts.map(product => product.sellerId).filter((id): id is number => id !== null)));
           const currentSellers = sellerIds.length === 0 ? [] : Array.from(await tx.execute(sql`
             select * from agricoop_app.order_create_lock_sellers(array[${sql.join(sellerIds.map(id => sql`${id}`), sql`,`)}]::integer[])
-          `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "approvalStatus" | "deletedAt">>;
+          `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "role" | "approvalStatus" | "verificationStatus" | "deletedAt">>;
           const sellersById = new Map(currentSellers.map(seller => [seller.id, seller]));
           for (const product of availableProducts) {
             const seller = product.sellerId === null ? undefined : sellersById.get(product.sellerId);
@@ -2174,6 +2195,8 @@ export const appRouter = router({
             }, {
               approvalStatus: seller?.approvalStatus ?? "suspended",
               deletedAt: seller?.deletedAt,
+              role: seller?.role ?? null,
+              verificationStatus: seller?.verificationStatus ?? null,
             });
             if (purchaseBlockReason) {
               throw new TRPCError({ code: "BAD_REQUEST", message: purchaseBlockReason });
@@ -3533,6 +3556,12 @@ export const appRouter = router({
           relatedEntityId: order.id,
           relatedEntityType: "order",
         });
+        await notifyApprovedOfficers(tx, {
+          title: "Payment proof uploaded",
+          content: `Order #${order.id} has a payment proof awaiting officer verification.`,
+          link: `/orders/${order.id}`,
+          relatedEntityId: order.id,
+        }, order.cooperativeId);
         return { success: true, proofId: proof.id };
       });
       uploadedKey = null;
@@ -4933,6 +4962,8 @@ export const appRouter = router({
           verificationStatus: products.verificationStatus,
           visibility: products.visibility,
           sellerApprovalStatus: users.approvalStatus,
+          sellerRole: users.role,
+          sellerVerificationStatus: users.verificationStatus,
         }).from(products)
           .innerJoin(users, eq(products.sellerId, users.id))
           .where(inArray(products.id, input.productIds));
@@ -4943,6 +4974,7 @@ export const appRouter = router({
             || product.verificationStatus !== "approved"
             || product.visibility !== "visible"
             || !isSellerApproved(product.sellerApprovalStatus)
+            || (product.sellerRole === "seller" && product.sellerVerificationStatus !== "approved")
           )) {
           throw new TRPCError({
             code: "BAD_REQUEST",

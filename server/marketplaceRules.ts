@@ -41,6 +41,8 @@ export type PurchasabilityProduct = {
 export type PurchasabilitySeller = {
   approvalStatus: string;
   deletedAt?: Date | null;
+  role?: string | null;
+  verificationStatus?: string | null;
 };
 
 export function productPurchaseBlockReason(
@@ -57,6 +59,9 @@ export function productPurchaseBlockReason(
   }
   if (seller.deletedAt || seller.approvalStatus !== "approved") {
     return `${product.name}'s seller is not currently approved to sell.`;
+  }
+  if (seller.role === "seller" && seller.verificationStatus != null && seller.verificationStatus !== "approved") {
+    return `${product.name}'s seller has not completed identity verification.`;
   }
   if (product.allowsPickup === false && product.allowsDelivery === false) {
     return `${product.name} has no pickup or delivery option available.`;
