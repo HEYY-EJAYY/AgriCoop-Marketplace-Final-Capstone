@@ -187,7 +187,7 @@ export function verifyPaymentProofUploadIntent(
   };
 }
 
-export function isPaymentProofStorageKey(key: string, buyerId: number, orderId: number) {
+export function isPaymentProofStorageKey(key: string, buyerId: number | null, orderId: number) {
   const prefix = `${PAYMENT_PROOF_BUCKET}/${buyerId}/${orderId}/`;
   if (!key.startsWith(prefix)) return false;
   const fileName = key.slice(prefix.length);

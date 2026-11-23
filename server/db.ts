@@ -268,8 +268,8 @@ export async function ensureOrderPaymentRecord(
   db: any,
   order: {
     id: number;
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     cooperativeId: number | null;
     totalCents: number;
     paymentMethod?: string | null;
@@ -1049,23 +1049,22 @@ export async function getOrderDetail(orderId: number) {
   const [orderRow] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (!orderRow) return undefined;
 
+  const userSelect = {
+    id: users.id,
+    name: users.name,
+    email: users.email,
+    contactNumber: users.contactNumber,
+    phone: users.phone,
+    address: users.address,
+  } as const;
+  type OrderParty = { id: number; name: string | null; email: string | null; contactNumber: string | null; phone: string | null; address: string | null };
   const [buyer, seller, cooperativeRows] = await Promise.all([
-    db.select({
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      contactNumber: users.contactNumber,
-      phone: users.phone,
-      address: users.address,
-    }).from(users).where(eq(users.id, orderRow.buyerId)).limit(1),
-    db.select({
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      contactNumber: users.contactNumber,
-      phone: users.phone,
-      address: users.address,
-    }).from(users).where(eq(users.id, orderRow.sellerId)).limit(1),
+    orderRow.buyerId == null
+      ? Promise.resolve([] as OrderParty[])
+      : db.select(userSelect).from(users).where(eq(users.id, orderRow.buyerId)).limit(1) as Promise<OrderParty[]>,
+    orderRow.sellerId == null
+      ? Promise.resolve([] as OrderParty[])
+      : db.select(userSelect).from(users).where(eq(users.id, orderRow.sellerId)).limit(1) as Promise<OrderParty[]>,
     orderRow.cooperativeId == null
       ? Promise.resolve([] as Array<{ id: number; name: string; location: string; normalizedName: string | null }>)
       : db.select({

@@ -31,7 +31,7 @@ import {
   upsertUser,
   withRequestDatabaseScope,
 } from "./db";
-import { conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
+import { cartItems, conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
 import { previewUserCooperativeSelection, resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
 import {
@@ -81,6 +81,7 @@ import { SUPPORT_TICKET_STATUSES } from "../shared/supportTicketStatus";
 import { matchesImageContentTypeSignature } from "../shared/imageValidation";
 import { createRefundRecord, completedRefundAmountCents, parseRefundRecords, reservedRefundAmountCents, transitionRefundRecord, type RefundState } from "../shared/paymentRefunds";
 import { PROFILE_VERIFICATION_BUCKET, PROFILE_VERIFICATION_CONTENT_TYPES, PROFILE_VERIFICATION_MAX_BYTES } from "../shared/profileVerification";
+import { COOP_ADMIN_APPLICATION_BUCKET } from "../shared/coopAdminApplication";
 import { createProfileVerificationUploadIntent, isProfileVerificationStorageKey, profileVerificationExtension, verifyProfileVerificationUploadIntent } from "./profileVerification";
 import { resolvePublicRegistrationIdentity } from "./authIdentity";
 import { adminAccountsRouter, officerApplicationsRouter, orderArchiveProcedures, quotationArchiveProcedures, upsertPerUserThreadState } from "./part2Routers";
@@ -798,6 +799,9 @@ export const appRouter = router({
         const db = await dbOrThrow();
         const [order] = await db.select().from(orders).where(eq(orders.id, input.orderId)).limit(1);
         if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "That order could not be found." });
+        if (order.buyerId === null || order.sellerId === null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "This order's chat is unavailable because a participant's account was removed." });
+        }
         if (ctx.user.id !== order.buyerId && ctx.user.id !== order.sellerId) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Only the buyer or seller on this order can open its chat." });
         }
@@ -805,7 +809,7 @@ export const appRouter = router({
           .where(and(
             eq(conversations.orderId, input.orderId),
             eq(conversations.buyerId, order.buyerId),
-            eq(conversations.sellerId, order.sellerId ?? -1),
+            eq(conversations.sellerId, order.sellerId),
             isNull(conversations.deletedAt),
           ))
           .limit(1);
@@ -866,7 +870,7 @@ export const appRouter = router({
         const buyer = requireOperationalRole(ctx.user, ["buyer", "seller"]);
         const db = await dbOrThrow();
         const [product] = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
-        if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "That listing could not be found." });
+        if (!product || product.sellerId === null) throw new TRPCError({ code: "NOT_FOUND", message: "That listing could not be found." });
         if (product.sellerId === buyer.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot message yourself about your own listing." });
         const id = await openSupportThread(db, {
           buyerId: buyer.id,
@@ -1930,7 +1934,7 @@ export const appRouter = router({
             select * from agricoop_app.quotation_request_lock_product(${input.productId})
           `)) as unknown as Array<typeof products.$inferSelect>;
           const product = productRows[0];
-          if (!product) {
+          if (!product || product.sellerId === null) {
             throw new TRPCError({ code: "NOT_FOUND", message: "The selected product is not currently listed." });
           }
           try {
@@ -2092,12 +2096,13 @@ export const appRouter = router({
               reservedByProduct.get(product.id) ?? 0,
             ),
           }));
-          const sellerIds = Array.from(new Set(availableProducts.map(product => product.sellerId)));
-          const currentSellers = Array.from(await tx.execute(sql`
+          const sellerIds = Array.from(new Set(availableProducts.map(product => product.sellerId).filter((id): id is number => id !== null)));
+          const currentSellers = sellerIds.length === 0 ? [] : Array.from(await tx.execute(sql`
             select * from agricoop_app.order_create_lock_sellers(array[${sql.join(sellerIds.map(id => sql`${id}`), sql`,`)}]::integer[])
           `)) as unknown as Array<Pick<typeof users.$inferSelect, "id" | "approvalStatus" | "deletedAt">>;
           const sellersById = new Map(currentSellers.map(seller => [seller.id, seller]));
           for (const product of availableProducts) {
+            const seller = product.sellerId === null ? undefined : sellersById.get(product.sellerId);
             const purchaseBlockReason = productPurchaseBlockReason({
               name: product.name,
               unit: product.unit,
@@ -2110,8 +2115,8 @@ export const appRouter = router({
               allowsPickup: product.allowsPickup,
               allowsDelivery: product.allowsDelivery,
             }, {
-              approvalStatus: sellersById.get(product.sellerId)?.approvalStatus ?? "suspended",
-              deletedAt: sellersById.get(product.sellerId)?.deletedAt,
+              approvalStatus: seller?.approvalStatus ?? "suspended",
+              deletedAt: seller?.deletedAt,
             });
             if (purchaseBlockReason) {
               throw new TRPCError({ code: "BAD_REQUEST", message: purchaseBlockReason });
@@ -2671,7 +2676,7 @@ export const appRouter = router({
                 note: input.paymentReferenceNote ?? null,
               });
             }
-            await createNotification(tx, {
+            if (orderRow.buyerId !== null) await createNotification(tx, {
               userId: orderRow.buyerId,
               type: "order_status_updated",
               title: `Order #${input.orderId} is now ${formatEnumLabel(input.status)}`,
@@ -2729,7 +2734,7 @@ export const appRouter = router({
             toValue: order.status,
             note: `Seller availability confirmation requested.${note ? ` ${note}` : ""}`,
           });
-          await createNotification(tx, {
+          if (order.sellerId !== null) await createNotification(tx, {
             userId: order.sellerId,
             type: "order_status_updated",
             title: `Availability check for order #${order.id}`,
@@ -3611,7 +3616,7 @@ export const appRouter = router({
           toValue: nextPaymentStatus,
           note: input.reviewNote?.trim() || (input.decision === "verified" ? "Payment verified." : "Payment receipt rejected."),
         });
-        await createNotification(tx, {
+        if (order.buyerId !== null) await createNotification(tx, {
           userId: order.buyerId,
           type: input.decision === "verified" ? "payment_proof_verified" : "payment_proof_rejected",
           title: input.decision === "verified" ? "Payment verified" : "Payment proof needs resubmission",
@@ -3622,7 +3627,7 @@ export const appRouter = router({
           relatedEntityId: order.id,
           relatedEntityType: "order",
         });
-        if (input.decision === "verified") {
+        if (input.decision === "verified" && order.sellerId !== null) {
           await createNotification(tx, {
             userId: order.sellerId,
             type: "order_status_updated",
@@ -3909,7 +3914,7 @@ export const appRouter = router({
             toStatus: "paid",
             note: input.note?.trim() || null,
           });
-          await createNotification(tx, {
+          if (order.buyerId !== null) await createNotification(tx, {
             userId: order.buyerId,
             type: "cash_payment_received",
             title: "Cash payment recorded",
@@ -4132,22 +4137,21 @@ export const appRouter = router({
         if (!canAccessOrderForCooperative(actor, orderDetail.order.cooperativeId)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "This officer can only view orders in their cooperative." });
         }
-        const seller = await db.select({
+        const partySelect = {
           id: users.id,
           name: users.name,
           email: users.email,
           contactNumber: users.contactNumber,
           phone: users.phone,
           address: users.address,
-        }).from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1);
-        const buyer = await db.select({
-          id: users.id,
-          name: users.name,
-          email: users.email,
-          contactNumber: users.contactNumber,
-          phone: users.phone,
-          address: users.address,
-        }).from(users).where(eq(users.id, orderDetail.order.buyerId)).limit(1);
+        } as const;
+        type PartyRow = { id: number; name: string | null; email: string | null; contactNumber: string | null; phone: string | null; address: string | null };
+        const seller = orderDetail.order.sellerId === null
+          ? ([] as PartyRow[])
+          : await db.select(partySelect).from(users).where(eq(users.id, orderDetail.order.sellerId)).limit(1) as PartyRow[];
+        const buyer = orderDetail.order.buyerId === null
+          ? ([] as PartyRow[])
+          : await db.select(partySelect).from(users).where(eq(users.id, orderDetail.order.buyerId)).limit(1) as PartyRow[];
         return {
           order: orderDetail.order,
           buyer: buyer[0],
@@ -4344,7 +4348,7 @@ export const appRouter = router({
                 category: { from: product.category, to: nextCategory },
               },
             });
-            if (product.fulfillmentType !== nextFulfillmentType) {
+            if (product.fulfillmentType !== nextFulfillmentType && product.sellerId !== null) {
               await createNotification(tx, {
                 userId: product.sellerId,
                 type: "product_fulfillment_classified",
@@ -4419,7 +4423,7 @@ export const appRouter = router({
           cooperativeId: target.cooperativeId,
           metadata: input.decision === "rejected" ? { rejectionReason: review.rejectionReason } : undefined,
         });
-        await createNotification(tx, {
+        if (target.sellerId !== null) await createNotification(tx, {
           userId: target.sellerId,
           type: `product_${input.decision}`,
           title: input.decision === "approved" ? "Product listing approved" : "Product listing needs changes",
@@ -4594,7 +4598,7 @@ export const appRouter = router({
           openOrderCount: Number(openOrderCount?.count ?? 0),
         };
       }),
-    softDeleteUser: protectedProcedure
+    deleteUser: protectedProcedure
       .input(z.object({
         userId: z.number().int().positive(),
         confirm: z.literal(true),
@@ -4602,17 +4606,15 @@ export const appRouter = router({
       .mutation(async ({ ctx, input }) => {
         const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
         const db = await dbOrThrow();
-        return db.transaction(async tx => {
+        const result = await db.transaction(async tx => {
           const [target] = await tx.select({
             id: users.id,
             openId: users.openId,
             loginMethod: users.loginMethod,
             role: users.role,
             cooperativeId: users.cooperativeId,
-            deletedAt: users.deletedAt,
           }).from(users).where(eq(users.id, input.userId)).for("update").limit(1);
           if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
-          if (target.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This account is already deleted." });
           if (!canSoftDeleteTargetUser(actor, target)) {
             throw new TRPCError({ code: "FORBIDDEN", message: "You cannot delete this user." });
           }
@@ -4628,95 +4630,82 @@ export const appRouter = router({
               inArray(orders.status, ["submitted", "confirmed", "ready", "processing", "shipped"]),
             ));
 
-          await tx.update(users).set({
-            deletedAt: new Date(),
-            deletedBy: actor.id,
-            deletedByRole: actor.role,
-          }).where(eq(users.id, target.id));
-
-          await tx.update(products).set({
-            deletedAt: new Date(),
-            deletedBy: actor.id,
-            visibility: "hidden",
-          }).where(and(eq(products.sellerId, target.id), isNull(products.deletedAt)));
-
-          if (target.openId && target.loginMethod !== "demo") {
-            const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(target.openId, {
-              ban_duration: "876000h",
-            });
-            if (banError) {
-              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The account was not fully disabled in authentication." });
-            }
-          }
+          // agricoop_app.purge_user_account performs every personal-data delete,
+          // listing detach, profile removal, and the users-row delete atomically
+          // under security-definer privileges, and returns private document paths
+          // for post-commit storage cleanup.
+          const purgeRows = Array.from(await tx.execute(sql`
+            select agricoop_app.purge_user_account(${input.userId}, ${actor.id}) as result
+          `)) as unknown as Array<{ result: { coopDocumentPaths: string[]; verificationPaths: string[] } }>;
+          const purgeResult = purgeRows[0]?.result ?? { coopDocumentPaths: [], verificationPaths: [] };
 
           await recordAuditLog(tx, {
             actorUserId: actor.id,
-            action: "user_soft_deleted",
+            action: "user_deleted",
             entityType: "user",
             entityId: target.id,
             cooperativeId: target.cooperativeId,
             metadata: {
               targetRole: target.role,
+              permanent: true,
               listingCount: Number(listingCount?.count ?? 0),
               openOrderCount: Number(openOrderCount?.count ?? 0),
             },
           });
 
           return {
-            success: true,
+            openId: target.openId,
+            loginMethod: target.loginMethod,
+            coopDocPaths: purgeResult.coopDocumentPaths ?? [],
+            verificationPaths: purgeResult.verificationPaths ?? [],
             listingCount: Number(listingCount?.count ?? 0),
             openOrderCount: Number(openOrderCount?.count ?? 0),
           };
         });
-      }),
-    restoreUser: protectedProcedure
-      .input(z.object({ userId: z.number().int().positive() }).strict())
-      .mutation(async ({ ctx, input }) => {
-        const actor = requireOperationalRole(ctx.user, ["admin", "superadmin"]);
-        const db = await dbOrThrow();
-        return db.transaction(async tx => {
-          const [target] = await tx.select({
-            id: users.id,
-            openId: users.openId,
-            loginMethod: users.loginMethod,
-            role: users.role,
-            cooperativeId: users.cooperativeId,
-            deletedAt: users.deletedAt,
-          }).from(users).where(eq(users.id, input.userId)).for("update").limit(1);
-          if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
-          if (!target.deletedAt) throw new TRPCError({ code: "CONFLICT", message: "This account is not deleted." });
-          if (!canSoftDeleteTargetUser(actor, target)) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "You cannot restore this user." });
-          }
-          if (actor.role === "admin" && actor.cooperativeId !== target.cooperativeId) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "You can only restore users in your cooperative." });
-          }
 
-          await tx.update(users).set({
-            deletedAt: null,
-            deletedBy: null,
-            deletedByRole: null,
-          }).where(eq(users.id, target.id));
-
-          if (target.openId && target.loginMethod !== "demo") {
-            const { error: unbanError } = await supabaseAdmin.auth.admin.updateUserById(target.openId, {
-              ban_duration: "none",
-            });
-            if (unbanError) {
-              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The account could not be restored in authentication." });
-            }
+        // Post-commit cleanup: private document objects and the Auth account.
+        const storageErrors: string[] = [];
+        const removeWithRetry = async (bucket: string, paths: string[]) => {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const { error } = await supabaseAdmin.storage.from(bucket).remove(paths);
+            if (!error) return null;
+            if (attempt === 2) return error.message;
+            await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
           }
-
-          await recordAuditLog(tx, {
-            actorUserId: actor.id,
-            action: "user_restored",
-            entityType: "user",
-            entityId: target.id,
-            cooperativeId: target.cooperativeId,
-            metadata: { targetRole: target.role },
+          return "storage remove failed";
+        };
+        if (result.coopDocPaths.length) {
+          const failure = await removeWithRetry(COOP_ADMIN_APPLICATION_BUCKET, result.coopDocPaths);
+          if (failure) storageErrors.push(`coop-documents: ${failure}`);
+        }
+        if (result.verificationPaths.length) {
+          const failure = await removeWithRetry(PROFILE_VERIFICATION_BUCKET, result.verificationPaths);
+          if (failure) storageErrors.push(`verification-documents: ${failure}`);
+        }
+        if (result.openId && result.loginMethod !== "demo") {
+          // GoTrue admin deletes occasionally hit transient gateway timeouts;
+          // retry briefly so the Auth account does not outlive the app account.
+          let authError: { message: string } | null = null;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const outcome = await supabaseAdmin.auth.admin.deleteUser(result.openId);
+            if (!outcome.error) { authError = null; break; }
+            authError = outcome.error;
+            if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+          }
+          if (authError) storageErrors.push(`auth-account: ${authError.message}`);
+        }
+        if (storageErrors.length) {
+          console.error("[admin.deleteUser] post-commit cleanup incomplete", {
+            userId: input.userId,
+            errors: storageErrors,
           });
-          return { success: true };
-        });
+        }
+        return {
+          success: true,
+          cleanupWarnings: storageErrors.length,
+          listingCount: result.listingCount,
+          openOrderCount: result.openOrderCount,
+        };
       }),
     listRoleConflicts: protectedProcedure.query(async ({ ctx }) => {
       requireOperationalRole(ctx.user, ["superadmin"]);

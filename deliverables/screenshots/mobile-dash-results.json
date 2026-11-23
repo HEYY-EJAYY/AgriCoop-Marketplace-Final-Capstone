@@ -1,0 +1,114 @@
+[
+  {
+    "role": "buyer",
+    "vp": "320",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Buyer workspace||Track direct orders, quotation requests, an"
+  },
+  {
+    "role": "buyer",
+    "vp": "375",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Buyer workspace||Track direct orders, quotation requests, an"
+  },
+  {
+    "role": "buyer",
+    "vp": "390",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Buyer workspace||Track direct orders, quotation requests, an"
+  },
+  {
+    "role": "buyer",
+    "vp": "430",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Buyer workspace||Track direct orders, quotation requests, an"
+  },
+  {
+    "role": "seller",
+    "vp": "320",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Request cooperative association||An authorized cooperative A"
+  },
+  {
+    "role": "seller",
+    "vp": "375",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Request cooperative association||An authorized cooperative A"
+  },
+  {
+    "role": "seller",
+    "vp": "390",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Request cooperative association||An authorized cooperative A"
+  },
+  {
+    "role": "seller",
+    "vp": "430",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Request cooperative association||An authorized cooperative A"
+  },
+  {
+    "role": "officer",
+    "vp": "320",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|C|Cooperative Officer | OfficerAdmi"
+  },
+  {
+    "role": "officer",
+    "vp": "375",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|C|Cooperative Officer | OfficerAdmi"
+  },
+  {
+    "role": "officer",
+    "vp": "390",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|C|Cooperative Officer | OfficerAdmi"
+  },
+  {
+    "role": "officer",
+    "vp": "430",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|C|Cooperative Officer | OfficerAdmi"
+  },
+  {
+    "role": "superadmin",
+    "vp": "320",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|J|Joan Athan Nelle Cahiyang | Super"
+  },
+  {
+    "role": "superadmin",
+    "vp": "375",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|J|Joan Athan Nelle Cahiyang | Super"
+  },
+  {
+    "role": "superadmin",
+    "vp": "390",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|J|Joan Athan Nelle Cahiyang | Super"
+  },
+  {
+    "role": "superadmin",
+    "vp": "430",
+    "ox": 0,
+    "tiny": 0,
+    "text": "Toggle Sidebar|Dashboard|J|Joan Athan Nelle Cahiyang | Super"
+  }
+]

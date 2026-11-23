@@ -7,7 +7,7 @@ export type StorageProxyActor = {
 };
 
 export type LegacyProductImage = {
-  sellerId: number;
+  sellerId: number | null;
   cooperativeId: number | null;
   status: string;
   verificationStatus: string;

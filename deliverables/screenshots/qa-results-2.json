@@ -1,0 +1,327 @@
+[
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "/dashboard",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/dashboard"
+  },
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "/marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/marketplace"
+  },
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "/messages",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/messages"
+  },
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "/profile",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/profile"
+  },
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "/support",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/support"
+  },
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "/activity",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/activity"
+  },
+  {
+    "vp": "phone",
+    "role": "buyer",
+    "path": "mobile-menu",
+    "status": "NO_TRIGGER",
+    "drawer": 0
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "/dashboard",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/dashboard"
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "/marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/marketplace"
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "/messages",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/messages"
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "/profile",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/profile"
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "/support",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/support"
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "/activity",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/activity"
+  },
+  {
+    "vp": "phone",
+    "role": "seller",
+    "path": "mobile-menu",
+    "status": "NO_TRIGGER",
+    "drawer": 0
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/dashboard",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/dashboard"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/marketplace"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/messages",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/messages"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/profile",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/profile"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/support",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/support"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/reports",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/reports"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "/admin/payment-options",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "/admin/payment-options"
+  },
+  {
+    "vp": "phone",
+    "role": "officer",
+    "path": "mobile-menu",
+    "status": "NO_TRIGGER",
+    "drawer": 0
+  },
+  {
+    "vp": "desktop",
+    "role": "buyer",
+    "path": "/dashboard",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/dashboard"
+  },
+  {
+    "vp": "desktop",
+    "role": "buyer",
+    "path": "/marketplace",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/marketplace"
+  },
+  {
+    "vp": "desktop",
+    "role": "buyer",
+    "path": "/messages",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/messages"
+  },
+  {
+    "vp": "desktop",
+    "role": "buyer",
+    "path": "/profile",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/profile"
+  },
+  {
+    "vp": "desktop",
+    "role": "buyer",
+    "path": "/support",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/support"
+  },
+  {
+    "vp": "desktop",
+    "role": "buyer",
+    "path": "/activity",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/activity"
+  },
+  {
+    "vp": "desktop",
+    "role": "seller",
+    "path": "/dashboard",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/dashboard"
+  },
+  {
+    "vp": "desktop",
+    "role": "seller",
+    "path": "/marketplace",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/marketplace"
+  },
+  {
+    "vp": "desktop",
+    "role": "seller",
+    "path": "/messages",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/messages"
+  },
+  {
+    "vp": "desktop",
+    "role": "seller",
+    "path": "/profile",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/profile"
+  },
+  {
+    "vp": "desktop",
+    "role": "seller",
+    "path": "/support",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/support"
+  },
+  {
+    "vp": "desktop",
+    "role": "seller",
+    "path": "/activity",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/activity"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/dashboard",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/dashboard"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/marketplace",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/marketplace"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/messages",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/messages"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/profile",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/profile"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/support",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/support"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/reports",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/reports"
+  },
+  {
+    "vp": "desktop",
+    "role": "officer",
+    "path": "/admin/payment-options",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "/admin/payment-options"
+  }
+]

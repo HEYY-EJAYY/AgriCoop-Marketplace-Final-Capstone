@@ -574,7 +574,7 @@ function BuyerPaymentProof({ payment, onSubmitted }: { payment: any; onSubmitted
         : "Submit proof";
   return <article className="rounded-xl border border-[#e3e9de] p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><p className="font-bold text-[#315640]">Order #{payment.orderId} · {peso(payment.amountCents)}</p><p className="mt-1 text-xs text-[#6d7d70]">GCash payment · Transaction #{payment.id}</p></div>
+      <div><p className="font-bold text-[#315640]">Order #{payment.orderId} · {peso(payment.amountCents)}</p><p className="mt-1 text-xs text-[#6d7d70]">{paymentMethodLabel(payment.paymentMethod)} payment · Transaction #{payment.id}</p></div>
       <Status value={payment.status}/>
     </div>
     {payment.reviewNote && <p className="mt-3 rounded-lg bg-[#f7f5ef] p-3 text-sm text-[#66766b]">Admin review note: {payment.reviewNote}</p>}
@@ -692,11 +692,11 @@ function BuyerDashboard() {
         </div>
       </section>
       <section className="mt-8 agri-card p-5 sm:p-6">
-        <h2 className="font-display text-2xl font-bold text-[#264f37]">GCash payments</h2>
-        <p className="mt-1 text-sm text-[#6a796e]">Submit a receipt for review after paying with the seller’s configured GCash option.</p>
+        <h2 className="font-display text-2xl font-bold text-[#264f37]">Online payments</h2>
+        <p className="mt-1 text-sm text-[#6a796e]">Submit a receipt for review after paying online with the AgriCoop QR.</p>
         <div className="mt-5 space-y-4">
-          {paymentsLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : payments.filter(payment => payment.paymentMethod === "gcash").map(payment => <BuyerPaymentProof key={payment.id} payment={payment} onSubmitted={() => { void utils.payments.mine.invalidate(); void utils.orders.buyerMine.invalidate(); }}/>)}
-          {!paymentsLoading && !payments.some(payment => payment.paymentMethod === "gcash") && <Empty icon={ClipboardList} title="No GCash payments" body="GCash payment records will appear here after placing a GCash order."/>}
+          {paymentsLoading ? <Loader2 className="mx-auto my-6 animate-spin text-[#5d8a5e]"/> : payments.filter(payment => payment.paymentMethod === "online" || payment.paymentMethod === "gcash").map(payment => <BuyerPaymentProof key={payment.id} payment={payment} onSubmitted={() => { void utils.payments.mine.invalidate(); void utils.orders.buyerMine.invalidate(); }}/>)}
+          {!paymentsLoading && !payments.some(payment => payment.paymentMethod === "online" || payment.paymentMethod === "gcash") && <Empty icon={ClipboardList} title="No online payments" body="Online payment records will appear here after placing an online payment order."/>}
         </div>
       </section>
     </main>
@@ -940,7 +940,6 @@ function AdminUserRow({
   currentUserRole,
   onSave,
   onRequestDelete,
-  onRestore,
 }: {
   user: any;
   cooperativeName: string | null;
@@ -950,7 +949,6 @@ function AdminUserRow({
   currentUserRole?: string;
   onSave: (values: any) => void;
   onRequestDelete: (user: any) => void;
-  onRestore: (userId: number) => void;
 }) {
   const [role, setRole] = useState(user.role === "user" ? "buyer" : user.role);
   const [approvalStatus, setApprovalStatus] = useState(user.approvalStatus);
@@ -996,11 +994,9 @@ function AdminUserRow({
           {!isDeleted && (
             <button type="button" onClick={() => onSave({ role, approvalStatus, cooperativeId: cooperativeId ? Number(cooperativeId) : null })} className="agri-ghost shrink-0 px-3 py-2 text-xs">Save</button>
           )}
-          {isDeleted ? (
-            <button type="button" className="agri-ghost shrink-0 px-3 py-2 text-xs" onClick={() => onRestore(user.id)}>Restore</button>
-          ) : canDelete ? (
+          {!isDeleted && canDelete && (
             <button type="button" className="agri-ghost shrink-0 px-3 py-2 text-xs text-[#a34838]" onClick={() => onRequestDelete(user)}>Delete</button>
-          ) : null}
+          )}
         </div>
       </td>
     </tr>
@@ -1869,7 +1865,6 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
   const overviewQuery = trpc.admin.overview.useQuery();
   const overview = overviewQuery.data;
   const [addAccountOpen, setAddAccountOpen] = useState(false);
-  const [usersFilter, setUsersFilter] = useState<"active" | "deleted">("active");
   const [deleteUserTarget, setDeleteUserTarget] = useState<{
     id: number;
     name: string | null;
@@ -1885,20 +1880,13 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
     },
     onError: error => toast.error(error.message),
   });
-  const softDeleteUser = trpc.admin.softDeleteUser.useMutation({
+  const deleteUser = trpc.admin.deleteUser.useMutation({
     onSuccess: () => {
-      toast.success("User deleted.");
+      toast.success("User permanently deleted.");
       setDeleteUserTarget(null);
       void utils.admin.overview.invalidate();
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_DELETE_USER_ERROR)),
-  });
-  const restoreUser = trpc.admin.restoreUser.useMutation({
-    onSuccess: () => {
-      toast.success("User restored.");
-      void utils.admin.overview.invalidate();
-    },
-    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const userDeletePreview = trpc.admin.userDeletePreview.useQuery(
     { userId: deleteUserTarget?.id ?? 0 },
@@ -1910,9 +1898,7 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
     ? "Review and manage buyer accounts within your cooperative."
     : "Review and manage seller accounts within your cooperative.";
   const scopedUsers = (overview?.users ?? []).filter(row => row.user.role === scope);
-  const visibleUsers = scopedUsers.filter(row =>
-    usersFilter === "deleted" ? Boolean(row.user.deletedAt) : !row.user.deletedAt,
-  );
+  const visibleUsers = scopedUsers.filter(row => !row.user.deletedAt);
   if (overviewQuery.isLoading) return <LoadingWorkspace />;
   if (overviewQuery.error) {
     return (
@@ -1929,10 +1915,6 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
         <div>
           <h2 className="font-display text-2xl font-bold text-[#264f37]">{title}</h2>
           <p className="mt-1 text-sm text-[#6a796e]">{description} Scope: My cooperative.</p>
-          <div className="mt-3 flex gap-2" role="tablist" aria-label="User list filter">
-            <button type="button" role="tab" aria-selected={usersFilter === "active"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "active" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("active")}>Active</button>
-            <button type="button" role="tab" aria-selected={usersFilter === "deleted"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "deleted" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("deleted")}>Deleted</button>
-          </div>
         </div>
         <button type="button" className="agri-button min-h-11 text-sm" onClick={() => setAddAccountOpen(true)}>
           Add account
@@ -1968,14 +1950,13 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
                   listingCount: 0,
                   openOrderCount: 0,
                 })}
-                onRestore={userId => restoreUser.mutate({ userId })}
               />
             ))}
           </tbody>
         </table>
         {!visibleUsers.length && (
           <p className="p-8 text-center text-sm text-[#6d7d70]">
-            {usersFilter === "deleted" ? "No deleted users." : `No ${scope} accounts are available yet.`}
+            {`No ${scope} accounts are available yet.`}
           </p>
         )}
       </div>
@@ -1983,22 +1964,22 @@ function MemberManagementPanel({ scope }: { scope: "buyer" | "seller" }) {
       <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteUserTarget?.name || deleteUserTarget?.email || "user"}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleteUserTarget?.name || deleteUserTarget?.email || "user"} permanently?</AlertDialogTitle>
             <AlertDialogDescription>
               Role: {deleteUserTarget?.role}. Listings: {userDeletePreview.data?.listingCount ?? "…"}. Open orders: {userDeletePreview.data?.openOrderCount ?? "…"}.
-              This soft-deletes the account, bans sign-in, hides their listings, and clears their cart. Orders stay intact.
+              This permanently removes the account, sign-in access, personal data, listings, cart, messages, and uploaded documents. It cannot be undone. Completed order and payment records are kept with the user references anonymized.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-[#a34838]"
-              disabled={softDeleteUser.isPending || !deleteUserTarget}
+              disabled={deleteUser.isPending || !deleteUserTarget}
               onClick={() => {
-                if (deleteUserTarget) softDeleteUser.mutate({ userId: deleteUserTarget.id, confirm: true });
+                if (deleteUserTarget) deleteUser.mutate({ userId: deleteUserTarget.id, confirm: true });
               }}
             >
-              Confirm delete
+              Delete permanently
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2168,7 +2149,6 @@ function AdminDashboard() {
   });
 
   const [addAccountOpen, setAddAccountOpen] = useState(false);
-  const [usersFilter, setUsersFilter] = useState<"active" | "deleted">("active");
   const [deleteUserTarget, setDeleteUserTarget] = useState<{
     id: number;
     name: string | null;
@@ -2177,20 +2157,13 @@ function AdminDashboard() {
     listingCount: number;
     openOrderCount: number;
   } | null>(null);
-  const softDeleteUser = trpc.admin.softDeleteUser.useMutation({
+  const deleteUser = trpc.admin.deleteUser.useMutation({
     onSuccess: () => {
-      toast.success("User deleted.");
+      toast.success("User permanently deleted.");
       setDeleteUserTarget(null);
       void utils.admin.overview.invalidate();
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message, USER_FACING_DELETE_USER_ERROR)),
-  });
-  const restoreUser = trpc.admin.restoreUser.useMutation({
-    onSuccess: () => {
-      toast.success("User restored.");
-      void utils.admin.overview.invalidate();
-    },
-    onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
   const userDeletePreview = trpc.admin.userDeletePreview.useQuery(
     { userId: deleteUserTarget?.id ?? 0 },
@@ -2434,10 +2407,6 @@ function AdminDashboard() {
                     <div>
                       <h2 className="font-display text-2xl font-bold text-[#264f37]">Users and roles</h2>
                       <p className="mt-1 text-sm text-[#6a796e]">Apply role, approval, and cooperative assignment controls across the platform.</p>
-                      <div className="mt-3 flex gap-2" role="tablist" aria-label="User list filter">
-                        <button type="button" role="tab" aria-selected={usersFilter === "active"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "active" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("active")}>Active</button>
-                        <button type="button" role="tab" aria-selected={usersFilter === "deleted"} className={`agri-ghost px-3 py-1.5 text-xs ${usersFilter === "deleted" ? "bg-[#edf3e9]" : ""}`} onClick={() => setUsersFilter("deleted")}>Deleted</button>
-                      </div>
                     </div>
                     {(user?.role === "admin" || user?.role === "superadmin") && (
                       <button type="button" className="agri-button min-h-11 text-sm" onClick={() => setAddAccountOpen(true)}>
@@ -2458,7 +2427,7 @@ function AdminDashboard() {
                       </thead>
                       <tbody>
                         {overview?.users
-                          .filter(row => usersFilter === "deleted" ? Boolean(row.user.deletedAt) : !row.user.deletedAt)
+                          .filter(row => !row.user.deletedAt)
                           .map(row => (
                           <AdminUserRow
                             key={row.user.id}
@@ -2477,14 +2446,13 @@ function AdminDashboard() {
                               listingCount: 0,
                               openOrderCount: 0,
                             })}
-                            onRestore={userId => restoreUser.mutate({ userId })}
                           />
                         ))}
                       </tbody>
                     </table>
-                    {!overview?.users.filter(row => usersFilter === "deleted" ? Boolean(row.user.deletedAt) : !row.user.deletedAt).length && (
+                    {!overview?.users.filter(row => !row.user.deletedAt).length && (
                       <p className="p-8 text-center text-sm text-[#6d7d70]">
-                        {usersFilter === "deleted" ? "No deleted users." : "No user accounts are available yet."}
+                        {"No user accounts are available yet."}
                       </p>
                     )}
                   </div>
@@ -2492,22 +2460,22 @@ function AdminDashboard() {
                 <AlertDialog open={deleteUserTarget != null} onOpenChange={open => { if (!open) setDeleteUserTarget(null); }}>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Delete {deleteUserTarget?.name || deleteUserTarget?.email || "user"}?</AlertDialogTitle>
+                      <AlertDialogTitle>Delete {deleteUserTarget?.name || deleteUserTarget?.email || "user"} permanently?</AlertDialogTitle>
                       <AlertDialogDescription>
                         Role: {deleteUserTarget?.role}. Listings: {userDeletePreview.data?.listingCount ?? "…"}. Open orders: {userDeletePreview.data?.openOrderCount ?? "…"}.
-                        This soft-deletes the account, bans sign-in, hides their listings, and clears their cart. Orders stay intact.
+                        This permanently removes the account, sign-in access, personal data, listings, cart, messages, and uploaded documents. It cannot be undone. Completed order and payment records are kept with the user references anonymized.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction
                         className="bg-[#a34838]"
-                        disabled={softDeleteUser.isPending || !deleteUserTarget}
+                        disabled={deleteUser.isPending || !deleteUserTarget}
                         onClick={() => {
-                          if (deleteUserTarget) softDeleteUser.mutate({ userId: deleteUserTarget.id, confirm: true });
+                          if (deleteUserTarget) deleteUser.mutate({ userId: deleteUserTarget.id, confirm: true });
                         }}
                       >
-                        Confirm delete
+                        Delete permanently
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>

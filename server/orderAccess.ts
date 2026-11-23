@@ -8,7 +8,7 @@ export type OrderAccessActor = {
 
 export function canViewOrder(
   actor: OrderAccessActor,
-  order: { buyerId: number; sellerId: number },
+  order: { buyerId: number | null; sellerId: number | null },
 ): boolean {
   if (actor.role === "superadmin" || actor.role === "admin") return true;
   return actor.id === order.buyerId || actor.id === order.sellerId;
@@ -27,7 +27,7 @@ export function isOnlinePaymentMethod(method: string | null | undefined): boolea
 /** Payment proof review is Admin / SuperAdmin only (sellers are read-only). */
 export function canReviewOrderPaymentProof(
   actor: OrderAccessActor,
-  order: { sellerId: number; cooperativeId: number | null },
+  order: { sellerId: number | null; cooperativeId: number | null },
   actorCooperativeId: number | null,
 ): boolean {
   if (actor.role === "superadmin") return true;

@@ -16,6 +16,7 @@ export function useAuth(options?: UseAuthOptions) {
     enabled: sessionState.initialized,
     retry: false,
     refetchOnWindowFocus: false,
+    staleTime: 60_000,
   });
   const logoutMutation = trpc.auth.logout.useMutation({ onSuccess: () => utils.auth.me.setData(undefined, null) });
   const logout = useCallback(async () => {

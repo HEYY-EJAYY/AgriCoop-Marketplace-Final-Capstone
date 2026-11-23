@@ -278,13 +278,12 @@ export default function Marketplace() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [mobileOrderOpen, setMobileOrderOpen] = useState(false);
 
-  const marketplaceInput = useMemo(
-    () => ({
-      category: params.category === "all" ? undefined : params.category,
-      sort: apiSortFromOption(params.sort),
-    }),
-    [params.category, params.sort],
-  );
+  const marketplaceInput = useMemo(() => {
+    const category = params.category === "all" ? undefined : params.category;
+    const sort = apiSortFromOption(params.sort);
+    // Share the default cache key with other unfiltered callers (e.g. Home).
+    return category === undefined && sort === "asc" ? undefined : { category, sort };
+  }, [params.category, params.sort]);
 
   const listingsQuery = trpc.marketplace.list.useQuery(marketplaceInput, { staleTime: 60_000 });
   const { data: listings = [], isLoading } = listingsQuery;

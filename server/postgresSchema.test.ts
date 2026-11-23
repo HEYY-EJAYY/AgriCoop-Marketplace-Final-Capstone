@@ -235,7 +235,7 @@ describe("PostgreSQL identity lookup schema", () => {
     })).toEqual([
       { column: "orderId", table: "orders", referencedColumn: "id", onDelete: "restrict" },
       { column: "transactionId", table: "transactions", referencedColumn: "id", onDelete: "set null" },
-      { column: "uploadedBy", table: "users", referencedColumn: "id", onDelete: "restrict" },
+      { column: "uploadedBy", table: "users", referencedColumn: "id", onDelete: "set null" },
       { column: "reviewedBy", table: "users", referencedColumn: "id", onDelete: "set null" },
     ]);
   });

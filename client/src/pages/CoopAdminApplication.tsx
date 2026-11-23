@@ -15,20 +15,39 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
-import { COOP_ADMIN_APPLICATION_BUCKET, COOP_ADMIN_APPLICATION_MAX_BYTES } from "@shared/coopAdminApplication";
+import { COOP_ADMIN_APPLICATION_BUCKET, COOP_ADMIN_APPLICATION_CONTENT_TYPES, COOP_ADMIN_APPLICATION_MAX_BYTES, type CoopAdminApplicationContentType } from "@shared/coopAdminApplication";
 
 type LocalImage = {
   file: File;
   previewUrl: string;
-  contentType: "image/jpeg" | "image/png" | "image/webp";
+  contentType: CoopAdminApplicationContentType;
+  isPdf: boolean;
 };
 
-async function compressImage(file: File): Promise<LocalImage> {
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-    throw new Error("Use a JPEG, PNG, or WebP image.");
+const DOCUMENT_ACCEPT = COOP_ADMIN_APPLICATION_CONTENT_TYPES.join(",");
+const ID_TYPE_OPTIONS = [
+  { value: "national_id", label: "PhilSys / National ID" },
+  { value: "drivers_license", label: "Driver's License" },
+  { value: "passport", label: "Passport" },
+  { value: "postal_id", label: "Postal ID" },
+  { value: "umid", label: "UMID" },
+  { value: "voters_id", label: "Voter's ID" },
+  { value: "other", label: "Other government-issued ID" },
+] as const;
+
+async function processDocument(file: File): Promise<LocalImage> {
+  if (!COOP_ADMIN_APPLICATION_CONTENT_TYPES.includes(file.type as CoopAdminApplicationContentType)) {
+    throw new Error("Use a JPEG, PNG, WebP, or PDF file.");
   }
+  if (file.type === "application/pdf") {
+    if (file.size > COOP_ADMIN_APPLICATION_MAX_BYTES) {
+      throw new Error("Each file must be 5 MB or smaller.");
+    }
+    return { file, previewUrl: URL.createObjectURL(file), contentType: "application/pdf", isPdf: true };
+  }
+  const imageType = file.type as "image/jpeg" | "image/png" | "image/webp";
   if (file.size <= COOP_ADMIN_APPLICATION_MAX_BYTES && file.type !== "image/png") {
-    return { file, previewUrl: URL.createObjectURL(file), contentType: file.type as LocalImage["contentType"] };
+    return { file, previewUrl: URL.createObjectURL(file), contentType: imageType, isPdf: false };
   }
   const bitmap = await createImageBitmap(file);
   const maxEdge = 1600;
@@ -45,7 +64,7 @@ async function compressImage(file: File): Promise<LocalImage> {
     throw new Error("Each image must be 5 MB or smaller after compression.");
   }
   const next = new File([blob], file.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
-  return { file: next, previewUrl: URL.createObjectURL(next), contentType: "image/jpeg" };
+  return { file: next, previewUrl: URL.createObjectURL(next), contentType: "image/jpeg", isPdf: false };
 }
 
 export default function CoopAdminApplication() {
@@ -65,6 +84,10 @@ export default function CoopAdminApplication() {
 
   const [fullName, setFullName] = useState(user?.name ?? "");
   const [positionTitle, setPositionTitle] = useState("");
+  const [contactNumber, setContactNumber] = useState(user?.contactNumber ?? "");
+  const [idType, setIdType] = useState<(typeof ID_TYPE_OPTIONS)[number]["value"]>("national_id");
+  const [idNumber, setIdNumber] = useState("");
+  const [consent, setConsent] = useState(false);
   const [coop, setCoop] = useState<CooperativeSelectValue>(emptyCooperativeSelectValue);
   const [idImage, setIdImage] = useState<LocalImage | null>(null);
   const [proofImage, setProofImage] = useState<LocalImage | null>(null);
@@ -102,21 +125,23 @@ export default function CoopAdminApplication() {
   const canSubmit = useMemo(() => (
     fullName.trim().length >= 2
     && positionTitle.trim().length >= 2
+    && contactNumber.trim().length >= 7
+    && idNumber.trim().length >= 3
+    && consent
     && (coop.cooperativeId || (coop.addNew && coop.newCooperativeName.trim().length >= 3))
     && idImage
-    && proofImage
-  ), [fullName, positionTitle, coop, idImage, proofImage]);
+  ), [fullName, positionTitle, contactNumber, idNumber, consent, coop, idImage]);
 
   const onPick = async (kind: "id" | "proof", file: File | null) => {
     if (!file) return;
     try {
-      const compressed = await compressImage(file);
+      const processed = await processDocument(file);
       if (kind === "id") {
         if (idImage) URL.revokeObjectURL(idImage.previewUrl);
-        setIdImage(compressed);
+        setIdImage(processed);
       } else {
         if (proofImage) URL.revokeObjectURL(proofImage.previewUrl);
-        setProofImage(compressed);
+        setProofImage(processed);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not read that image.");
@@ -141,17 +166,23 @@ export default function CoopAdminApplication() {
 
   const buildSubmitPayload = (
     idIntent: { storagePath: string; uploadIntent: string },
-    proofIntent: { storagePath: string; uploadIntent: string },
+    proofIntent: { storagePath: string; uploadIntent: string } | null,
     confirmSimilarNormalizedName?: string,
   ) => {
     const payload: Parameters<typeof submit.mutateAsync>[0] = {
       fullName: fullName.trim(),
       positionTitle: positionTitle.trim(),
+      contactNumber: contactNumber.trim(),
+      idType,
+      idNumber: idNumber.trim(),
+      consentAccepted: true,
       idDocumentPath: idIntent.storagePath,
-      proofDocumentPath: proofIntent.storagePath,
       idUploadIntent: idIntent.uploadIntent,
-      proofUploadIntent: proofIntent.uploadIntent,
     };
+    if (proofIntent) {
+      payload.proofDocumentPath = proofIntent.storagePath;
+      payload.proofUploadIntent = proofIntent.uploadIntent;
+    }
     appendNewCooperativeFields(payload, coop);
     if (confirmSimilarNormalizedName) {
       payload.confirmSimilarNormalizedName = confirmSimilarNormalizedName;
@@ -161,7 +192,7 @@ export default function CoopAdminApplication() {
 
   const runSubmit = async (
     idIntent: { storagePath: string; uploadIntent: string },
-    proofIntent: { storagePath: string; uploadIntent: string },
+    proofIntent: { storagePath: string; uploadIntent: string } | null,
     confirmSimilarNormalizedName?: string,
   ) => {
     try {
@@ -179,11 +210,11 @@ export default function CoopAdminApplication() {
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!idImage || !proofImage || !canSubmit) return;
+    if (!idImage || !canSubmit) return;
     setBusy(true);
     try {
       const idIntent = await uploadOne("id", idImage);
-      const proofIntent = await uploadOne("proof", proofImage);
+      const proofIntent = proofImage ? await uploadOne("proof", proofImage) : null;
       await runSubmit(idIntent, proofIntent);
     } catch (error) {
       if (cooperativeConflictFromError(error)) return;
@@ -250,12 +281,12 @@ export default function CoopAdminApplication() {
                       mode: "exact" as const,
                       match: coopConflict.match,
                       onUse: match => {
-                        if (!idImage || !proofImage) return;
+                        if (!idImage) return;
                         setBusy(true);
                         void (async () => {
                           try {
                             const idIntent = await uploadOne("id", idImage);
-                            const proofIntent = await uploadOne("proof", proofImage);
+                            const proofIntent = proofImage ? await uploadOne("proof", proofImage) : null;
                             await runSubmit(idIntent, proofIntent, match.normalizedName);
                           } catch (error) {
                             if (!cooperativeConflictFromError(error)) {
@@ -271,12 +302,12 @@ export default function CoopAdminApplication() {
                       mode: "similar" as const,
                       matches: coopConflict.matches,
                       onUse: match => {
-                        if (!idImage || !proofImage) return;
+                        if (!idImage) return;
                         setBusy(true);
                         void (async () => {
                           try {
                             const idIntent = await uploadOne("id", idImage);
-                            const proofIntent = await uploadOne("proof", proofImage);
+                            const proofIntent = proofImage ? await uploadOne("proof", proofImage) : null;
                             await runSubmit(idIntent, proofIntent, match.normalizedName);
                           } catch (error) {
                             if (!cooperativeConflictFromError(error)) {
@@ -288,12 +319,12 @@ export default function CoopAdminApplication() {
                         })();
                       },
                       onAddMine: () => {
-                        if (!idImage || !proofImage) return;
+                        if (!idImage) return;
                         setBusy(true);
                         void (async () => {
                           try {
                             const idIntent = await uploadOne("id", idImage);
-                            const proofIntent = await uploadOne("proof", proofImage);
+                            const proofIntent = proofImage ? await uploadOne("proof", proofImage) : null;
                             await runSubmit(idIntent, proofIntent, confirmNormalizedNameForNewCoop(coop));
                           } catch (error) {
                             if (!cooperativeConflictFromError(error)) {
@@ -310,25 +341,47 @@ export default function CoopAdminApplication() {
             <label className="field-label">Position or title
               <input className="field-control" required value={positionTitle} onChange={e => setPositionTitle(e.target.value)} placeholder="e.g. Board Secretary" />
             </label>
+            <label className="field-label">Contact number
+              <input className="field-control" required inputMode="tel" maxLength={40} value={contactNumber} onChange={e => setContactNumber(e.target.value)} placeholder="e.g. 0917 123 4567" />
+            </label>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="field-label">Government ID type
+                <select className="field-control" value={idType} onChange={e => setIdType(e.target.value as typeof idType)}>
+                  {ID_TYPE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="field-label">Government ID number
+                <input className="field-control" required minLength={3} maxLength={60} value={idNumber} onChange={e => setIdNumber(e.target.value)} placeholder="As shown on your ID" />
+              </label>
+            </div>
             <div className="grid gap-4 md:grid-cols-2">
               {(["id", "proof"] as const).map(kind => {
-                const image = kind === "id" ? idImage : proofImage;
+                const doc = kind === "id" ? idImage : proofImage;
                 return (
                   <label key={kind} className="field-label">
-                    {kind === "id" ? "Government ID image" : "Proof of position image"}
+                    {kind === "id" ? "Front of government ID (required)" : "Back of ID or supporting document (optional)"}
                     <input
                       className="field-control"
                       type="file"
-                      accept="image/jpeg,image/png,image/webp"
+                      accept={DOCUMENT_ACCEPT}
                       onChange={e => void onPick(kind, e.target.files?.[0] ?? null)}
                     />
-                    {image && (
-                      <img src={image.previewUrl} alt="" className="mt-3 max-h-48 w-full rounded-xl object-cover" />
+                    <span className="mt-1 block text-xs font-normal text-[#6d7d70]">JPEG, PNG, WebP, or PDF · max 5 MB</span>
+                    {doc && (
+                      doc.isPdf ? (
+                        <p className="mt-3 rounded-xl bg-[#f2f6ef] px-3 py-2 text-sm text-[#315640]">{doc.file.name}</p>
+                      ) : (
+                        <img src={doc.previewUrl} alt="" className="mt-3 max-h-48 w-full rounded-xl object-cover" />
+                      )
                     )}
                   </label>
                 );
               })}
             </div>
+            <label className="flex items-start gap-3 text-sm text-[#45614e]">
+              <input type="checkbox" className="mt-1" checked={consent} onChange={e => setConsent(e.target.checked)} />
+              <span>I agree to the identity verification and privacy terms. My documents are stored privately and reviewed only by authorized SuperAdmins.</span>
+            </label>
             <button type="submit" className="agri-button min-h-11" disabled={!canSubmit || busy || !awaiting}>
               {busy ? <Loader2 className="animate-spin" size={16} /> : null}
               Submit application

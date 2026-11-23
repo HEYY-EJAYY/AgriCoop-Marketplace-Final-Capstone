@@ -3,7 +3,9 @@ import type { TrpcContext } from "./_core/context";
 
 const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
-  updateUserById: vi.fn(),
+  deleteAuthUser: vi.fn(),
+  storageRemove: vi.fn(),
+  storageFrom: vi.fn(),
 }));
 
 vi.mock("./db", async importOriginal => {
@@ -17,28 +19,31 @@ vi.mock("./db", async importOriginal => {
 
 vi.mock("./clients", () => ({
   createPublicAuthClient: () => ({ auth: { resend: vi.fn() } }),
-  supabaseAdmin: { auth: { admin: { updateUserById: mocks.updateUserById } } },
+  supabaseAdmin: {
+    auth: { admin: { deleteUser: mocks.deleteAuthUser } },
+    storage: { from: mocks.storageFrom },
+  },
 }));
 
 import { appRouter } from "./routers";
 
-function adminCaller() {
+function caller(role: "admin" | "superadmin" = "admin", cooperativeId: number | null = 7, actorId = 1) {
   return appRouter.createCaller({
     req: { headers: {} },
     res: {},
     user: {
-      id: 1,
+      id: actorId,
       openId: "admin-auth",
-      role: "admin",
+      role,
       approvalStatus: "approved",
       verificationStatus: "approved",
-      cooperativeId: 7,
+      cooperativeId,
       contactNumber: null,
       birthdate: null,
       phone: null,
       address: null,
       profileImageUrl: null,
-      name: "Cooperative Admin",
+      name: "Admin",
       email: "admin@example.test",
     },
     authUserId: "admin-auth",
@@ -46,181 +51,157 @@ function adminCaller() {
   } as TrpcContext);
 }
 
-describe("admin soft delete user", () => {
+type TxScript = {
+  target: Record<string, unknown> | null;
+  listingCount?: number;
+  openOrderCount?: number;
+  purgeResult?: { coopDocumentPaths: string[]; verificationPaths: string[] };
+};
+
+function makeTx(script: TxScript) {
+  const executed: unknown[] = [];
+  const results: unknown[] = [
+    script.target ? [script.target] : [],
+    [{ count: script.listingCount ?? 0 }],
+    [{ count: script.openOrderCount ?? 0 }],
+  ];
+  let selectCount = 0;
+  const tx = {
+    select: () => {
+      const result = results[Math.min(selectCount, results.length - 1)];
+      selectCount += 1;
+      const isCountOrList = selectCount > 1;
+      const chain: Record<string, (...args: unknown[]) => unknown> = {
+        from: () => chain,
+        where: () => (isCountOrList ? Promise.resolve(result) : chain),
+        for: () => chain,
+        limit: async () => result,
+      };
+      return chain;
+    },
+    execute: async (query: unknown) => {
+      executed.push(query);
+      return [{ result: script.purgeResult ?? { coopDocumentPaths: [], verificationPaths: [] } }];
+    },
+  };
+  return { tx, executed };
+}
+
+function mockDb(script: TxScript) {
+  const { tx, executed } = makeTx(script);
+  mocks.getDb.mockResolvedValue({
+    transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
+  });
+  return { executed };
+}
+
+const eligibleTarget = {
+  id: 2,
+  openId: "buyer-auth-id",
+  loginMethod: "supabase",
+  role: "buyer",
+  cooperativeId: 7,
+};
+
+describe("admin permanent delete user", () => {
   beforeEach(() => {
     mocks.getDb.mockReset();
-    mocks.updateUserById.mockReset().mockResolvedValue({ error: null });
+    mocks.deleteAuthUser.mockReset().mockResolvedValue({ error: null });
+    mocks.storageRemove.mockReset().mockResolvedValue({ error: null });
+    mocks.storageFrom.mockReset().mockReturnValue({ remove: mocks.storageRemove });
   });
 
-  it("soft-deletes and bans an eligible account without deleting its owner-only cart rows", async () => {
-    const target = {
-      id: 2,
-      openId: "buyer-auth",
-      loginMethod: "supabase",
-      role: "buyer",
-      cooperativeId: 7,
-      deletedAt: null,
-    };
-    const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
-    const tx = {
-      select: (() => {
-        let selectCount = 0;
-        return () => {
-          selectCount += 1;
-          const current = selectCount;
-          const chain: Record<string, (...args: unknown[]) => unknown> = {
-            from: () => chain,
-            where: () => current === 1
-              ? chain
-              : Promise.resolve([{ count: current === 2 ? 3 : 1 }]),
-            for: () => chain,
-            limit: async () => [target],
-          };
-          return chain;
-        };
-      })(),
-      update: (table: unknown) => ({
-        set: (values: Record<string, unknown>) => {
-          updates.push({ table, values });
-          return { where: async () => undefined };
-        },
-      }),
-      insert: () => ({ values: async () => undefined }),
-      delete: vi.fn(),
-      execute: async () => undefined,
-    };
-    mocks.getDb.mockResolvedValue({
-      transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
+  it("permanently deletes an eligible account: purge function, documents, and Auth user", async () => {
+    const { executed } = mockDb({
+      target: eligibleTarget,
+      listingCount: 3,
+      openOrderCount: 1,
+      purgeResult: {
+        coopDocumentPaths: ["coop-admin-applications/buyer-auth-id/id.pdf"],
+        verificationPaths: ["profile-verification-documents/buyer-auth-id/doc.png"],
+      },
     });
 
-    await expect(adminCaller().admin.softDeleteUser({ userId: 2, confirm: true }))
-      .resolves.toMatchObject({ success: true, listingCount: 3, openOrderCount: 1 });
+    await expect(caller().admin.deleteUser({ userId: 2, confirm: true }))
+      .resolves.toMatchObject({ success: true, cleanupWarnings: 0, listingCount: 3, openOrderCount: 1 });
 
-    expect(mocks.updateUserById).toHaveBeenCalledWith("buyer-auth", { ban_duration: "876000h" });
-    expect(updates.some(update => "deletedAt" in update.values)).toBe(true);
-    expect(tx.delete).not.toHaveBeenCalled();
+    // purge_user_account + write_audit_log both run through tx.execute.
+    expect(executed.length).toBeGreaterThanOrEqual(2);
+    expect(mocks.deleteAuthUser).toHaveBeenCalledWith("buyer-auth-id");
+    expect(mocks.storageFrom).toHaveBeenCalledWith("coop-admin-applications");
+    expect(mocks.storageFrom).toHaveBeenCalledWith("profile-verification-documents");
+    expect(mocks.storageRemove).toHaveBeenCalledWith(["coop-admin-applications/buyer-auth-id/id.pdf"]);
+    expect(mocks.storageRemove).toHaveBeenCalledWith(["profile-verification-documents/buyer-auth-id/doc.png"]);
   });
 
-  it("soft-deletes seeded demo users without trying to ban their synthetic Auth IDs", async () => {
-    const target = {
-      id: 2,
-      openId: "demo-admin-001",
-      loginMethod: "demo",
-      role: "buyer",
-      cooperativeId: 7,
-      deletedAt: null,
-    };
-    const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
-    const tx = {
-      select: (() => {
-        let selectCount = 0;
-        return () => {
-          selectCount += 1;
-          const current = selectCount;
-          const chain: Record<string, (...args: unknown[]) => unknown> = {
-            from: () => chain,
-            where: () => current === 1
-              ? chain
-              : Promise.resolve([{ count: 0 }]),
-            for: () => chain,
-            limit: async () => [target],
-          };
-          return chain;
-        };
-      })(),
-      update: (table: unknown) => ({
-        set: (values: Record<string, unknown>) => {
-          updates.push({ table, values });
-          return { where: async () => undefined };
-        },
-      }),
-      insert: () => ({ values: async () => undefined }),
-      delete: vi.fn(),
-      execute: async () => undefined,
-    };
-    mocks.getDb.mockResolvedValue({
-      transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
+  it("completes deletion for a seller with listings (listing detach handled by purge function)", async () => {
+    mockDb({
+      target: { ...eligibleTarget, role: "seller" },
+      listingCount: 2,
     });
 
-    await expect(adminCaller().admin.softDeleteUser({ userId: 2, confirm: true }))
+    await expect(caller().admin.deleteUser({ userId: 2, confirm: true }))
+      .resolves.toMatchObject({ success: true, listingCount: 2 });
+    expect(mocks.deleteAuthUser).toHaveBeenCalledWith("buyer-auth-id");
+  });
+
+  it("does not call the Auth admin API for demo-seeded users", async () => {
+    mockDb({ target: { ...eligibleTarget, openId: "demo-buyer-001", loginMethod: "demo" } });
+
+    await expect(caller().admin.deleteUser({ userId: 2, confirm: true }))
       .resolves.toMatchObject({ success: true });
 
-    expect(mocks.updateUserById).not.toHaveBeenCalled();
-    expect(updates.some(update => "deletedAt" in update.values)).toBe(true);
+    expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
   });
 
-  it("restores seeded demo users without trying to unban their synthetic Auth IDs", async () => {
-    const target = {
-      id: 2,
-      openId: "demo-admin-001",
-      loginMethod: "demo",
-      role: "buyer",
-      cooperativeId: 7,
-      deletedAt: new Date(),
-    };
-    const updates: Array<Record<string, unknown>> = [];
-    const tx = {
-      select: () => {
-        const chain: Record<string, (...args: unknown[]) => unknown> = {
-          from: () => chain,
-          where: () => chain,
-          for: () => chain,
-          limit: async () => [target],
-        };
-        return chain;
-      },
-      update: () => ({
-        set: (values: Record<string, unknown>) => {
-          updates.push(values);
-          return { where: async () => undefined };
-        },
-      }),
-      execute: async () => undefined,
-    };
-    mocks.getDb.mockResolvedValue({
-      transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
-    });
+  it("still succeeds with a cleanup warning when the Auth deletion fails", async () => {
+    mockDb({ target: eligibleTarget });
+    mocks.deleteAuthUser.mockResolvedValue({ error: { message: "Auth unavailable" } });
 
-    await expect(adminCaller().admin.restoreUser({ userId: 2 }))
-      .resolves.toEqual({ success: true });
-
-    expect(mocks.updateUserById).not.toHaveBeenCalled();
-    expect(updates).toEqual([{ deletedAt: null, deletedBy: null, deletedByRole: null }]);
+    await expect(caller().admin.deleteUser({ userId: 2, confirm: true }))
+      .resolves.toMatchObject({ success: true, cleanupWarnings: 1 });
   });
 
-  it("does not report success when the Auth ban fails", async () => {
-    const target = {
-      id: 2,
-      openId: "buyer-auth",
-      role: "buyer",
-      cooperativeId: 7,
-      deletedAt: null,
-    };
-    let selectCount = 0;
-    const tx = {
-      select: () => {
-        selectCount += 1;
-        const current = selectCount;
-        const chain: Record<string, (...args: unknown[]) => unknown> = {
-          from: () => chain,
-          where: () => current === 1
-            ? chain
-            : Promise.resolve([{ count: 0 }]),
-          for: () => chain,
-          limit: async () => [target],
-        };
-        return chain;
-      },
-      update: () => ({ set: () => ({ where: async () => undefined }) }),
-      insert: () => ({ values: async () => undefined }),
-      execute: async () => undefined,
-    };
-    mocks.getDb.mockResolvedValue({
-      transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
-    });
-    mocks.updateUserById.mockResolvedValue({ error: { message: "Auth service unavailable" } });
+  it("refuses to delete a SuperAdmin account", async () => {
+    mockDb({ target: { ...eligibleTarget, role: "superadmin", cooperativeId: null } });
 
-    await expect(adminCaller().admin.softDeleteUser({ userId: 2, confirm: true }))
-      .rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+    await expect(caller("superadmin", null).admin.deleteUser({ userId: 2, confirm: true }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses self-deletion", async () => {
+    mockDb({ target: { ...eligibleTarget, id: 1 } });
+
+    await expect(caller().admin.deleteUser({ userId: 1, confirm: true }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("refuses when a cooperative admin targets a user outside their cooperative", async () => {
+    mockDb({ target: { ...eligibleTarget, cooperativeId: 9 } });
+
+    await expect(caller("admin", 7).admin.deleteUser({ userId: 2, confirm: true }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("refuses when a cooperative admin targets an OfficerAdmin", async () => {
+    mockDb({ target: { ...eligibleTarget, role: "admin", cooperativeId: 7 } });
+
+    await expect(caller("admin", 7).admin.deleteUser({ userId: 2, confirm: true }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("lets a SuperAdmin delete an OfficerAdmin", async () => {
+    mockDb({ target: { ...eligibleTarget, role: "admin", cooperativeId: 7 } });
+
+    await expect(caller("superadmin", null).admin.deleteUser({ userId: 2, confirm: true }))
+      .resolves.toMatchObject({ success: true });
+    expect(mocks.deleteAuthUser).toHaveBeenCalledWith("buyer-auth-id");
+  });
+
+  it("requires explicit confirmation", async () => {
+    await expect(caller().admin.deleteUser({ userId: 2, confirm: false as unknown as true }))
+      .rejects.toThrow();
+    expect(mocks.getDb).not.toHaveBeenCalled();
   });
 });

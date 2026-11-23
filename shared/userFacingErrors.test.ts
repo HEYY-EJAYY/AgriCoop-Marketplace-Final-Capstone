@@ -22,7 +22,7 @@ describe("toUserFacingErrorMessage", () => {
     const fallback = mutationFailureFallback("orders.sellerUpdateArchive", { action: "delete" }, "a1b2c3d4");
     expect(toUserFacingErrorMessage("Failed query: update agricoop_app.\"threadStates\"", fallback))
       .toBe("We couldn't delete that order. Please try again. (ref: a1b2c3d4)");
-    expect(mutationFailureFallback("admin.softDeleteUser", {}, "e5f6g7h8"))
+    expect(mutationFailureFallback("admin.deleteUser", {}, "e5f6g7h8"))
       .toBe("We couldn't delete that user. Please try again. (ref: e5f6g7h8)");
     expect(mutationFailureFallback("cooperatives.softDelete", { id: 8 }, "1234abcd"))
       .toBe("We couldn't delete that cooperative. Please try again. (ref: 1234abcd)");

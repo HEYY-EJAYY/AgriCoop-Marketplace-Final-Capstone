@@ -6,10 +6,11 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { RealtimeInvalidator } from "./lib/useRealtimeInvalidation";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { PageFrame, marketingShellClass } from "@/components/AgriShell";
-import AdminShell from "@/components/AdminShell";
 import Home from "@/pages/Home";
-import Marketplace from "@/pages/Marketplace";
 import NotFound from "@/pages/NotFound";
+
+const AdminShell = lazy(() => import("@/components/AdminShell"));
+const Marketplace = lazy(() => import("@/pages/Marketplace"));
 
 const About = lazy(() => import("@/pages/About"));
 const Auth = lazy(() => import("@/pages/Auth"));
@@ -47,7 +48,7 @@ function Router() {
       <Route path="/about">{() => <LazyPage><About/></LazyPage>}</Route>
       <Route path="/auth">{() => <LazyPage><Auth/></LazyPage>}</Route>
       <Route path="/checkout">{() => <LazyPage><Checkout/></LazyPage>}</Route>
-      <Route path="/marketplace" component={Marketplace}/>
+      <Route path="/marketplace">{() => <LazyPage><Marketplace/></LazyPage>}</Route>
       <Route path="/products/:id">{() => <LazyPage><ProductDetails/></LazyPage>}</Route>
       <Route path="/orders/:id">{() => <LazyPage><OrderDetail/></LazyPage>}</Route>
       <Route path="/cooperatives/:slug">{() => <LazyPage><CooperativePage/></LazyPage>}</Route>

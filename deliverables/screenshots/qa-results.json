@@ -1,0 +1,254 @@
+[
+  {
+    "vp": "sm",
+    "page": "home",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "sm",
+    "page": "marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "sm",
+    "page": "auth",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "sm",
+    "page": "about",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "sm",
+    "page": "cooperatives",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone",
+    "page": "home",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone",
+    "page": "marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone",
+    "page": "auth",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone",
+    "page": "about",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone",
+    "page": "cooperatives",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-lg",
+    "page": "home",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-lg",
+    "page": "marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-lg",
+    "page": "auth",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-lg",
+    "page": "about",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-lg",
+    "page": "cooperatives",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-xl",
+    "page": "home",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-xl",
+    "page": "marketplace",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-xl",
+    "page": "auth",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-xl",
+    "page": "about",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "phone-xl",
+    "page": "cooperatives",
+    "status": "ok",
+    "overflowX": 0,
+    "wide": []
+  },
+  {
+    "vp": "tablet",
+    "page": "home",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "tablet",
+    "page": "marketplace",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "tablet",
+    "page": "auth",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "tablet",
+    "page": "about",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "tablet",
+    "page": "cooperatives",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "desktop",
+    "page": "home",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "desktop",
+    "page": "marketplace",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "desktop",
+    "page": "auth",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "desktop",
+    "page": "about",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "desktop",
+    "page": "cooperatives",
+    "status": "ok",
+    "overflowX": -15,
+    "wide": []
+  },
+  {
+    "vp": "phone",
+    "page": "buyer-dashboard",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "http://localhost:3000/dashboard"
+  },
+  {
+    "vp": "phone",
+    "page": "seller-dashboard",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "http://localhost:3000/dashboard"
+  },
+  {
+    "vp": "phone",
+    "page": "officer-dashboard",
+    "status": "ok",
+    "overflowX": 0,
+    "url": "http://localhost:3000/dashboard"
+  },
+  {
+    "vp": "desktop",
+    "page": "buyer-dashboard",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "http://localhost:3000/dashboard"
+  },
+  {
+    "vp": "desktop",
+    "page": "seller-dashboard",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "http://localhost:3000/dashboard"
+  },
+  {
+    "vp": "desktop",
+    "page": "officer-dashboard",
+    "status": "ok",
+    "overflowX": -15,
+    "url": "http://localhost:3000/dashboard"
+  }
+]

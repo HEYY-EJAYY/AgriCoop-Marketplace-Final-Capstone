@@ -149,7 +149,7 @@ export const officerApplicationsRouter = router({
       }
       const openId = actor.openId;
       const extension = coopAdminApplicationExtension(input.contentType);
-      if (!extension) throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, or WebP image." });
+      if (!extension) throw new TRPCError({ code: "BAD_REQUEST", message: "Use a JPEG, PNG, WebP, or PDF file." });
       // Object key is user-id prefixed inside the private bucket (matches storage RLS).
       const storagePath = `${openId}/${randomUUID()}.${extension}`;
       const signedUpload = await storageCreateSignedUploadUrl(storagePath, COOP_ADMIN_APPLICATION_BUCKET);
@@ -173,15 +173,19 @@ export const officerApplicationsRouter = router({
     .input(z.object({
       fullName: z.string().trim().min(2).max(180),
       positionTitle: z.string().trim().min(2).max(180),
+      contactNumber: z.string().trim().min(7).max(40),
+      idType: z.enum(["national_id", "drivers_license", "passport", "postal_id", "umid", "voters_id", "other"]),
+      idNumber: z.string().trim().min(3).max(60),
+      consentAccepted: z.literal(true),
       cooperativeId: z.number().int().positive().optional(),
       newCooperativeName: z.string().trim().min(3).max(180).optional(),
       newCooperativeLocation: z.string().trim().min(3).max(180).optional(),
       newCooperativeAddress: z.string().trim().min(3).max(255).optional(),
       confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
       idDocumentPath: z.string().min(1).max(1000),
-      proofDocumentPath: z.string().min(1).max(1000),
+      proofDocumentPath: z.string().min(1).max(1000).optional(),
       idUploadIntent: z.string().min(1),
-      proofUploadIntent: z.string().min(1),
+      proofUploadIntent: z.string().min(1).optional(),
     }).strict())
     .mutation(async ({ ctx, input }) => {
       const actor = requireOperationalRole(ctx.user, ["buyer"]);
@@ -194,9 +198,13 @@ export const officerApplicationsRouter = router({
       const openId = actor.openId;
       const rateLimitKey = actor.email ?? openId;
       const idIntent = verifyCoopAdminApplicationUploadIntent(input.idUploadIntent, actor.id, openId);
-      const proofIntent = verifyCoopAdminApplicationUploadIntent(input.proofUploadIntent, actor.id, openId);
+      const proofIntent = input.proofUploadIntent
+        ? verifyCoopAdminApplicationUploadIntent(input.proofUploadIntent, actor.id, openId)
+        : null;
+      const proofPathOk = !input.proofDocumentPath || (proofIntent && proofIntent.storagePath === input.proofDocumentPath);
+      const proofIntentOk = !input.proofUploadIntent || (proofIntent && proofIntent.storagePath === input.proofDocumentPath);
       if (!idIntent || idIntent.storagePath !== input.idDocumentPath
-        || !proofIntent || proofIntent.storagePath !== input.proofDocumentPath) {
+        || !proofPathOk || !proofIntentOk) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Upload intents expired or do not match the files." });
       }
 
@@ -230,6 +238,13 @@ export const officerApplicationsRouter = router({
         if (!cooperativeId) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Select or add a cooperative." });
         }
+        const [coopRow] = await tx.select({ id: cooperatives.id, status: cooperatives.status })
+          .from(cooperatives)
+          .where(eq(cooperatives.id, cooperativeId))
+          .limit(1);
+        if (!coopRow || coopRow.status !== "active") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Select an active cooperative." });
+        }
 
         const [existing] = await tx.select().from(cooperativeAdminApplications)
           .where(and(
@@ -244,9 +259,13 @@ export const officerApplicationsRouter = router({
           const updated = await tx.update(cooperativeAdminApplications).set({
             fullName: input.fullName,
             positionTitle: input.positionTitle,
+            contactNumber: input.contactNumber,
+            idType: input.idType,
+            idNumber: input.idNumber,
+            consentAcceptedAt: new Date(),
             cooperativeId,
             idDocumentPath: input.idDocumentPath,
-            proofDocumentPath: input.proofDocumentPath,
+            proofDocumentPath: input.proofDocumentPath ?? null,
             status: "pending",
             rejectionReason: null,
             reviewedBy: null,
@@ -260,9 +279,13 @@ export const officerApplicationsRouter = router({
             userId: actor.id,
             fullName: input.fullName,
             positionTitle: input.positionTitle,
+            contactNumber: input.contactNumber,
+            idType: input.idType,
+            idNumber: input.idNumber,
+            consentAcceptedAt: new Date(),
             cooperativeId,
             idDocumentPath: input.idDocumentPath,
-            proofDocumentPath: input.proofDocumentPath,
+            proofDocumentPath: input.proofDocumentPath ?? null,
             status: "pending",
           }).returning({ id: cooperativeAdminApplications.id });
           applicationId = created!.id;
@@ -304,6 +327,8 @@ export const officerApplicationsRouter = router({
         id: cooperativeAdminApplications.id,
         fullName: cooperativeAdminApplications.fullName,
         positionTitle: cooperativeAdminApplications.positionTitle,
+        contactNumber: cooperativeAdminApplications.contactNumber,
+        idType: cooperativeAdminApplications.idType,
         status: cooperativeAdminApplications.status,
         userId: cooperativeAdminApplications.userId,
         email: users.email,
@@ -311,6 +336,7 @@ export const officerApplicationsRouter = router({
         cooperativeName: cooperatives.name,
         createdAt: cooperativeAdminApplications.createdAt,
         updatedAt: cooperativeAdminApplications.updatedAt,
+        hasProofDocument: sql<boolean>`${cooperativeAdminApplications.proofDocumentPath} is not null`,
       })
       .from(cooperativeAdminApplications)
       .innerJoin(users, eq(cooperativeAdminApplications.userId, users.id))

@@ -64,10 +64,10 @@ export const cooperatives = appSchema.table("cooperatives", {
   address: varchar("address", { length: 255 }).notNull().default(""),
   normalizedLocation: varchar("normalizedLocation", { length: 180 }).notNull().default(""),
   status: cooperativeStatus("status").default("active").notNull(),
-  createdBy: integer("createdBy").references((): AnyPgColumn => users.id),
+  createdBy: integer("createdBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   source: varchar("source", { length: 32 }).notNull().default("seed"),
   deletedAt: timestamp("deletedAt", { mode: "date" }),
-  deletedBy: integer("deletedBy").references((): AnyPgColumn => users.id),
+  deletedBy: integer("deletedBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
 }, table => [
   uniqueIndex("cooperatives_normalized_name_location_uidx")
@@ -94,7 +94,7 @@ export const users = appSchema.table("users", {
   approvalStatus: userApprovalStatus("approvalStatus").default("approved").notNull(),
   verificationStatus: userVerificationStatus("verificationStatus").default("unverified").notNull(),
   verificationNote: text("verificationNote"),
-  verifiedBy: integer("verifiedBy").references((): AnyPgColumn => users.id),
+  verifiedBy: integer("verifiedBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   verifiedAt: timestamp("verifiedAt", { mode: "date" }),
   profileImageUrl: varchar("profileImageUrl", { length: 1000 }),
   birthdate: timestamp("birthdate", { mode: "date" }),
@@ -110,7 +110,7 @@ export const users = appSchema.table("users", {
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
   lastSignedIn: timestamp("lastSignedIn", { mode: "date" }).defaultNow().notNull(),
   deletedAt: timestamp("deletedAt", { mode: "date" }),
-  deletedBy: integer("deletedBy").references((): AnyPgColumn => users.id),
+  deletedBy: integer("deletedBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   deletedByRole: varchar("deletedByRole", { length: 32 }),
 }, table => [
   index("users_cooperative_id_idx").on(table.cooperativeId),
@@ -123,11 +123,15 @@ export const cooperativeAdminApplications = appSchema.table("cooperativeAdminApp
   fullName: varchar("fullName", { length: 180 }).notNull(),
   cooperativeId: integer("cooperativeId").notNull().references(() => cooperatives.id),
   positionTitle: varchar("positionTitle", { length: 180 }).notNull().default(""),
+  contactNumber: varchar("contactNumber", { length: 40 }),
+  idType: varchar("idType", { length: 40 }),
+  idNumber: varchar("idNumber", { length: 60 }),
+  consentAcceptedAt: timestamp("consentAcceptedAt", { mode: "date" }),
   idDocumentPath: text("idDocumentPath"),
   proofDocumentPath: text("proofDocumentPath"),
   status: coopAdminApplicationStatus("status").default("awaiting_documents").notNull(),
   rejectionReason: text("rejectionReason"),
-  reviewedBy: integer("reviewedBy").references((): AnyPgColumn => users.id),
+  reviewedBy: integer("reviewedBy").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   reviewedAt: timestamp("reviewedAt", { mode: "date" }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
@@ -146,7 +150,7 @@ export const cooperativeAssociationRequests = appSchema.table("cooperativeAssoci
   status: associationRequestStatus("status").default("pending").notNull(),
   message: text("message"),
   reviewNote: text("reviewNote"),
-  reviewedBy: integer("reviewedBy").references(() => users.id),
+  reviewedBy: integer("reviewedBy").references(() => users.id, { onDelete: "set null" }),
   moveExistingListings: boolean("moveExistingListings").default(false).notNull(),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   reviewedAt: timestamp("reviewedAt", { mode: "date" }),
@@ -160,7 +164,7 @@ export const cooperativeAssociationRequests = appSchema.table("cooperativeAssoci
 
 export const products = appSchema.table("products", {
   id: serial("id").primaryKey(),
-  sellerId: integer("sellerId").notNull().references(() => users.id),
+  sellerId: integer("sellerId").references(() => users.id, { onDelete: "set null" }),
   cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
   name: varchar("name", { length: 160 }).notNull(),
   category: varchar("category", { length: 80 }).notNull(),
@@ -186,7 +190,7 @@ export const products = appSchema.table("products", {
   prepTimeDays: integer("prepTimeDays"),
   capacityNote: text("capacityNote"),
   deletedAt: timestamp("deletedAt", { mode: "date" }),
-  deletedBy: integer("deletedBy").references(() => users.id),
+  deletedBy: integer("deletedBy").references(() => users.id, { onDelete: "set null" }),
 }, table => [index("products_seller_id_idx").on(table.sellerId)]);
 
 export const productImages = appSchema.table("productImages", {
@@ -226,8 +230,8 @@ export const quotations = appSchema.table("quotations", {
 
 export const orders = appSchema.table("orders", {
   id: serial("id").primaryKey(),
-  buyerId: integer("buyerId").notNull().references(() => users.id),
-  sellerId: integer("sellerId").notNull().references(() => users.id),
+  buyerId: integer("buyerId").references(() => users.id, { onDelete: "set null" }),
+  sellerId: integer("sellerId").references(() => users.id, { onDelete: "set null" }),
   cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
   orderType: orderType("orderType").notNull(),
   status: orderStatus("status").default("submitted").notNull(),
@@ -252,7 +256,7 @@ export const orders = appSchema.table("orders", {
 export const orderHistory = appSchema.table("orderHistory", {
   id: serial("id").primaryKey(),
   orderId: integer("orderId").notNull().references(() => orders.id),
-  actorUserId: integer("actorUserId").references(() => users.id),
+  actorUserId: integer("actorUserId").references(() => users.id, { onDelete: "set null" }),
   eventType: varchar("eventType", { length: 64 }).notNull(),
   fromValue: varchar("fromValue", { length: 64 }),
   toValue: varchar("toValue", { length: 64 }),
@@ -263,7 +267,7 @@ export const orderHistory = appSchema.table("orderHistory", {
 export const orderEvents = appSchema.table("orderEvents", {
   id: serial("id").primaryKey(),
   orderId: integer("orderId").notNull().references(() => orders.id),
-  actorUserId: integer("actorUserId").notNull().references(() => users.id),
+  actorUserId: integer("actorUserId").references(() => users.id, { onDelete: "set null" }),
   action: varchar("action", { length: 80 }).notNull(),
   fromStatus: varchar("fromStatus", { length: 32 }),
   toStatus: varchar("toStatus", { length: 32 }),
@@ -303,8 +307,8 @@ export const paymentOptions = appSchema.table("paymentOptions", {
 export const transactions = appSchema.table("transactions", {
   id: serial("id").primaryKey(),
   orderId: integer("orderId").notNull().references(() => orders.id),
-  buyerId: integer("buyerId").notNull().references(() => users.id),
-  sellerId: integer("sellerId").notNull().references(() => users.id),
+  buyerId: integer("buyerId").references(() => users.id, { onDelete: "set null" }),
+  sellerId: integer("sellerId").references(() => users.id, { onDelete: "set null" }),
   amountCents: integer("amountCents").notNull(),
   paymentReferenceNote: text("paymentReferenceNote"),
   paymentOptionId: integer("paymentOptionId").references(() => paymentOptions.id, { onDelete: "set null" }),
@@ -320,7 +324,7 @@ export const paymentProofs = appSchema.table("paymentProofs", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   orderId: integer("orderId").notNull().references(() => orders.id, { onDelete: "restrict" }),
   transactionId: integer("transactionId").references(() => transactions.id, { onDelete: "set null" }),
-  uploadedBy: integer("uploadedBy").notNull().references(() => users.id, { onDelete: "restrict" }),
+  uploadedBy: integer("uploadedBy").references(() => users.id, { onDelete: "set null" }),
   storagePath: text("storagePath").notNull(),
   originalFileName: varchar("originalFileName", { length: 255 }),
   mimeType: varchar("mimeType", { length: 100 }),
@@ -343,15 +347,15 @@ export const paymentProofs = appSchema.table("paymentProofs", {
 export const payments = appSchema.table("payments", {
   id: serial("id").primaryKey(),
   orderId: integer("orderId").notNull().references(() => orders.id),
-  buyerId: integer("buyerId").notNull().references(() => users.id),
-  sellerId: integer("sellerId").notNull().references(() => users.id),
+  buyerId: integer("buyerId").references(() => users.id, { onDelete: "set null" }),
+  sellerId: integer("sellerId").references(() => users.id, { onDelete: "set null" }),
   cooperativeId: integer("cooperativeId").references(() => cooperatives.id),
   amountCents: bigint("amountCents", { mode: "number" }).notNull(),
   currency: varchar("currency", { length: 8 }).notNull().default("PHP"),
   paymentMethod: varchar("paymentMethod", { length: 64 }).notNull().default("f2f"),
   paymentOptionId: integer("paymentOptionId").references(() => paymentOptions.id),
   status: text("status").$type<"pending" | "awaiting_verification" | "verified" | "failed" | "cancelled" | "refunded" | "expired">().default("pending").notNull(),
-  verifiedByUserId: integer("verifiedByUserId").references((): AnyPgColumn => users.id),
+  verifiedByUserId: integer("verifiedByUserId").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   paymentReference: text("paymentReference"),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
@@ -365,7 +369,7 @@ export const payments = appSchema.table("payments", {
 export const paymentEvents = appSchema.table("paymentEvents", {
   id: serial("id").primaryKey(),
   paymentId: integer("paymentId").notNull().references(() => payments.id),
-  actorUserId: integer("actorUserId").references(() => users.id),
+  actorUserId: integer("actorUserId").references(() => users.id, { onDelete: "set null" }),
   eventType: varchar("eventType", { length: 80 }).notNull(),
   fromStatus: varchar("fromStatus", { length: 32 }),
   toStatus: varchar("toStatus", { length: 32 }),
@@ -384,7 +388,7 @@ export const paymentAttempts = appSchema.table("paymentAttempts", {
   evidenceUrl: varchar("evidenceUrl", { length: 1000 }),
   status: text("status").$type<"pending" | "submitted" | "under_review" | "approved" | "rejected" | "failed" | "expired" | "cancelled">().default("pending").notNull(),
   submittedAt: timestamp("submittedAt", { mode: "date" }).defaultNow().notNull(),
-  reviewedByUserId: integer("reviewedByUserId").references((): AnyPgColumn => users.id),
+  reviewedByUserId: integer("reviewedByUserId").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   rejectionReason: text("rejectionReason"),
   metadata: text("metadata"),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
@@ -460,7 +464,7 @@ export const supportTickets = appSchema.table("supportTickets", {
   description: text("description").notNull(),
   priority: varchar("priority", { length: 20 }).notNull().default("medium"),
   status: varchar("status", { length: 20 }).notNull().default("open"),
-  assignedToUserId: integer("assignedToUserId").references(() => users.id),
+  assignedToUserId: integer("assignedToUserId").references(() => users.id, { onDelete: "set null" }),
   archivedAt: timestamp("archivedAt", { mode: "date" }),
   deletedAt: timestamp("deletedAt", { mode: "date" }),
   pinnedAt: timestamp("pinnedAt", { mode: "date" }),
@@ -478,7 +482,7 @@ export const supportTicketMessages = appSchema.table("supportTicketMessages", {
 
 export const auditLogs = appSchema.table("auditLogs", {
   id: serial("id").primaryKey(),
-  actorUserId: integer("actorUserId").notNull().references(() => users.id),
+  actorUserId: integer("actorUserId").references(() => users.id, { onDelete: "set null" }),
   action: varchar("action", { length: 100 }).notNull(),
   entityType: varchar("entityType", { length: 50 }).notNull(),
   entityId: integer("entityId"),
@@ -515,7 +519,7 @@ export const systemPaymentSettings = appSchema.table("systemPaymentSettings", {
   cashDeliveryEnabled: boolean("cashDeliveryEnabled").notNull().default(true),
   onlineEnabled: boolean("onlineEnabled").notNull().default(false),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
-  updatedBy: integer("updatedBy").references(() => users.id),
+  updatedBy: integer("updatedBy").references(() => users.id, { onDelete: "set null" }),
 });
 
 /** System online payment accounts — one active non-archived at a time. */
@@ -530,8 +534,8 @@ export const systemOnlinePaymentAccounts = appSchema.table("systemOnlinePaymentA
   archivedAt: timestamp("archivedAt", { mode: "date" }),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().$onUpdate(() => new Date()).notNull(),
-  createdBy: integer("createdBy").references(() => users.id),
-  updatedBy: integer("updatedBy").references(() => users.id),
+  createdBy: integer("createdBy").references(() => users.id, { onDelete: "set null" }),
+  updatedBy: integer("updatedBy").references(() => users.id, { onDelete: "set null" }),
 }, table => [
   uniqueIndex("system_online_payment_one_active_idx")
     .on(table.isActive)
@@ -540,7 +544,7 @@ export const systemOnlinePaymentAccounts = appSchema.table("systemOnlinePaymentA
 
 export const systemPaymentSettingsAudit = appSchema.table("systemPaymentSettingsAudit", {
   id: serial("id").primaryKey(),
-  actorUserId: integer("actorUserId").notNull().references(() => users.id),
+  actorUserId: integer("actorUserId").references(() => users.id, { onDelete: "set null" }),
   actorRole: text("actorRole").notNull(),
   action: varchar("action", { length: 100 }).notNull(),
   details: text("details"),

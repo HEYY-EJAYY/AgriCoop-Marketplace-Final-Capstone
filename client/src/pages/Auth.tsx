@@ -414,7 +414,7 @@ export default function Auth() {
   const roleHint = role === "seller"
     ? "Create a Seller / Farmer account. A cooperative is required; Seller access still needs approval."
     : role === "coop_admin"
-      ? "Create a OfficerAdmin application account. You start with Buyer access until SuperAdmin approves your documents."
+      ? "Apply for OfficerAdmin access. After verifying your email you will upload your government ID and supporting documents; SuperAdmin approval is required before OfficerAdmin access is granted."
       : "Create a Buyer account. You may link a cooperative during sign-up.";
 
   return <PageFrame>

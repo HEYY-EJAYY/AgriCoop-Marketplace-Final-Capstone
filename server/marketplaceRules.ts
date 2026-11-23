@@ -15,7 +15,7 @@ export type BuyerQuotation = {
 };
 export type AvailableProduct = {
   id: number;
-  sellerId: number;
+  sellerId: number | null;
   cooperativeId: number | null;
   stockQty: number;
   minOrderQty: number;
@@ -133,6 +133,10 @@ export function prepareOrder(products: AvailableProduct[], items: OrderItemReque
   if (sellerIds.size !== 1) {
     throw new Error("A bulk order must contain products from one seller. Please submit separate orders for other farms.");
   }
+  const sellerId = products[0].sellerId;
+  if (sellerId === null) {
+    throw new Error("One or more selected items are no longer available.");
+  }
   const productMap = new Map(products.map(product => [product.id, product]));
   for (const item of aggregatedItems) {
     const product = productMap.get(item.productId);
@@ -145,7 +149,7 @@ export function prepareOrder(products: AvailableProduct[], items: OrderItemReque
     }
   }
   return {
-    sellerId: products[0].sellerId,
+    sellerId,
     cooperativeId: products[0].cooperativeId,
     orderType: aggregatedItems.length === 1 ? "regular" as const : "bulk" as const,
     productMap,
@@ -404,7 +408,7 @@ export function prepareProductReview(
   };
 }
 
-export function assertNotSelfTransaction(actorId: number, sellerId: number) {
+export function assertNotSelfTransaction(actorId: number, sellerId: number | null) {
   if (actorId === sellerId) throw new Error("You cannot request a quotation or place an order for your own listing.");
 }
 

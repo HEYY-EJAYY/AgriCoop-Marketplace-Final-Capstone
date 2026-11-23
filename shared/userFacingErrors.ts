@@ -36,7 +36,7 @@ export function mutationFailureFallback(path: string | undefined, input: unknown
   if (path === "quotations.updateState" && action === "delete") {
     return `We couldn't delete that quotation request. Please try again. (ref: ${reference})`;
   }
-  if (path === "admin.softDeleteUser") {
+  if (path === "admin.deleteUser") {
     return `${USER_FACING_DELETE_USER_ERROR} (ref: ${reference})`;
   }
   if (path === "cooperatives.softDelete") {

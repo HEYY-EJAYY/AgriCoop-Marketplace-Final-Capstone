@@ -103,12 +103,13 @@ export function isCoopAdminApplicationStorageKey(key: string, openId: string) {
       ? key.slice(legacy.length)
       : null;
   if (!fileName || fileName.includes("/")) return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp)$/i.test(fileName);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(jpg|png|webp|pdf)$/i.test(fileName);
 }
 
 export function coopAdminApplicationExtension(mimeType: string) {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
+  if (mimeType === "application/pdf") return "pdf";
   return null;
 }

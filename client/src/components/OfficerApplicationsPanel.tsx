@@ -26,9 +26,9 @@ export function OfficerApplicationsPanel() {
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
-  const softDeleteUser = trpc.admin.softDeleteUser.useMutation({
+  const deleteUser = trpc.admin.deleteUser.useMutation({
     onSuccess: () => {
-      toast.success("Officer account deleted.");
+      toast.success("Officer account permanently deleted.");
       void utils.admin.overview.invalidate();
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
@@ -91,10 +91,10 @@ export function OfficerApplicationsPanel() {
     await review.mutateAsync({ applicationId: id, decision: "approved" });
   });
   const bulkDelete = () => {
-    if (!window.confirm(`Delete ${selected.size} selected OfficerAdmin account${selected.size === 1 ? "" : "s"}? This soft-deletes them and bans sign-in.`)) return;
+    if (!window.confirm(`Permanently delete ${selected.size} selected OfficerAdmin account${selected.size === 1 ? "" : "s"}? This cannot be undone — their account and personal data will be removed.`)) return;
     void runBulk(async key => {
       if (!key.startsWith("user-")) throw new Error("not a user");
-      await softDeleteUser.mutateAsync({ userId: Number(key.slice(5)), confirm: true });
+      await deleteUser.mutateAsync({ userId: Number(key.slice(5)), confirm: true });
     });
   };
   const bulkSuspend = () => runBulk(async key => {
@@ -169,12 +169,14 @@ export function OfficerApplicationsPanel() {
               <div className="flex flex-wrap justify-between gap-2">
                 <div>
                   <p className="font-bold text-[#315640]">{row.fullName}</p>
-                  <p className="text-xs text-[#6d7d70]">{row.email} · {row.cooperativeName}</p>
-                  <p className="mt-1 text-sm text-[#45614e]">{row.positionTitle}</p>
+                  <p className="text-xs text-[#6d7d70]">{row.email} · {row.contactNumber ?? "no contact"} · {row.cooperativeName}</p>
+                  <p className="mt-1 text-sm text-[#45614e]">{row.positionTitle}{row.idType ? ` · ${row.idType.replace(/_/g, " ")}` : ""}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => void openDoc(row.id, "id")}>View ID</button>
-                  <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => void openDoc(row.id, "proof")}>View proof</button>
+                  {row.hasProofDocument && (
+                    <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => void openDoc(row.id, "proof")}>View proof</button>
+                  )}
                   <button type="button" className="agri-button px-3 py-2 text-xs" disabled={review.isPending} onClick={() => review.mutate({ applicationId: row.id, decision: "approved" })}>Approve</button>
                   <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" onClick={() => { setRejectingId(row.id); setReason(""); }}>Reject</button>
                 </div>
@@ -208,7 +210,7 @@ export function OfficerApplicationsPanel() {
                 <button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={updateUser.isPending} onClick={() => updateUser.mutate({ userId: row.user.id, role: row.user.role, approvalStatus: "approved", cooperativeId: row.user.cooperativeId })}>Reactivate</button>
               )}
               {!row.user.deletedAt && row.user.id !== undefined && (
-                <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={softDeleteUser.isPending} onClick={() => { if (window.confirm(`Delete ${row.user.name || row.user.email || "this OfficerAdmin"}? This soft-deletes the account.`)) softDeleteUser.mutate({ userId: row.user.id, confirm: true }); }}>Delete</button>
+                <button type="button" className="agri-ghost px-3 py-2 text-xs text-[#a34838]" disabled={deleteUser.isPending} onClick={() => { if (window.confirm(`Permanently delete ${row.user.name || row.user.email || "this OfficerAdmin"}? This cannot be undone — their account and personal data will be removed.`)) deleteUser.mutate({ userId: row.user.id, confirm: true }); }}>Delete</button>
               )}
             </div>
           </article>

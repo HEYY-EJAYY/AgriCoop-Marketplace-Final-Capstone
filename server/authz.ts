@@ -31,7 +31,7 @@ export function canManageSellerOrder(
 
 export function canAccessPaymentRecord(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+  payment: { buyerId: number | null; sellerId: number | null; cooperativeId: number | null },
 ) {
   if (actor.role === "superadmin") return true;
   if (actor.role === "buyer") return actor.id === payment.buyerId;
@@ -46,7 +46,7 @@ export function canAccessPaymentRecord(
 
 export function canVerifyPaymentRecord(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+  payment: { buyerId: number | null; sellerId: number | null; cooperativeId: number | null },
 ) {
   if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
   if (actor.role === "superadmin") return true;
@@ -58,7 +58,7 @@ export function canVerifyPaymentRecord(
 
 export function canReviewPaymentProof(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  order: { buyerId: number; sellerId: number; cooperativeId: number | null },
+  order: { buyerId: number | null; sellerId: number | null; cooperativeId: number | null },
 ) {
   if (actor.role !== "admin" && actor.role !== "superadmin") return false;
   if (actor.id === order.buyerId || actor.id === order.sellerId) return false;
@@ -70,7 +70,7 @@ export function canReviewPaymentProof(
 
 export function canManagePaymentRecord(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+  payment: { buyerId: number | null; sellerId: number | null; cooperativeId: number | null },
 ) {
   return canAccessPaymentRecord(actor, payment) || canVerifyPaymentRecord(actor, payment);
 }
@@ -78,8 +78,8 @@ export function canManagePaymentRecord(
 export function canRecordCashReceipt(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
   payment: {
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     cooperativeId: number | null;
     orderId: number;
     amountCents: number;
@@ -88,8 +88,8 @@ export function canRecordCashReceipt(
   },
   order: {
     id: number;
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     cooperativeId: number | null;
     totalCents: number;
     paymentMethod: string | null;
@@ -98,8 +98,8 @@ export function canRecordCashReceipt(
   },
   transaction?: {
     orderId: number;
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     amountCents: number;
     paymentMethod: string | null;
     status: string;
@@ -118,16 +118,16 @@ export function canRecordCashReceipt(
 
 export function isPaymentTransactionConsistent(
   payment: {
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     orderId: number;
     amountCents: number;
     paymentMethod: string;
   },
   transaction: {
     orderId: number;
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     amountCents: number;
     paymentMethod: string | null;
     status: string;
@@ -143,7 +143,7 @@ export function isPaymentTransactionConsistent(
 /** Cash-received is Admin / SuperAdmin only (sellers are read-only on payment status). */
 export function canManageCashReceipt(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+  payment: { buyerId: number | null; sellerId: number | null; cooperativeId: number | null },
 ) {
   if (actor.role !== "admin" && actor.role !== "superadmin") return false;
   if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
@@ -155,8 +155,8 @@ export function canManageCashReceipt(
 
 export function isPaymentOrderConsistent(
   payment: {
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     cooperativeId: number | null;
     orderId: number;
     amountCents: number;
@@ -164,8 +164,8 @@ export function isPaymentOrderConsistent(
   },
   order: {
     id: number;
-    buyerId: number;
-    sellerId: number;
+    buyerId: number | null;
+    sellerId: number | null;
     cooperativeId: number | null;
     totalCents: number;
     paymentMethod: string | null;
@@ -183,7 +183,7 @@ export function isPaymentOrderConsistent(
 
 export function canManageRefundRecord(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  payment: { buyerId: number; sellerId: number; cooperativeId: number | null },
+  payment: { buyerId: number | null; sellerId: number | null; cooperativeId: number | null },
 ) {
   if (actor.id === payment.buyerId || actor.id === payment.sellerId) return false;
   if (actor.role === "superadmin") return true;
@@ -195,7 +195,7 @@ export function canManageRefundRecord(
 
 export function canUpdateOrderStatus(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  order: { sellerId: number; cooperativeId: number | null },
+  order: { sellerId: number | null; cooperativeId: number | null },
   nextStatus: "confirmed" | "ready" | "completed" | "cancelled",
 ) {
   if (actor.role === "superadmin") return true;
@@ -261,7 +261,7 @@ export function isSellerApproved(approvalStatus: OperationalUser["approvalStatus
 
 export function canAccessConversation(
   actor: Pick<OperationalUser, "id" | "role" | "cooperativeId">,
-  conversation: { buyerId: number; sellerId: number | null },
+  conversation: { buyerId: number | null; sellerId: number | null },
   sellerCooperativeId: number | null,
 ) {
   // Trade / order chats (seller assigned): participants only — officers do not read private buyer–seller threads.
