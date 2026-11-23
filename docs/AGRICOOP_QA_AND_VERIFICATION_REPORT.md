@@ -192,3 +192,9 @@ All 20 products (IDs 50–69), images, prices, names, and ownership unchanged. N
 - `cart.add` now seeds a new cart line at quantity **1** and increments an existing line by **1** — never by `minOrderQty` or stock. All Add-to-Cart entry points funnel through this single mutation (Marketplace cards; Product Details and Home link into the marketplace basket).
 - Cart quantities are drafts clamped to `[1, available stock]`; the configured `minOrderQty` is enforced at the order boundary — `prepareOrder` rejects below-minimum quantities server-side, the cart panel shows a "Minimum order is X" hint, `submitCart` blocks checkout, and `Checkout` disables submit until every line meets its minimum.
 - Regression coverage: `server/cart.test.ts` (+8: stock 100/25/2 → qty 1, min>1 → qty 1, re-add +1, stock clamp, below-min draft, stock clamp on update); `purchaseInvariant.test.ts` updated to the new contract. Browser QA (desktop 1366 + mobile 390): 14/14 checks — screenshots in `deliverables/screenshots/cart-default-quantity/`.
+
+## Catalog minimum order quantity (data update)
+
+- All 20 catalog listings (product IDs 50–69, all sold by `kg`) now have `minOrderQty = 5` (previously 10–100). Only the `minOrderQty` column was updated; prices, stock, units, images, and ownership are unchanged. Because dev and production share the database, this applies to live buyers.
+- Cart lines still start at quantity 1; the per-product minimum (now 5 kg) is enforced at checkout (`submitCart`, Checkout submit gating) and server-side (`prepareOrder` → "minimum order of 5 kg"). The separate 20 kg Delivery minimum is unchanged — Pickup has no weight minimum.
+- Verified on production: all listings report `minOrderQty: 5`; add-to-cart starts at 1 with a "Minimum order is 5 kg" hint; qty 5 clears it; `orders.create` rejects qty 1 with HTTP 400; Delivery stays disabled below 20 kg total.
