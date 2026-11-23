@@ -225,3 +225,13 @@ All disposable QA payment options, QR reports, generated notifications (includin
 
 - The coop-1 OfficerAdmin has no known credentials; its inbox was verified via DB rows (correct recipient, unread, deep link) while the identical bell UI was verified in-browser as coop-3 OfficerAdmin and SuperAdmin.
 - Only coop-1 products are published, so the checkout-UI report path was exercised against a coop-1 QA option; the coop-3 report used the same `reportIssue` API for officer-inbox verification.
+
+---
+
+# Production deployment — QR payment feature (2026-11-23)
+
+- **Commit:** `242318aeba6c47493849df57edee70cbc206816d` on `finish/agricoop-complete` (HEAD == origin at deploy time; working tree had only untracked QA artifacts).
+- **Deployment:** `dpl_em2qzXV8MMvuVafjxuQJCHMNuPDk`, Vercel project `agricoop-marketplace-final-capstone` (`prj_LCxJgY2qeXdRNBgOnTeXvJbgXXDI`, team `ejay5`), `target: production`, state `READY`, serving `https://agricoop-marketplace-final-capstone.vercel.app` (HTTP 200).
+- **Method:** `create_deployment` with `gitSource` pinned to the exact SHA; `request_promote` on preview `dpl_HQinBujB5QqiydPJCQrSKjUokw5y` returned 422 (sourceless git link), so a fresh production-target build of the same commit was used — consistent with prior production deploys on this project.
+- **Rollback:** previous production `dpl_8QuCcoywmBBYSCGrMihfe9QxoDCJ` (commit `c3e662e`) preserved as rollback target.
+- **Smoke results (production browser + DB):** 26/26 desktop, 5/5 mobile — full notification delivery/navigation/read/lifecycle loop, cooperative-scoped permissions, SuperAdmin selector, buyer QR picker/report. All disposable QA data removed; shared DB left clean (only pre-existing payment option id 2).
