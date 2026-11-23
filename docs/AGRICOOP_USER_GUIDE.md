@@ -43,11 +43,14 @@ You can browse products, build a cart, place orders, pay (online transfer with p
 
 1. On a product page, set the quantity and tap **Add to Cart**.
 2. Open **Cart** to review items. Change quantities or remove items.
-3. Tap **Checkout** and fill in delivery details (name, phone, address, preferred date if offered).
-4. Choose a **payment method**:
-   - **Online Payment** — the AgriCoop QR code is shown with the payee name/number and amount. After paying in your wallet app, upload a photo/screenshot of the receipt; a cooperative officer verifies it before fulfillment.
+3. Tap **Checkout**. First choose **Fulfillment**: **Pickup** (you collect the order) or **Delivery** (the order is delivered to your address).
+4. Then choose a compatible **payment method**:
+   - For **Pickup**: **Online Payment** or **Cash on Pickup**.
+   - For **Delivery**: **Online Payment** or **Cash on Delivery**.
+   - **Online Payment** — the AgriCoop QR code is shown with the payee name/number and amount. After paying in your wallet app, upload a photo/screenshot of the receipt; a cooperative officer verifies it before fulfillment. Works for both pickup and delivery.
    - **Cash on Pickup / Cash on Delivery** — pay in cash when you collect or receive the order; an officer confirms cash received.
-5. Submit the order. You will see an **order confirmation** and can track it under **Orders/Activity**.
+5. If you chose **Delivery**, fill in the delivery details (recipient name, contact number, province, city, barangay, street address). Pickup orders do not need an address.
+6. Submit the order. You will see an **order confirmation** and can track it under **Orders/Activity** — each order shows its fulfillment method (Pickup/Delivery) and payment method separately.
 
 ### Track orders and communicate
 

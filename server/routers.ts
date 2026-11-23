@@ -2075,8 +2075,13 @@ export const appRouter = router({
         if (!paymentMethod) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a valid payment method." });
         }
-        if (paymentMethod === "cash_delivery" && !input.deliveryDetails) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "A complete delivery address is required for cash on delivery." });
+        // Online payment is fulfillment-agnostic, so the buyer must pick
+        // pickup or delivery explicitly instead of silently defaulting.
+        if (isOnlinePaymentMethod(paymentMethod) && !input.fulfillmentMethod) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Choose pickup or delivery for this order." });
+        }
+        if ((paymentMethod === "cash_delivery" || input.fulfillmentMethod === "delivery") && !input.deliveryDetails) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "A complete delivery address is required for delivery orders." });
         }
         const db = await dbOrThrow();
         const productIds = Array.from(new Set(input.items.map(item => item.productId)));
@@ -2254,7 +2259,7 @@ export const appRouter = router({
             paymentMethod,
             fulfillmentMethod,
             paymentStatus: initialPaymentStatus,
-            deliveryDetails: paymentMethod === "cash_delivery" ? input.deliveryDetails : null,
+            deliveryDetails: fulfillmentMethod === "delivery" ? input.deliveryDetails : null,
           }).returning({ id: orders.id });
           await tx.insert(transactions).values({
             orderId: newOrder.id,
@@ -3234,6 +3239,7 @@ export const appRouter = router({
         totalCents: orders.totalCents,
         paymentMethod: orders.paymentMethod,
         paymentStatus: orders.paymentStatus,
+        fulfillmentMethod: orders.fulfillmentMethod,
         status: orders.status,
       }).from(orders).where(cashScope).orderBy(desc(orders.createdAt));
       const cashAwaitingReceived = cashRows.filter(order => canManageCashReceipt(actor, order));

@@ -176,6 +176,21 @@ export function fulfillmentOptionsForListings(listings: ListingPaymentFlags[]): 
   return options;
 }
 
+/**
+ * Payment methods compatible with a chosen fulfillment method.
+ * `online` works for both pickup and delivery; cash methods are bound to
+ * their matching fulfillment (`cash_pickup`↔pickup, `cash_delivery`↔delivery).
+ */
+export function paymentMethodsForFulfillment(
+  methods: PaymentMethod[],
+  fulfillment: FulfillmentMethod,
+): PaymentMethod[] {
+  return methods.filter(method =>
+    method === "online"
+    || (method === "cash_pickup" && fulfillment === "pickup")
+    || (method === "cash_delivery" && fulfillment === "delivery"));
+}
+
 export function isPaymentSettled(paymentStatus: string | null | undefined): boolean {
   return paymentStatus === "paid" || paymentStatus === "verified";
 }

@@ -11,8 +11,8 @@ describe("Checkout cash copy", () => {
     expect(source).not.toContain(FORBIDDEN);
     expect(source).not.toContain("AgriCoop does not process cash payments");
     expect(source).not.toContain("Sellers record cash received");
-    expect(source).toContain("Cash on pickup");
-    expect(source).toContain("Cash on delivery");
+    expect(source).toContain('"cash_pickup"');
+    expect(source).toContain('"cash_delivery"');
     expect(source).not.toContain("adminPayment.checkoutOptions");
   });
 

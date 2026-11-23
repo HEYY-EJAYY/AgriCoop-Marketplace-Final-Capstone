@@ -114,7 +114,8 @@ Detailed enforcement lives in `server/authz.ts` (`canSoftDeleteTargetUser` — h
 ### 3.5 Cart & checkout
 
 - Server-side cart (`cart.ts`, `cartItems` table) plus localStorage leftovers merge (`useBuyerCart.ts`).
-- `/checkout` (`Checkout.tsx`): delivery details, payment method selection, order submission → `orders` + `orderItems` + `transactions` rows; mixed-cart (multi-seller) orders split per cooperative/seller.
+- `/checkout` (`Checkout.tsx`): fulfillment selection first (`pickup`/`delivery`), then payment method filtered to compatible options, conditional delivery details, order submission → `orders` + `orderItems` + `transactions` rows; mixed-cart (multi-seller) orders split per cooperative/seller.
+- **Fulfillment vs. payment are independent attributes.** `orders.fulfillmentMethod` stores `pickup`|`delivery`; `orders.paymentMethod` stores `cash_pickup`|`cash_delivery`|`online` (legacy `gcash`/`f2f` normalized on read/write). Valid combinations: pickup+online, delivery+online, pickup+cash_pickup, delivery+cash_delivery. `paymentMethodsForFulfillment`/`fulfillmentOptionsForListings` in `shared/paymentMethods.ts` drive the UI; `orders.create` re-validates compatibility, delivery-address completeness, online-account readiness, and receipt proof server-side. Fulfillment is displayed (never inferred from payment for new orders) on checkout, order lists/details (`OrderDetail.tsx`), seller queues, officer payment verification, Dashboard, and Reports.
 
 ### 3.6 Orders & fulfillment
 

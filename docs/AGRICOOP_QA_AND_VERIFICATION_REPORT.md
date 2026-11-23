@@ -132,3 +132,15 @@ Re-run on the final working tree before commit, under the project's required run
 - `pnpm build` — **success**; `index` entry chunk 727.52 kB / 207.59 kB gzip (unchanged from the post-lazy-load baseline; >500 kB chunk warning persists and is documented, not a regression).
 
 No production systems, databases, or deployments were touched during this pass.
+
+## Checkout fulfillment/payment separation (local dev verification)
+
+Verified on the local dev server (`pnpm dev`, Node v22.23.5) against the development database via Playwright (Chromium) at desktop 1280px and mobile 360px viewports. Screenshots: `deliverables/screenshots/checkout-fulfillment/`.
+
+- Fulfillment picker (Pickup/Delivery cards) renders **before** the payment fieldset; payment options are filtered to compatible methods only (pickup → Online Payment + Cash on Pickup; delivery → Online Payment + Cash on Delivery).
+- Switching fulfillment resets incompatible payment selection; delivery reveals the required address form and keeps submit disabled until all fields are complete; pickup requires no address.
+- Online Payment shows the AgriCoop QR/account details plus receipt upload for both pickup and delivery, with an explicit "Fulfillment: Pickup/Delivery" line.
+- Order surfaces (dashboard order rows, order detail) display fulfillment and payment labels separately.
+- Automated coverage: `server/orderFulfillment.test.ts` (10 tests) exercises `orders.create` for all four valid combinations plus rejections — missing fulfillment for online, delivery without address (cash and online), incompatible cash/fulfillment pairs, online without active account, and online without receipt intent. `pnpm check`/`pnpm test`/`pnpm build` re-run green (79 files, 481 passed, 22 skipped).
+
+Limitations: browser pass did not submit real orders (order submission covered by the automated router tests); no production deployment or production data was touched.

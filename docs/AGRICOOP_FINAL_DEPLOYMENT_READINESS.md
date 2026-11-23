@@ -59,6 +59,8 @@ Executed against the dev environment via the real tRPC API and Supabase Storage 
 
 UI-level verification from the previous pass still stands: checkout shows Cash on pickup / Cash on delivery / Online Payment, and selecting Online displays the AgriCoop QR, MAYA payee details, order total, and required receipt upload (`deliverables/screenshots/checkout-payment-options.png`, `checkout-online-selected.png`, `mobile-375-checkout-online.png`).
 
+**Fulfillment/payment separation (added after that pass, verified locally):** checkout now asks Fulfillment (Pickup/Delivery) before Payment and only offers compatible methods; `orders.fulfillmentMethod` is persisted independently and re-validated server-side for all four valid combinations (pickup/delivery × online, pickup+cash_pickup, delivery+cash_delivery). Delivery requires a complete address for both cash and online; pickup requires none. Evidence: `deliverables/screenshots/checkout-fulfillment/` (desktop + mobile) and `server/orderFulfillment.test.ts`. No schema migration was required — `fulfillmentMethod` already existed on `orders`.
+
 ## 6. Payment validation and authorization results — Verified
 
 | Check | Result |

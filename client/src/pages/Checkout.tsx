@@ -10,9 +10,10 @@ import {
 import { getAccountAccessRestriction } from "../../../shared/accountAccess";
 import { useBuyerCart } from "@/hooks/useBuyerCart";
 import {
-  defaultFulfillmentForPayment,
+  fulfillmentLabel,
   fulfillmentOptionsForListings,
   methodsForListings,
+  paymentMethodsForFulfillment,
   paymentMethodAvailability,
   PAYMENT_METHODS,
   PAYMENT_METHOD_HELPERS,
@@ -57,8 +58,6 @@ const peso = (cents: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(cents / 100);
 
 function checkoutMethodLabel(method: PaymentMethod) {
-  if (method === "cash_pickup") return "Cash on pickup";
-  if (method === "cash_delivery") return "Cash on delivery";
   return paymentMethodLabel(method);
 }
 
@@ -114,33 +113,54 @@ function SellerCheckoutGroup({
     return () => URL.revokeObjectURL(url);
   }, [receiptFile]);
 
+  const compatibleMethods = useMemo(
+    () => paymentMethodsForFulfillment(methods, choice.fulfillmentMethod),
+    [methods, choice.fulfillmentMethod],
+  );
+
   useEffect(() => {
-    if (!methods.includes(choice.paymentMethod) && methods.length) {
-      const paymentMethod = methods[0]!;
-      const fulfillment =
-        defaultFulfillmentForPayment(paymentMethod, {
-          allowsPickup: flags.every(f => f.allowsPickup),
-          allowsDelivery: flags.every(f => f.allowsDelivery),
-          acceptsOnlinePayment: flags.every(f => f.acceptsOnlinePayment),
-        }) ?? fulfillmentOptions[0] ?? "pickup";
-      onChoiceChange({ paymentMethod, fulfillmentMethod: fulfillment, receiptUploadIntent: undefined });
+    const fulfillmentMethod = fulfillmentOptions.includes(choice.fulfillmentMethod)
+      ? choice.fulfillmentMethod
+      : fulfillmentOptions[0] ?? "pickup";
+    const options = paymentMethodsForFulfillment(methods, fulfillmentMethod);
+    const paymentMethod = options.includes(choice.paymentMethod)
+      ? choice.paymentMethod
+      : options[0] ?? methods[0] ?? "cash_pickup";
+    if (fulfillmentMethod !== choice.fulfillmentMethod || paymentMethod !== choice.paymentMethod) {
+      onChoiceChange({
+        paymentMethod,
+        fulfillmentMethod,
+        receiptUploadIntent: paymentMethod === "online" ? choice.receiptUploadIntent : undefined,
+      });
     }
-  }, [methods, choice.paymentMethod, flags, fulfillmentOptions, onChoiceChange]);
+  }, [methods, choice.paymentMethod, choice.fulfillmentMethod, choice.receiptUploadIntent, fulfillmentOptions, onChoiceChange]);
+
+  const setFulfillmentMethod = (fulfillmentMethod: FulfillmentMethod) => {
+    const options = paymentMethodsForFulfillment(methods, fulfillmentMethod);
+    const paymentMethod = options.includes(choice.paymentMethod)
+      ? choice.paymentMethod
+      : options[0] ?? choice.paymentMethod;
+    onChoiceChange({
+      paymentMethod,
+      fulfillmentMethod,
+      receiptUploadIntent: paymentMethod === "online" ? choice.receiptUploadIntent : undefined,
+    });
+    if (paymentMethod !== "online") {
+      setReceiptFile(null);
+      setReceiptError("");
+    }
+  };
 
   const setPaymentMethod = (paymentMethod: PaymentMethod) => {
-    const fulfillment =
+    const fulfillmentMethod =
       paymentMethod === "cash_pickup"
         ? "pickup"
         : paymentMethod === "cash_delivery"
           ? "delivery"
-          : defaultFulfillmentForPayment(paymentMethod, {
-              allowsPickup: flags.every(f => f.allowsPickup),
-              allowsDelivery: flags.every(f => f.allowsDelivery),
-              acceptsOnlinePayment: flags.every(f => f.acceptsOnlinePayment),
-            }) ?? fulfillmentOptions[0] ?? "pickup";
+          : choice.fulfillmentMethod;
     onChoiceChange({
       paymentMethod,
-      fulfillmentMethod: fulfillment,
+      fulfillmentMethod,
       receiptUploadIntent: paymentMethod === "online" ? choice.receiptUploadIntent : undefined,
     });
     if (paymentMethod !== "online") {
@@ -228,10 +248,18 @@ function SellerCheckoutGroup({
       </ul>
 
       <div className="mt-5">
+        <FulfillmentPicker
+          options={fulfillmentOptions}
+          value={choice.fulfillmentMethod}
+          onChange={setFulfillmentMethod}
+        />
+      </div>
+
+      <div className="mt-5">
         <fieldset className="min-w-0">
           <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Payment</legend>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          {PAYMENT_METHODS.map(method => {
+          {PAYMENT_METHODS.filter(method => compatibleMethods.includes(method)).map(method => {
             const methodAvailability = paymentMethodAvailability(method, flags, availability);
             const reasonId = `payment-${sellerId}-${method}-reason`;
             return (
@@ -270,18 +298,13 @@ function SellerCheckoutGroup({
         </fieldset>
       </div>
 
-      {showOnline && fulfillmentOptions.length > 1 && (
-        <FulfillmentPicker
-          options={fulfillmentOptions}
-          value={choice.fulfillmentMethod}
-          onChange={fulfillmentMethod => onChoiceChange({ ...choice, fulfillmentMethod })}
-        />
-      )}
-
       {showOnline && (
         <div className="mt-5 rounded-2xl border border-[#dfe8db] bg-white p-4">
           <h4 className="font-bold text-[#315640]">Pay via AgriCoop QR</h4>
           <p className="mt-1 text-xs text-[#66766b]">A cooperative officer verifies the receipt before the seller fulfills the order.</p>
+          <p className="mt-1 text-xs font-semibold text-[#4d6854]">
+            Fulfillment: {fulfillmentLabel(choice.fulfillmentMethod)} — the seller and officer see this on the order.
+          </p>
           {onlineLoading ? (
             <Loader2 className="mt-4 animate-spin text-[#4e8257]" />
           ) : (
@@ -359,6 +382,11 @@ function SellerCheckoutGroup({
   );
 }
 
+const FULFILLMENT_COPY: Record<FulfillmentMethod, { title: string; body: string }> = {
+  pickup: { title: "Pickup", body: "You collect the order yourself." },
+  delivery: { title: "Delivery", body: "The order is delivered to your address." },
+};
+
 function FulfillmentPicker({
   options,
   value,
@@ -369,28 +397,37 @@ function FulfillmentPicker({
   onChange: (value: FulfillmentMethod) => void;
 }) {
   return (
-    <div className="mt-4">
-      <p className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Fulfillment</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {options.map(option => (
-          <label
-            key={option}
-            className={`cursor-pointer rounded-xl border px-3 py-2 text-xs font-bold ${
-              value === option ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]" : "border-[#e3e9de] text-[#66766b]"
-            }`}
-          >
-            <input
-              type="radio"
-              name="fulfillment"
-              className="mr-1 accent-[#4e8257]"
-              checked={value === option}
-              onChange={() => onChange(option)}
-            />
-            {option === "pickup" ? "Pickup" : "Delivery"}
-          </label>
-        ))}
+    <fieldset className="min-w-0">
+      <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Fulfillment</legend>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {options.map(option => {
+          const copy = FULFILLMENT_COPY[option];
+          const selected = value === option;
+          return (
+            <label
+              key={option}
+              className={`flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm font-bold ${
+                selected
+                  ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
+                  : "border-[#e3e9de] bg-white text-[#66766b]"
+              }`}
+            >
+              <input
+                type="radio"
+                name="fulfillment"
+                className="mt-1 accent-[#4e8257]"
+                checked={selected}
+                onChange={() => onChange(option)}
+              />
+              <span>
+                {copy.title}
+                <span className="mt-0.5 block text-xs font-normal leading-5 text-[#6d7d70]">{copy.body}</span>
+              </span>
+            </label>
+          );
+        })}
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -417,14 +454,10 @@ export default function Checkout() {
     const map = new Map<number, SellerGroupChoice>();
     Array.from(sellerMap.entries()).forEach(([sellerId, items]) => {
       const flags = listingFlags(items);
-      const methods = methodsForListings(flags, availability);
+      const fulfillmentOptions = fulfillmentOptionsForListings(flags);
+      const fulfillmentMethod = fulfillmentOptions[0] ?? "pickup";
+      const methods = paymentMethodsForFulfillment(methodsForListings(flags, availability), fulfillmentMethod);
       const paymentMethod = methods[0] ?? "cash_pickup";
-      const fulfillmentMethod =
-        defaultFulfillmentForPayment(paymentMethod, {
-          allowsPickup: flags.every(f => f.allowsPickup),
-          allowsDelivery: flags.every(f => f.allowsDelivery),
-          acceptsOnlinePayment: flags.every(f => f.acceptsOnlinePayment),
-        }) ?? "pickup";
       map.set(sellerId, { paymentMethod, fulfillmentMethod });
     });
     return map;
@@ -463,8 +496,8 @@ export default function Checkout() {
     const choice = choices.get(sellerId);
     return Boolean(choice && methodsForListings(listingFlags(items), availability).includes(choice.paymentMethod));
   });
-  const needsCodAddress = Array.from(choices.values()).some(choice => choice.paymentMethod === "cash_delivery");
-  const codAddressComplete = Boolean(
+  const needsDeliveryAddress = Array.from(choices.values()).some(choice => choice.fulfillmentMethod === "delivery");
+  const deliveryAddressComplete = Boolean(
     delivery.recipientName.trim().length >= 2
     && delivery.contactNumber.trim().length >= 7
     && delivery.province.trim().length >= 2
@@ -486,7 +519,7 @@ export default function Checkout() {
     && choices.size === sellerMap.size
     && allChoicesAvailable
     && allOnlineHaveReceipt
-    && (!needsCodAddress || codAddressComplete)
+    && (!needsDeliveryAddress || deliveryAddressComplete)
     && !submitting
     && !isCartLoading,
   );
@@ -517,7 +550,7 @@ export default function Checkout() {
           paymentMethod: choice.paymentMethod,
           fulfillmentMethod: choice.fulfillmentMethod,
           receiptUploadIntent: choice.receiptUploadIntent,
-          deliveryDetails: choice.paymentMethod === "cash_delivery" ? deliveryPayload : undefined,
+          deliveryDetails: choice.fulfillmentMethod === "delivery" ? deliveryPayload : undefined,
           buyerNote:
             choice.paymentMethod === "online"
               ? "Buyer paid via the AgriCoop QR; receipt attached at checkout."
@@ -666,9 +699,9 @@ export default function Checkout() {
                 You will place {sellerMap.size} separate orders—one per seller.
               </p>
             )}
-            {needsCodAddress && (
+            {needsDeliveryAddress && (
               <div className="mt-5 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4">
-                <h3 className="text-sm font-bold text-[#315640]">Delivery address for cash on delivery</h3>
+                <h3 className="text-sm font-bold text-[#315640]">Delivery address</h3>
                 <p className="mt-1 text-xs text-[#6c7c70]">Required before you can submit. This address is saved with the order.</p>
                 <div className="mt-3 grid gap-3">
                   <label className="field-label text-xs">Recipient name
@@ -695,7 +728,7 @@ export default function Checkout() {
                     <input className="field-control" value={delivery.instructions} onChange={event => setDelivery({ ...delivery, instructions: event.target.value })} />
                   </label>
                 </div>
-                {!codAddressComplete && <p className="mt-2 text-xs text-[#8c574c]">Complete all required address fields to place a cash-on-delivery order.</p>}
+                {!deliveryAddressComplete && <p className="mt-2 text-xs text-[#8c574c]">Complete all required address fields to place a delivery order.</p>}
               </div>
             )}
             <button
