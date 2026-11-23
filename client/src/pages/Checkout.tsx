@@ -556,8 +556,10 @@ export default function Checkout() {
     streetAddress: delivery.streetAddress.trim(),
     instructions: delivery.instructions.trim() || undefined,
   };
+  const belowMinimumCount = cart?.items.filter(item => item.quantity < item.minOrderQty).length ?? 0;
   const canSubmit = Boolean(
     cart
+    && belowMinimumCount === 0
     && choices.size === sellerMap.size
     && allChoicesAvailable
     && allOnlineHaveReceipt
@@ -786,6 +788,11 @@ export default function Checkout() {
               )}{" "}
               Place {sellerMap.size > 1 ? `${sellerMap.size} orders` : "order"}
             </button>
+            {belowMinimumCount > 0 && (
+              <p className="mt-3 text-xs text-[#8c574c]" role="alert">
+                Some quantities are below the product minimum order. Increase them in your order to continue.
+              </p>
+            )}
             {!allOnlineHaveReceipt && (
               <p className="mt-3 text-xs text-[#8c574c]">
                 <Upload className="mr-1 inline" size={12} />

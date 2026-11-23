@@ -75,7 +75,7 @@ async function loadCartRows(userId: number) {
       productId: row.productId,
       name: row.name,
       unit: row.unit,
-      quantity: Math.min(Math.max(row.quantity, row.minOrderQty), row.stockQty),
+      quantity: Math.min(Math.max(row.quantity, 1), row.stockQty),
       minOrderQty: row.minOrderQty,
       stockQty: availableStockAfterReservations(
         row.stockQty,
@@ -157,7 +157,7 @@ async function upsertCartQuantity(userId: number, productId: number, quantity: n
       message: blockReason,
     });
   }
-  const clamped = Math.min(Math.max(quantity, product.minOrderQty), availableQty);
+  const clamped = Math.min(Math.max(quantity, 1), availableQty);
 
   await db.execute(sql`
     insert into agricoop_app."cartItems" ("userId", "productId", quantity, "createdAt", "updatedAt")
@@ -207,14 +207,7 @@ export const cartRouter = router({
         .from(cartItems)
         .where(and(eq(cartItems.userId, actor.id), eq(cartItems.productId, input.productId)))
         .limit(1);
-      const [product] = await db
-        .select({ minOrderQty: products.minOrderQty, stockQty: products.stockQty })
-        .from(products)
-        .where(eq(products.id, input.productId))
-        .limit(1);
-      const nextQty = existing
-        ? existing.quantity + (product?.minOrderQty ?? 1)
-        : (product?.minOrderQty ?? 1);
+      const nextQty = (existing?.quantity ?? 0) + 1;
       const result = await upsertCartQuantity(actor.id, input.productId, nextQty);
       const items = await loadCartRows(actor.id);
       return { ...result, items };

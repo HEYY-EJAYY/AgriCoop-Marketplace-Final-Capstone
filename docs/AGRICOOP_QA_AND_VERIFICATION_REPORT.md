@@ -186,3 +186,9 @@ Stock is stored in the product's selling unit — all catalog products sell by `
 | 69 | Ginger | 500 | 25 | reserved 10, scarce |
 
 All 20 products (IDs 50–69), images, prices, names, and ownership unchanged. No production data touched; no commit/push/deploy.
+
+## Cart default quantity (post-deployment fix)
+
+- `cart.add` now seeds a new cart line at quantity **1** and increments an existing line by **1** — never by `minOrderQty` or stock. All Add-to-Cart entry points funnel through this single mutation (Marketplace cards; Product Details and Home link into the marketplace basket).
+- Cart quantities are drafts clamped to `[1, available stock]`; the configured `minOrderQty` is enforced at the order boundary — `prepareOrder` rejects below-minimum quantities server-side, the cart panel shows a "Minimum order is X" hint, `submitCart` blocks checkout, and `Checkout` disables submit until every line meets its minimum.
+- Regression coverage: `server/cart.test.ts` (+8: stock 100/25/2 → qty 1, min>1 → qty 1, re-add +1, stock clamp, below-min draft, stock clamp on update); `purchaseInvariant.test.ts` updated to the new contract. Browser QA (desktop 1366 + mobile 390): 14/14 checks — screenshots in `deliverables/screenshots/cart-default-quantity/`.

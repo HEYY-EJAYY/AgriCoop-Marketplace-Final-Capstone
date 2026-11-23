@@ -207,4 +207,178 @@ describe("cart router", () => {
     expect(result.quantity).toBe(0);
     expect(deleteWhere).toHaveBeenCalled();
   });
+
+  type MockProduct = {
+    stockQty: number;
+    minOrderQty: number;
+  };
+
+  const productRowFor = (product: MockProduct) => ({
+    id: 9,
+    name: "Tomatoes",
+    unit: "kg",
+    sellerId: 7,
+    stockQty: product.stockQty,
+    minOrderQty: product.minOrderQty,
+    status: "published",
+    verificationStatus: "approved",
+    visibility: "visible",
+    deletedAt: null,
+    allowsPickup: true,
+    allowsDelivery: true,
+    sellerApprovalStatus: "approved",
+    sellerDeletedAt: null,
+  });
+
+  const cartLoadRow = (quantity: number, product: MockProduct) => ({
+    productId: 9,
+    quantity,
+    name: "Tomatoes",
+    unit: "kg",
+    minOrderQty: product.minOrderQty,
+    stockQty: product.stockQty,
+    priceCents: 5000,
+    sellerId: 7,
+    sellerName: "Farm",
+    cooperativeId: 1,
+    cooperativeName: "Coop",
+    allowsPickup: true,
+    allowsDelivery: true,
+    acceptsOnlinePayment: false,
+    primaryImageUrl: null,
+    status: "published",
+    verificationStatus: "approved",
+    visibility: "visible",
+    deletedAt: null,
+    sellerApprovalStatus: "approved",
+    sellerDeletedAt: null,
+  });
+
+  function makeThenableChain(getResult: () => unknown) {
+    const chain: Record<string, unknown> = {};
+    for (const method of ["from", "leftJoin", "innerJoin", "where", "limit", "orderBy", "groupBy", "innerJoin"]) {
+      chain[method] = () => chain;
+    }
+    chain.then = (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) =>
+      Promise.resolve(getResult()).then(onFulfilled, onRejected);
+    return chain;
+  }
+
+  function mockDbForAdd(existingQuantity: number | null, product: MockProduct) {
+    const queue: unknown[] = [
+      existingQuantity === null ? [] : [{ quantity: existingQuantity }],
+      [productRowFor(product)],
+      [cartLoadRow(1, product)],
+    ];
+    mocks.getDb.mockResolvedValue({
+      select: () => makeThenableChain(() => queue.shift() ?? []),
+      execute: vi.fn(async () => []),
+      delete: () => ({ where: async () => undefined }),
+    });
+  }
+
+  it.each([
+    ["100", 100],
+    ["25", 25],
+    ["2", 2],
+  ])("adds a new product with %s stock at quantity 1", async (_label, stockQty) => {
+    mockDbForAdd(null, { stockQty, minOrderQty: 1 });
+    const result = await buyerCaller().cart.add({ productId: 9 });
+    expect(result.quantity).toBe(1);
+    expect(result.clamped).toBe(false);
+  });
+
+  it("adds a new product at quantity 1 even when minOrderQty is greater than 1", async () => {
+    mockDbForAdd(null, { stockQty: 100, minOrderQty: 50 });
+    const result = await buyerCaller().cart.add({ productId: 9 });
+    expect(result.quantity).toBe(1);
+  });
+
+  it("increments an existing cart item by 1 instead of the minimum order quantity", async () => {
+    mockDbForAdd(4, { stockQty: 100, minOrderQty: 50 });
+    const result = await buyerCaller().cart.add({ productId: 9 });
+    expect(result.quantity).toBe(5);
+  });
+
+  it("clamps repeated adds at available stock", async () => {
+    mockDbForAdd(100, { stockQty: 100, minOrderQty: 1 });
+    const result = await buyerCaller().cart.add({ productId: 9 });
+    expect(result.quantity).toBe(100);
+  });
+
+  it("allows draft cart quantities below the product minimum until checkout", async () => {
+    const execute = vi.fn(async () => []);
+    let selectPass = 0;
+    mocks.getDb.mockResolvedValue({
+      select: () => {
+        selectPass += 1;
+        if (selectPass === 1) {
+          return {
+            from: () => ({
+              leftJoin: () => ({
+                where: () => ({
+                  limit: async () => [productRowFor({ stockQty: 100, minOrderQty: 50 })],
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          from: () => ({
+            innerJoin: () => ({
+              innerJoin: () => ({
+                leftJoin: () => ({
+                  where: async () => [cartLoadRow(5, { stockQty: 100, minOrderQty: 50 })],
+                }),
+              }),
+            }),
+          }),
+        };
+      },
+      execute,
+      delete: () => ({ where: async () => undefined }),
+    });
+
+    const result = await buyerCaller().cart.setQuantity({ productId: 9, quantity: 5 });
+    expect(result.quantity).toBe(5);
+    expect(result.clamped).toBe(false);
+  });
+
+  it("still clamps cart quantities to available stock", async () => {
+    const execute = vi.fn(async () => []);
+    let selectPass = 0;
+    mocks.getDb.mockResolvedValue({
+      select: () => {
+        selectPass += 1;
+        if (selectPass === 1) {
+          return {
+            from: () => ({
+              leftJoin: () => ({
+                where: () => ({
+                  limit: async () => [productRowFor({ stockQty: 12, minOrderQty: 1 })],
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          from: () => ({
+            innerJoin: () => ({
+              innerJoin: () => ({
+                leftJoin: () => ({
+                  where: async () => [cartLoadRow(12, { stockQty: 12, minOrderQty: 1 })],
+                }),
+              }),
+            }),
+          }),
+        };
+      },
+      execute,
+      delete: () => ({ where: async () => undefined }),
+    });
+
+    const result = await buyerCaller().cart.setQuantity({ productId: 9, quantity: 99 });
+    expect(result.quantity).toBe(12);
+    expect(result.clamped).toBe(true);
+  });
 });

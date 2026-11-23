@@ -199,7 +199,7 @@ describe("marketplace purchasability invariant", () => {
       const qty = activeProduct.minOrderQty;
 
       await expect(caller.cart.add({ productId: activeProduct.id })).resolves.toMatchObject({
-        quantity: qty,
+        quantity: 1,
         stockQty: activeProduct.stockQty,
       });
       await expect(caller.orders.create({

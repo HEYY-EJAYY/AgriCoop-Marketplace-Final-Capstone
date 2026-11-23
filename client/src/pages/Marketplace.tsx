@@ -772,7 +772,7 @@ export default function Marketplace() {
                         <CartQuantityInput
                           productName={item.name}
                           quantity={item.quantity}
-                          min={item.minOrderQty}
+                          min={1}
                           max={item.stockQty}
                           unit={item.unit}
                           disabled={cartBusy}
@@ -782,6 +782,11 @@ export default function Marketplace() {
                           {peso(item.priceCents)} per {item.unit} · {peso(item.priceCents * item.quantity)}
                         </span>
                       </div>
+                      {item.quantity < item.minOrderQty && (
+                        <p className="mt-1 text-xs text-[#8c574c]">
+                          Minimum order is {item.minOrderQty} {item.unit}. Increase the quantity to check out.
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -864,12 +869,17 @@ export default function Marketplace() {
                         <CartQuantityInput
                           productName={item.name}
                           quantity={item.quantity}
-                          min={item.minOrderQty}
+                          min={1}
                           max={item.stockQty}
                           unit={item.unit}
                           disabled={cartBusy}
                           onCommit={next => commitQuantity(item.productId, next, item.stockQty, item.name)}
                         />
+                        {item.quantity < item.minOrderQty && (
+                          <p className="mt-1 text-xs text-[#8c574c]">
+                            Minimum order is {item.minOrderQty} {item.unit}. Increase the quantity to check out.
+                          </p>
+                        )}
                       </div>
                     </div>
                   ))}
