@@ -32,6 +32,7 @@ import {
   PAYMENT_PROOF_MAX_BYTES,
 } from "../../../shared/paymentProofs";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { cooperativePickupAddressLine, hasStructuredPickupAddress, isPickupAddressComplete } from "@shared/pickupAddress";
 import {
   DELIVERY_MIN_WEIGHT_GRAMS,
   formatWeightKg,
@@ -523,11 +524,11 @@ function SellerCheckoutGroup({
                   <label className="field-label mt-3 text-xs">Additional details (optional)
                     <textarea maxLength={1000} className="field-control" value={reportDetails} onChange={event => setReportDetails(event.target.value)} />
                   </label>
-                  <div className="mt-3 flex gap-2">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <button type="button" className="agri-ghost text-sm" onClick={() => setReportOpen(false)}>Cancel</button>
                     <button type="button" className="agri-button text-sm" disabled={reportIssue.isPending} onClick={() => void submitQrReport()}>
                       {reportIssue.isPending ? <Loader2 className="animate-spin" size={14} /> : <Flag size={14} />} Send report
                     </button>
-                    <button type="button" className="agri-ghost text-sm" onClick={() => setReportOpen(false)}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -650,6 +651,8 @@ function PickupLocationCard({
   );
   if (fulfillmentMethod !== "pickup") return null;
   const info = query.data ?? null;
+  const pickupAddressLine = info ? cooperativePickupAddressLine(info) : "";
+  const pickupAddressComplete = info ? isPickupAddressComplete(info) : false;
   return (
     <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-white p-4">
       <h4 className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Pickup location</h4>
@@ -662,13 +665,12 @@ function PickupLocationCard({
       ) : (
         <div className="mt-2 space-y-1 text-sm text-[#45614e]">
           <p className="font-bold text-[#315640]">Pickup from {info.name}</p>
-          <p>
-            {[info.address, info.location].filter(Boolean).join(", ")
-              || "The cooperative has not added a pickup address yet."}
-          </p>
-          {info.address ? null : (
+          <p>{pickupAddressLine || "The cooperative has not added a pickup address yet."}</p>
+          {pickupAddressComplete ? null : (
             <p className="text-xs font-semibold text-[#8c574c]">
-              This cooperative has not configured a detailed pickup address. Confirm the exact pickup point with {info.name} before pickup.
+              {info.address || hasStructuredPickupAddress(info)
+                ? "This cooperative's pickup address is incomplete. Confirm the exact pickup point with " + info.name + " before pickup."
+                : "This cooperative has not configured a detailed pickup address. Confirm the exact pickup point with " + info.name + " before pickup."}
             </p>
           )}
           {info.pickupContactNumber && <p>Contact: {info.pickupContactNumber}</p>}

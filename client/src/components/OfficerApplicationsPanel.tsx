@@ -198,9 +198,9 @@ export function OfficerApplicationsPanel() {
               {rejectingId === row.id && (
                 <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); if (!reason.trim()) return; review.mutate({ applicationId: row.id, decision: "rejected", rejectionReason: reason.trim() }); setRejectingId(null); }}>
                   <label className="field-label">Rejection reason<textarea className="field-control min-h-20" required maxLength={600} value={reason} onChange={e => setReason(e.target.value)} /></label>
-                  <div className="flex gap-2">
-                    <button className="agri-button px-3 py-2 text-xs" disabled={review.isPending || !reason.trim()}>Submit rejection</button>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setRejectingId(null)}>Cancel</button>
+                    <button className="agri-button px-3 py-2 text-xs" disabled={review.isPending || !reason.trim()}>Submit rejection</button>
                   </div>
                 </form>
               )}

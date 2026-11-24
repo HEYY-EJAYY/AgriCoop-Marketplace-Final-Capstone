@@ -24,6 +24,7 @@ import {
 import { getProductImageUrl } from "@/lib/productImages";
 import { formatCombinedEnumLabels, formatEnumLabel } from "@shared/enumLabels";
 import { fulfillmentLabel, paymentMethodLabel } from "@shared/paymentMethods";
+import { cooperativePickupAddressLine, hasStructuredPickupAddress, isPickupAddressComplete } from "@shared/pickupAddress";
 import {
   toUserFacingErrorMessage,
   USER_FACING_DELETE_COOPERATIVE_ERROR,
@@ -412,7 +413,7 @@ function Onboarding() {
         <label className="field-label mt-6">Display name<input value={name} onChange={e => setName(e.target.value)} className="field-control" required maxLength={120}/></label>
         <label className="field-label mt-5">Contact number <span className="normal-case tracking-normal text-[#6e7d73]">(optional)</span><input value={contactNumber} onChange={e => setContactNumber(e.target.value)} className="field-control" placeholder="e.g., 09XX XXX XXXX" maxLength={40}/></label>
         <label className="field-label mt-5">Address <span className="normal-case tracking-normal text-[#6e7d73]">(optional)</span><textarea value={address} onChange={e => setAddress(e.target.value)} className="field-control" maxLength={500}/></label>
-        <div className="sticky bottom-0 z-20 -mx-6 mt-8 flex justify-end gap-2 border-t border-[#dce4d6] bg-[#fffdf8] p-3 sm:-mx-8">
+        <div className="sticky bottom-0 z-20 -mx-6 mt-8 flex justify-between gap-2 border-t border-[#dce4d6] bg-[#fffdf8] p-3 sm:-mx-8">
           <button type="button" className="agri-ghost min-h-11" onClick={resetFields} disabled={update.isPending}>Cancel</button>
           <button type="submit" disabled={update.isPending} className="agri-button min-h-11">{update.isPending && <Loader2 className="animate-spin" size={17}/>} Save</button>
         </div>
@@ -687,7 +688,7 @@ function BuyerDashboard() {
             <p className="mt-1 text-xs text-[#728076]">{row.quotation.requestedQty} {row.unit} from {row.sellerName || "farm seller"}</p>
             {row.quotation.quotedPriceCents !== null && <p className="mt-3 font-display text-lg font-bold text-[#2c603f]">{peso(row.quotation.quotedPriceCents)} per {row.unit}</p>}
             {row.quotation.sellerNote && <p className="mt-2 text-xs leading-5 text-[#637568]">“{row.quotation.sellerNote}”</p>}
-            {row.quotation.status === "responded" && <div className="mt-3 flex gap-2"><button className="agri-button px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "accepted" })}>Accept quote</button><button className="agri-ghost px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "declined" })}>Decline quote</button></div>}
+            {row.quotation.status === "responded" && <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><button type="button" className="agri-ghost px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "declined" })}>Decline quote</button><button className="agri-button px-3 py-2 text-xs" disabled={decideQuotation.isPending} onClick={() => decideQuotation.mutate({ quotationId: row.quotation.id, status: "accepted" })}>Accept quote</button></div>}
             {row.quotation.status === "accepted" && <div className="mt-3 space-y-2"><label className="field-label">Payment method<select className="field-control" value={quotedPaymentMethod} onChange={event => setQuotedPaymentMethod(event.target.value as typeof quotedPaymentMethod)}><option value="cash_pickup">Cash on pickup</option><option value="cash_delivery">Cash on delivery</option></select></label><button className="agri-button px-3 py-2 text-xs" disabled={placeQuotedOrder.isPending} onClick={() => placeQuotedOrder.mutate({ items: [{ productId: row.quotation.productId, quantity: row.quotation.requestedQty }], quotationId: row.quotation.id, paymentMethod: quotedPaymentMethod, fulfillmentMethod: quotedPaymentMethod === "cash_pickup" ? "pickup" : "delivery" })}>Place order at quoted price</button></div>}
           </div>) : <Empty icon={FileText} title="No quotations yet" body="Request a quotation from any available product in the marketplace."/>}</div>
         </div>
@@ -744,7 +745,7 @@ function SellerProductCard({ product, listingTab }: { product: any; listingTab: 
       toast.error(error instanceof Error ? error.message : "Image upload failed.");
     }
   };
-  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ListingPaymentFlagFields allowsPickup={values.allowsPickup} allowsDelivery={values.allowsDelivery} onlinePaymentEnabled={values.onlinePaymentEnabled} onChange={patch => setValues({ ...values, ...patch })}/><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Fulfillment<select className="field-control" value={values.fulfillmentType} onChange={e => setValues({ ...values, fulfillmentType: e.target.value as "on_hand" | "order_based" })}><option value="on_hand">On-Hand · Ready Stock</option><option value="order_based">Order-Based · Prepared After Order</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex gap-2"><button className="agri-button min-h-11 px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button></div></form>;
+  if (editing) return <form onSubmit={save} className="rounded-2xl border-2 border-[#abd19e] bg-[#f2f8ef] p-4"><label className="field-label">Product name<input required className="field-control" value={values.name} onChange={e => setValues({ ...values, name: e.target.value })}/></label><label className="field-label mt-3">Classification<input required className="field-control" value={values.category} onChange={e => setValues({ ...values, category: e.target.value })}/></label><label className="field-label mt-3">Variety<input required list={`product-varieties-${product.id}`} className="field-control" value={values.variety} onChange={e => setValues({ ...values, variety: e.target.value })}/><datalist id={`product-varieties-${product.id}`}>{getProductVarieties(values.name).map(variety => <option value={variety} key={variety}/>)}</datalist></label><label className="field-label mt-3">Description<textarea required className="field-control min-h-24" value={values.description} onChange={e => setValues({ ...values, description: e.target.value })}/></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="field-label">Price per unit (PHP)<input required className="field-control" type="number" min="0.01" step="0.01" value={values.price} onChange={e => setValues({ ...values, price: e.target.value })}/></label><label className="field-label">Unit<select required className="field-control" value={values.unit} onChange={e => setValues({ ...values, unit: e.target.value })}>{PRODUCT_UNITS.map(unit => <option value={unit} key={unit}>{unit === "kg" ? "kilogram (kg)" : unit}</option>)}</select></label><label className="field-label">Available stock ({values.unit})<input required className="field-control" type="number" min="0" step="1" value={values.stock} onChange={e => setValues({ ...values, stock: e.target.value })}/></label><label className="field-label">Minimum order ({values.unit})<input required className="field-control" type="number" min="1" step="1" max={Number(values.stock) > 0 ? values.stock : undefined} value={values.minOrderQty} onChange={e => setValues({ ...values, minOrderQty: e.target.value })}/>{Number(values.stock) > 0 && Number(values.minOrderQty) > Number(values.stock) && <span role="alert" className="mt-1 block text-xs text-[#a34838]">Minimum order cannot exceed available stock.</span>}</label></div><ListingPaymentFlagFields allowsPickup={values.allowsPickup} allowsDelivery={values.allowsDelivery} onlinePaymentEnabled={values.onlinePaymentEnabled} onChange={patch => setValues({ ...values, ...patch })}/><ProductImagePicker imageUrls={imageUrls} files={imageFiles} onImageUrlsChange={setImageUrls} onFilesChange={setImageFiles} error={imageError} onError={setImageError} disabled={update.isPending || uploadImage.isPending}/><label className="field-label mt-3">Quality grade<select className="field-control" value={values.qualityGrade} onChange={e => setValues({ ...values, qualityGrade: e.target.value as typeof values.qualityGrade })}><option value="premium">Premium</option><option value="standard">Standard</option><option value="imperfect">Imperfect / value-grade</option></select></label><label className="field-label mt-3">Fulfillment<select className="field-control" value={values.fulfillmentType} onChange={e => setValues({ ...values, fulfillmentType: e.target.value as "on_hand" | "order_based" })}><option value="on_hand">On-Hand · Ready Stock</option><option value="order_based">Order-Based · Prepared After Order</option></select></label><label className="field-label mt-3">Status<select className="field-control" value={values.status} onChange={e => setValues({ ...values, status: e.target.value as "published" | "archived" })}><option value="published">Published</option><option value="archived">Archived</option></select></label><div className="mt-4 flex flex-wrap items-center justify-between gap-2"><button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setEditing(false)}>Cancel</button><button className="agri-button min-h-11 px-3 py-2 text-xs" disabled={update.isPending || uploadImage.isPending}>Save changes</button></div></form>;
   return <div className="rounded-2xl border border-[#e2e9dd] p-4"><div className="flex justify-between gap-3"><span className="rounded-full bg-[#eef5ea] px-2 py-1 text-xs font-bold text-[#4d784c]">{product.category}</span><Status value={product.verificationStatus || product.status}/></div>{product.cooperativeName && <p className="mt-2 text-xs font-bold text-[#5f7a5f]">{product.cooperativeName}</p>}<h3 className="mt-4 font-display text-xl font-bold text-[#28523a]">{product.name}</h3><p className="mt-1 text-sm text-[#647468]">{product.variety} · {peso(product.priceCents)} per {product.unit}</p><div className="mt-4 flex items-center justify-between border-t border-[#edf0e9] pt-3"><span className="text-xs font-bold text-[#607363]">Stock: {product.stockQty} {product.unit} · Minimum: {product.minOrderQty} {product.unit}</span><span className="text-xs text-[#688068]">{formatEnumLabel(product.qualityGrade)}</span></div><div className="mt-4 flex flex-wrap gap-3"><button onClick={() => setEditing(true)} className="agri-ghost px-3 py-2 text-xs">Edit listing</button>{product.verificationStatus !== "pending" && product.verificationStatus !== "approved" && <button onClick={() => submitProduct.mutate({ id: product.id })} className="agri-button px-3 py-2 text-xs">Submit for verification</button>}{listingTab === "active" && <button type="button" onClick={() => archive.mutate({ id: product.id })} disabled={archive.isPending} className="agri-danger">Archive</button>}{listingTab === "archived" && <button type="button" onClick={() => unarchive.mutate({ id: product.id })} disabled={unarchive.isPending} className="agri-ghost px-3 py-2 text-xs">Unarchive</button>}<button type="button" onClick={() => confirm({ title: "Delete listing?", description: `Delete “${product.name}”? It will leave Active and Archived.`, confirmLabel: "Delete", destructive: true, onConfirm: () => softDelete.mutate({ id: product.id }) })} disabled={softDelete.isPending} className="agri-danger">Delete</button></div>{confirmDialog}</div>;
 }
 function QuotationResponse({ row, onRespond }: { row: any; onRespond: (price: number, note: string | undefined, status: "responded" | "declined") => void }) {
@@ -1218,12 +1219,12 @@ function AdminOrderCard({ orderId }: { orderId: number }) {
             </div>;
           })}
         </div>
-        <div className="mt-5 flex items-center justify-between border-t border-[#e2e9dd] pt-4">
+        <div className="mt-5 flex items-center justify-between gap-2 border-t border-[#e2e9dd] pt-4">
           <span className="font-bold text-[#315640]">Final order total</span>
           <span aria-live="polite" className="font-display text-xl font-bold text-[#1d5639]">{finalTotalCents === null ? "Enter valid quantities" : peso(finalTotalCents)}</span>
         </div>
         {completionError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{completionError}</p>}
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
           <button type="button" className="agri-ghost text-sm" disabled={updateStatus.isPending} onClick={() => setCompletionOpen(false)}>Back</button>
           <button type="submit" className="agri-button text-sm" disabled={updateStatus.isPending || !allQuantitiesValid}>Confirm completion</button>
         </div>
@@ -1740,6 +1741,10 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
     pickupContactNumber: string;
     pickupInstructions: string;
     operatingHours: string;
+    pickupProvince: string;
+    pickupCity: string;
+    pickupBarangay: string;
+    pickupStreetAddress: string;
   } | null>(null);
   const updatePickup = trpc.cooperatives.update.useMutation({
     onSuccess: () => {
@@ -1823,6 +1828,10 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
             pickupContactNumber: pickupEdit.pickupContactNumber.trim() || null,
             pickupInstructions: pickupEdit.pickupInstructions.trim() || null,
             operatingHours: pickupEdit.operatingHours.trim() || null,
+            pickupProvince: pickupEdit.pickupProvince.trim() || null,
+            pickupCity: pickupEdit.pickupCity.trim() || null,
+            pickupBarangay: pickupEdit.pickupBarangay.trim() || null,
+            pickupStreetAddress: pickupEdit.pickupStreetAddress.trim() || null,
           });
         }}
       >
@@ -1833,9 +1842,14 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
         <label className="field-label">Pickup contact number<input maxLength={40} className="field-control" value={pickupEdit.pickupContactNumber} onChange={e => setPickupEdit({ ...pickupEdit, pickupContactNumber: e.target.value })} placeholder="e.g. 0917 123 4567" /></label>
         <label className="field-label">Operating hours<input maxLength={160} className="field-control" value={pickupEdit.operatingHours} onChange={e => setPickupEdit({ ...pickupEdit, operatingHours: e.target.value })} placeholder="e.g. Mon–Sat, 7:00 AM – 5:00 PM" /></label>
         <label className="field-label sm:col-span-2">Pickup instructions<textarea maxLength={2000} className="field-control min-h-24" value={pickupEdit.pickupInstructions} onChange={e => setPickupEdit({ ...pickupEdit, pickupInstructions: e.target.value })} placeholder="e.g. Proceed to the cooperative office; bring a valid ID and your order number." /></label>
-        <div className="flex gap-2 sm:col-span-2">
+        <p className="text-xs font-extrabold uppercase tracking-wide text-[#638947] sm:col-span-2">Pickup address</p>
+        <label className="field-label">Province<input maxLength={120} className="field-control" value={pickupEdit.pickupProvince} onChange={e => setPickupEdit({ ...pickupEdit, pickupProvince: e.target.value })} placeholder="e.g. Batangas" /></label>
+        <label className="field-label">City / municipality<input maxLength={120} className="field-control" value={pickupEdit.pickupCity} onChange={e => setPickupEdit({ ...pickupEdit, pickupCity: e.target.value })} placeholder="e.g. Mabini" /></label>
+        <label className="field-label">Barangay<input maxLength={120} className="field-control" value={pickupEdit.pickupBarangay} onChange={e => setPickupEdit({ ...pickupEdit, pickupBarangay: e.target.value })} placeholder="e.g. San Isidro" /></label>
+        <label className="field-label">Street address, building, or landmark<input maxLength={255} className="field-control" value={pickupEdit.pickupStreetAddress} onChange={e => setPickupEdit({ ...pickupEdit, pickupStreetAddress: e.target.value })} placeholder="e.g. Cooperative hall, Mabini St." /></label>
+        <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+          <button type="button" className="agri-ghost text-sm sm:mr-auto" onClick={() => setPickupEdit(null)}>Cancel</button>
           <button type="submit" className="agri-button text-sm" disabled={updatePickup.isPending}>{updatePickup.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Save pickup details</button>
-          <button type="button" className="agri-ghost text-sm" onClick={() => setPickupEdit(null)}>Cancel</button>
         </div>
       </form>}
 
@@ -1871,6 +1885,10 @@ function CooperativesAdminPanel({ canCreateCooperative }: { canCreateCooperative
                           pickupContactNumber: row.pickupContactNumber ?? "",
                           pickupInstructions: row.pickupInstructions ?? "",
                           operatingHours: row.operatingHours ?? "",
+                          pickupProvince: row.pickupProvince ?? "",
+                          pickupCity: row.pickupCity ?? "",
+                          pickupBarangay: row.pickupBarangay ?? "",
+                          pickupStreetAddress: row.pickupStreetAddress ?? "",
                         })}
                       >
                         Pickup
@@ -1935,6 +1953,14 @@ function OfficerCooperativePanel() {
     pickupInstructions: "",
     operatingHours: "",
   });
+  const [addressOpen, setAddressOpen] = useState(false);
+  const [addressForm, setAddressForm] = useState({
+    pickupProvince: "",
+    pickupCity: "",
+    pickupBarangay: "",
+    pickupStreetAddress: "",
+  });
+  const [addressError, setAddressError] = useState("");
   const [loadedFor, setLoadedFor] = useState<number | null>(null);
   useEffect(() => {
     if (cooperative && loadedFor !== cooperative.id) {
@@ -1942,6 +1968,12 @@ function OfficerCooperativePanel() {
         pickupContactNumber: cooperative.pickupContactNumber ?? "",
         pickupInstructions: cooperative.pickupInstructions ?? "",
         operatingHours: cooperative.operatingHours ?? "",
+      });
+      setAddressForm({
+        pickupProvince: cooperative.pickupProvince ?? "",
+        pickupCity: cooperative.pickupCity ?? "",
+        pickupBarangay: cooperative.pickupBarangay ?? "",
+        pickupStreetAddress: cooperative.pickupStreetAddress ?? "",
       });
       setLoadedFor(cooperative.id);
     }
@@ -1954,6 +1986,40 @@ function OfficerCooperativePanel() {
     },
     onError: error => toast.error(toUserFacingErrorMessage(error.message)),
   });
+  const saveAddress = trpc.cooperatives.update.useMutation({
+    onSuccess: () => {
+      toast.success("Cooperative pickup address saved.");
+      setAddressOpen(false);
+      setAddressError("");
+      void manageQuery.refetch();
+      void utils.cooperatives.list.invalidate();
+      void utils.cooperatives.pickupInfo.invalidate();
+    },
+    onError: error => {
+      const message = toUserFacingErrorMessage(error.message);
+      setAddressError(message);
+      toast.error(message);
+    },
+  });
+  const savedAddressLine = cooperative ? cooperativePickupAddressLine(cooperative) : "";
+  const addressComplete = cooperative ? isPickupAddressComplete(cooperative) : false;
+
+  const submitAddress = (event: FormEvent) => {
+    event.preventDefault();
+    if (!cooperative) return;
+    if (!isPickupAddressComplete(addressForm)) {
+      setAddressError("Complete the province, city/municipality, barangay, and street address so buyers can find your pickup point.");
+      return;
+    }
+    setAddressError("");
+    saveAddress.mutate({
+      id: cooperative.id,
+      pickupProvince: addressForm.pickupProvince.trim(),
+      pickupCity: addressForm.pickupCity.trim(),
+      pickupBarangay: addressForm.pickupBarangay.trim(),
+      pickupStreetAddress: addressForm.pickupStreetAddress.trim(),
+    });
+  };
 
   return (
     <section className="agri-card p-5 sm:p-6">
@@ -1982,10 +2048,47 @@ function OfficerCooperativePanel() {
             <p className="mt-1 font-bold text-[#315640]">{cooperative.name}</p>
             <p className="mt-1 text-sm text-[#65766b]">{[cooperative.address, cooperative.location].filter(Boolean).join(" · ")}</p>
           </div>
+          <div className="rounded-xl border border-[#e2e9dd] bg-white p-4 sm:col-span-2">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">Pickup address</p>
+                {savedAddressLine ? (
+                  <p className="mt-1 text-sm font-semibold text-[#315640]">{savedAddressLine}</p>
+                ) : (
+                  <p className="mt-1 text-sm text-[#8c574c]">No pickup address saved yet. Buyers see a notice to confirm the pickup point until you add one.</p>
+                )}
+                {hasStructuredPickupAddress(cooperative) && !addressComplete && (
+                  <p className="mt-1 text-xs font-semibold text-[#8c574c]">This address is incomplete — add the missing province, city/municipality, barangay, or street details.</p>
+                )}
+              </div>
+              {!addressOpen && (
+                <button
+                  type="button"
+                  className="agri-ghost min-h-11 px-3 py-2 text-sm"
+                  onClick={() => { setAddressForm({ pickupProvince: cooperative.pickupProvince ?? "", pickupCity: cooperative.pickupCity ?? "", pickupBarangay: cooperative.pickupBarangay ?? "", pickupStreetAddress: cooperative.pickupStreetAddress ?? "" }); setAddressError(""); setAddressOpen(true); }}
+                >
+                  {hasStructuredPickupAddress(cooperative) || cooperative.address || cooperative.location ? "Edit address" : "Add address"}
+                </button>
+              )}
+            </div>
+            {addressOpen && (
+              <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={submitAddress}>
+                <label className="field-label">Province<input required maxLength={120} className="field-control" value={addressForm.pickupProvince} onChange={e => setAddressForm({ ...addressForm, pickupProvince: e.target.value })} placeholder="e.g. Batangas" /></label>
+                <label className="field-label">City / municipality<input required maxLength={120} className="field-control" value={addressForm.pickupCity} onChange={e => setAddressForm({ ...addressForm, pickupCity: e.target.value })} placeholder="e.g. Mabini" /></label>
+                <label className="field-label">Barangay<input required maxLength={120} className="field-control" value={addressForm.pickupBarangay} onChange={e => setAddressForm({ ...addressForm, pickupBarangay: e.target.value })} placeholder="e.g. San Isidro" /></label>
+                <label className="field-label">Street address, building, or landmark<input required maxLength={255} className="field-control" value={addressForm.pickupStreetAddress} onChange={e => setAddressForm({ ...addressForm, pickupStreetAddress: e.target.value })} placeholder="e.g. Cooperative hall, Mabini St." /></label>
+                <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+                  <button type="button" className="agri-ghost text-sm sm:mr-auto" disabled={saveAddress.isPending} onClick={() => { setAddressOpen(false); setAddressError(""); }}>Cancel</button>
+                  <button type="submit" className="agri-button text-sm" disabled={saveAddress.isPending}>{saveAddress.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Save address</button>
+                </div>
+                {addressError && <p role="alert" className="text-sm text-[#a34838] sm:col-span-2">{addressError}</p>}
+              </form>
+            )}
+          </div>
           <label className="field-label">Pickup contact number<input maxLength={40} className="field-control" value={form.pickupContactNumber} onChange={e => setForm({ ...form, pickupContactNumber: e.target.value })} placeholder="e.g. 0917 123 4567" /></label>
           <label className="field-label">Operating hours<input maxLength={160} className="field-control" value={form.operatingHours} onChange={e => setForm({ ...form, operatingHours: e.target.value })} placeholder="e.g. Mon–Sat, 7:00 AM – 5:00 PM" /></label>
           <label className="field-label sm:col-span-2">Pickup instructions<textarea maxLength={2000} className="field-control min-h-24" value={form.pickupInstructions} onChange={e => setForm({ ...form, pickupInstructions: e.target.value })} placeholder="e.g. Proceed to the cooperative office; bring a valid ID and your order number." /></label>
-          <div className="sm:col-span-2">
+          <div className="flex justify-end sm:col-span-2">
             <button type="submit" className="agri-button text-sm" disabled={updatePickup.isPending}>{updatePickup.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Save pickup details</button>
           </div>
         </form>
@@ -2422,9 +2525,9 @@ function AdminDashboard() {
                           className="mt-4 space-y-3"
                         >
                           <label className="field-label">Rejection reason<textarea required maxLength={600} className="field-control min-h-20" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} /></label>
-                          <div className="flex gap-2">
-                            <button className="agri-button px-3 py-2 text-xs" disabled={reviewProduct.isPending || !rejectionReason.trim()}>Submit rejection</button>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <button type="button" className="agri-ghost px-3 py-2 text-xs" onClick={() => setRejectingProductId(null)}>Keep in queue</button>
+                            <button className="agri-button px-3 py-2 text-xs" disabled={reviewProduct.isPending || !rejectionReason.trim()}>Submit rejection</button>
                           </div>
                         </form>
                       )}

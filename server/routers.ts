@@ -33,6 +33,7 @@ import {
 } from "./db";
 import { cartItems, conversationMessages, conversations, cooperativeAssociationRequests, cooperativeAdminApplications, cooperatives, auditLogs, notifications, orderEvents, orderHistory, orderItems, orders, paymentEvents, paymentOptions, paymentProofs, payments, productImages, products, profileVerificationSubmissions, qrIssueReports, quotations, roles, supportTicketMessages, supportTickets, systemOnlinePaymentAccounts, systemPaymentSettings, threadStates, transactions, users, profiles } from "../drizzle/pg-schema";
 import { formatExactDuplicateConflict, formatSimilarMatchesConflict } from "../shared/cooperativeConflicts";
+import { pickupAddressSnapshotFields } from "../shared/pickupAddress";
 import { previewUserCooperativeSelection, resolveUserCooperativeSelection, type ResolveUserCooperativeResult } from "./userCooperatives";
 import {
   defaultFulfillmentForPayment,
@@ -761,7 +762,10 @@ export const appRouter = router({
           registrationRateLimiter.consume("resend", ctx.req.ip, input.email);
         } catch (error) {
           if (error instanceof RegistrationRateLimitError) {
-            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
+            throw new TRPCError({
+              code: "TOO_MANY_REQUESTS",
+              message: `Too many verification email requests. Please wait about ${error.retryAfterSeconds} seconds, then try again.`,
+            });
           }
           throw error;
         }
@@ -771,6 +775,23 @@ export const appRouter = router({
           options: { emailRedirectTo: getEmailVerificationRedirectUrl(process.env.APP_URL) },
         });
         if (error) {
+          const errorCode = "code" in error ? String(error.code) : "unknown";
+          const providerRateLimited = errorCode === "over_email_send_rate_limit"
+            || errorCode === "over_request_rate_limit"
+            || ("status" in error && Number(error.status) === 429)
+            || /rate limit|too many requests/i.test(error.message ?? "");
+          console.error("[auth.resendVerification] provider_rejected", {
+            errorCode,
+            status: "status" in error ? Number(error.status) : undefined,
+            name: error.name ?? "AuthError",
+            message: error.message,
+          });
+          if (providerRateLimited) {
+            throw new TRPCError({
+              code: "TOO_MANY_REQUESTS",
+              message: "The email provider is rate-limiting verification emails right now. Wait a few minutes, then try again.",
+            });
+          }
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: "Unable to request a verification email. Please try again later.",
@@ -1293,6 +1314,10 @@ export const appRouter = router({
           pickupContactNumber: cooperatives.pickupContactNumber,
           pickupInstructions: cooperatives.pickupInstructions,
           operatingHours: cooperatives.operatingHours,
+          pickupProvince: cooperatives.pickupProvince,
+          pickupCity: cooperatives.pickupCity,
+          pickupBarangay: cooperatives.pickupBarangay,
+          pickupStreetAddress: cooperatives.pickupStreetAddress,
         }).from(cooperatives)
           .where(and(
             eq(cooperatives.id, input.cooperativeId),
@@ -1420,6 +1445,10 @@ export const appRouter = router({
             pickupContactNumber: cooperative.pickupContactNumber,
             pickupInstructions: cooperative.pickupInstructions,
             operatingHours: cooperative.operatingHours,
+            pickupProvince: cooperative.pickupProvince,
+            pickupCity: cooperative.pickupCity,
+            pickupBarangay: cooperative.pickupBarangay,
+            pickupStreetAddress: cooperative.pickupStreetAddress,
             status: cooperative.status,
             slug: cooperative.normalizedName,
           },
@@ -1486,6 +1515,10 @@ export const appRouter = router({
         pickupContactNumber: z.string().trim().max(40).nullable().optional(),
         pickupInstructions: z.string().trim().max(2000).nullable().optional(),
         operatingHours: z.string().trim().max(160).nullable().optional(),
+        pickupProvince: z.string().trim().max(120).nullable().optional(),
+        pickupCity: z.string().trim().max(120).nullable().optional(),
+        pickupBarangay: z.string().trim().max(120).nullable().optional(),
+        pickupStreetAddress: z.string().trim().max(255).nullable().optional(),
         confirmSimilarNormalizedName: z.string().trim().min(2).max(180).optional(),
       }).strict())
       .mutation(async ({ ctx, input }) => {
@@ -1538,6 +1571,10 @@ export const appRouter = router({
         if (input.pickupContactNumber !== undefined) patch.pickupContactNumber = input.pickupContactNumber || null;
         if (input.pickupInstructions !== undefined) patch.pickupInstructions = input.pickupInstructions || null;
         if (input.operatingHours !== undefined) patch.operatingHours = input.operatingHours || null;
+        if (input.pickupProvince !== undefined) patch.pickupProvince = input.pickupProvince || null;
+        if (input.pickupCity !== undefined) patch.pickupCity = input.pickupCity || null;
+        if (input.pickupBarangay !== undefined) patch.pickupBarangay = input.pickupBarangay || null;
+        if (input.pickupStreetAddress !== undefined) patch.pickupStreetAddress = input.pickupStreetAddress || null;
         if (!Object.keys(patch).length) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Provide at least one cooperative field to update." });
         }
@@ -2338,6 +2375,10 @@ export const appRouter = router({
             contactNumber: string | null;
             instructions: string | null;
             operatingHours: string | null;
+            province?: string | null;
+            city?: string | null;
+            barangay?: string | null;
+            streetAddress?: string | null;
             capturedAt: string;
           } | null = null;
           if (fulfillmentMethod === "pickup" && currentOrder.cooperativeId !== null) {
@@ -2349,6 +2390,10 @@ export const appRouter = router({
               pickupContactNumber: cooperatives.pickupContactNumber,
               pickupInstructions: cooperatives.pickupInstructions,
               operatingHours: cooperatives.operatingHours,
+              pickupProvince: cooperatives.pickupProvince,
+              pickupCity: cooperatives.pickupCity,
+              pickupBarangay: cooperatives.pickupBarangay,
+              pickupStreetAddress: cooperatives.pickupStreetAddress,
             }).from(cooperatives)
               .where(eq(cooperatives.id, currentOrder.cooperativeId))
               .limit(1);
@@ -2361,6 +2406,7 @@ export const appRouter = router({
                 contactNumber: coop.pickupContactNumber || null,
                 instructions: coop.pickupInstructions || null,
                 operatingHours: coop.operatingHours || null,
+                ...pickupAddressSnapshotFields(coop),
                 capturedAt: new Date().toISOString(),
               };
             }

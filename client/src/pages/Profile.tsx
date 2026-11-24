@@ -289,7 +289,7 @@ export default function Profile() {
         </form>
       </main>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[#dce4d6] bg-[#fffdf8] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:pb-3">
-        <div className={`${shellContainerClass} flex w-full justify-end gap-2`}>
+        <div className={`${shellContainerClass} flex w-full flex-wrap items-center justify-between gap-2`}>
           <button type="button" className="agri-ghost min-h-11" onClick={() => window.history.back()}>Cancel</button>
           <button type="submit" form="profile-form" className="agri-button min-h-11" disabled={busy}>{busy ? <Loader2 className="animate-spin" size={16} /> : null} Save</button>
         </div>

@@ -243,7 +243,7 @@ export default function Auth() {
     setResendNotice("");
     try {
       await resendVerification.mutateAsync({ email: verificationEmail });
-      setResendNotice("If this address can receive a confirmation message, a new link is on its way.");
+      setResendNotice("Verification email requested. Please check your inbox and spam folder.");
       setResendCooldownSeconds(60);
     } catch (error) {
       setResendNotice(error instanceof Error ? error.message : "Unable to request a verification email. Please try again later.");
@@ -442,7 +442,21 @@ export default function Auth() {
           </p>
           <p className="mt-2 text-xs leading-5 text-[#617467]">Tip: look in spam/junk if nothing arrives within a few minutes. Resend is limited to once every 60 seconds.</p>
           <label className="field-label mt-3">Email for confirmation<input required type="email" className="field-control" value={verificationEmail} onChange={event => setVerificationEmail(event.target.value)} /></label>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 sm:mr-auto">
+              <button
+                type="button"
+                className="agri-ghost text-sm"
+                onClick={() => {
+                  setVerificationState("none");
+                  setRegister(true);
+                  setResendNotice("");
+                }}
+              >
+                Wrong email? Use a different email
+              </button>
+              <button type="button" className="agri-ghost text-sm" onClick={returnToSignIn}>Back to sign in</button>
+            </div>
             <button type="button" className="agri-button text-sm" disabled={resendVerification.isPending || resendCooldownSeconds > 0 || !verificationEmail.trim()} onClick={() => void resendVerificationEmail()}>
               {resendVerification.isPending
                 ? "Please wait…"
@@ -450,18 +464,6 @@ export default function Auth() {
                   ? `Resend in ${resendCooldownSeconds}s`
                   : "Resend verification"}
             </button>
-            <button
-              type="button"
-              className="agri-ghost text-sm"
-              onClick={() => {
-                setVerificationState("none");
-                setRegister(true);
-                setResendNotice("");
-              }}
-            >
-              Wrong email? Use a different email
-            </button>
-            <button type="button" className="agri-ghost text-sm" onClick={returnToSignIn}>Back to sign in</button>
           </div>
           {resendNotice && <p role="status" className="mt-3 text-sm text-[#496b50]">{resendNotice}</p>}
         </section>}
@@ -476,9 +478,9 @@ export default function Auth() {
           <h2 className="font-bold text-[#315640]">Reset your password</h2>
           <p className="mt-2 text-sm leading-6 text-[#617467]">Enter your account email and we will send a secure reset link.</p>
           <label className="field-label mt-3">Email<input required type="email" className="field-control" value={email} onChange={event => setEmail(event.target.value)} /></label>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" className="agri-ghost text-sm sm:mr-auto" onClick={() => { setResetStage("none"); setResendNotice(""); }}>Back to sign in</button>
             <button type="button" className="agri-button text-sm" disabled={busy} onClick={() => void requestPasswordReset()}>{busy ? "Sending…" : "Send reset link"}</button>
-            <button type="button" className="agri-ghost text-sm" onClick={() => { setResetStage("none"); setResendNotice(""); }}>Back to sign in</button>
           </div>
           {resendNotice && <p role="status" className="mt-3 text-sm text-[#496b50]">{resendNotice}</p>}
         </section>}

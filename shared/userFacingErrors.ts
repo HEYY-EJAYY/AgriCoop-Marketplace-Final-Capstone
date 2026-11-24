@@ -42,5 +42,11 @@ export function mutationFailureFallback(path: string | undefined, input: unknown
   if (path === "cooperatives.softDelete") {
     return `${USER_FACING_DELETE_COOPERATIVE_ERROR} (ref: ${reference})`;
   }
+  if (path === "auth.resendVerification") {
+    return `We couldn't send a verification email right now. Please try again later. (ref: ${reference})`;
+  }
+  if (path === "auth.register") {
+    return `We couldn't complete registration. Please try again later. (ref: ${reference})`;
+  }
   return `We couldn't save your changes. Please try again. (ref: ${reference})`;
 }

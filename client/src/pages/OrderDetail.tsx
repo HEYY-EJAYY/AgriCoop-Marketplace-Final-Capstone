@@ -14,6 +14,7 @@ import {
 } from "@shared/paymentMethods";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
 import { formatEnumLabel } from "@shared/enumLabels";
+import { formatPickupAddress } from "@shared/pickupAddress";
 import { ArrowLeft, ClipboardList, Loader2, MessageCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -91,6 +92,10 @@ type OrderDetailPayload = {
       contactNumber?: string | null;
       instructions?: string | null;
       operatingHours?: string | null;
+      province?: string | null;
+      city?: string | null;
+      barangay?: string | null;
+      streetAddress?: string | null;
       capturedAt?: string;
     } | null;
     createdAt: Date | string;
@@ -279,8 +284,20 @@ export default function OrderDetail() {
     contactNumber?: string | null;
     instructions?: string | null;
     operatingHours?: string | null;
+    province?: string | null;
+    city?: string | null;
+    barangay?: string | null;
+    streetAddress?: string | null;
     capturedAt?: string;
   } | null;
+  const pickupAddressSnapshot = pickupDetails
+    ? formatPickupAddress({
+        pickupProvince: pickupDetails.province,
+        pickupCity: pickupDetails.city,
+        pickupBarangay: pickupDetails.barangay,
+        pickupStreetAddress: pickupDetails.streetAddress,
+      })
+    : "";
 
   const role = user?.role;
   const isSeller = role === "seller";
@@ -411,7 +428,7 @@ export default function OrderDetail() {
             <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4 text-sm text-[#45614e]">
               <p className="font-bold text-[#315640]">Pickup location</p>
               <p className="mt-1">Pickup from {pickupDetails.cooperativeName || cooperative?.name || "the cooperative"}</p>
-              <p>{[pickupDetails.address, pickupDetails.location].filter(Boolean).join(", ") || "Pickup address not recorded."}</p>
+              <p>{pickupAddressSnapshot || [pickupDetails.address, pickupDetails.location].filter(Boolean).join(", ") || "Pickup address not recorded."}</p>
               {pickupDetails.contactNumber && <p className="mt-1">Contact: {pickupDetails.contactNumber}</p>}
               {pickupDetails.instructions && <p className="mt-1">Instructions: {pickupDetails.instructions}</p>}
               {pickupDetails.operatingHours && <p className="mt-1">Hours: {pickupDetails.operatingHours}</p>}

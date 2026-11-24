@@ -4,6 +4,7 @@ import { ProductImage } from "@/components/ProductImage";
 import { resolveProductImageSrc } from "@/lib/productImages";
 import { trpc } from "@/lib/trpc";
 import { toUserFacingErrorMessage } from "@shared/userFacingErrors";
+import { cooperativePickupAddressLine, hasStructuredPickupAddress, isPickupAddressComplete } from "@shared/pickupAddress";
 import { ArrowLeft, Leaf, Loader2 } from "lucide-react";
 import { Link, useRoute } from "wouter";
 
@@ -35,6 +36,10 @@ type CooperativeBySlugPayload = {
     pickupContactNumber?: string | null;
     pickupInstructions?: string | null;
     operatingHours?: string | null;
+    pickupProvince?: string | null;
+    pickupCity?: string | null;
+    pickupBarangay?: string | null;
+    pickupStreetAddress?: string | null;
   };
   products: CoopProduct[];
 };
@@ -140,12 +145,15 @@ export default function CooperativePage() {
           {cooperative.description && (
             <p className="mt-4 max-w-3xl leading-7 text-[#66766b]">{cooperative.description}</p>
           )}
-          {(cooperative.address || cooperative.pickupContactNumber || cooperative.pickupInstructions || cooperative.operatingHours) && (
+          {(cooperative.address || cooperative.location || cooperative.pickupContactNumber || cooperative.pickupInstructions || cooperative.operatingHours || hasStructuredPickupAddress(cooperative)) && (
             <div className="mt-5 rounded-xl bg-[#f2f6ef] p-4 text-sm text-[#45614e]">
               <p className="font-bold text-[#315640]">Pickup information</p>
               <p className="mt-1">
-                {[cooperative.address, cooperative.location].filter(Boolean).join(", ") || "Address not yet provided"}
+                {cooperativePickupAddressLine(cooperative) || "Address not yet provided"}
               </p>
+              {hasStructuredPickupAddress(cooperative) && !isPickupAddressComplete(cooperative) && (
+                <p className="mt-1 text-xs font-semibold text-[#8c574c]">This pickup address is incomplete — buyers are asked to confirm the exact pickup point.</p>
+              )}
               {cooperative.pickupContactNumber && <p className="mt-1">Contact: {cooperative.pickupContactNumber}</p>}
               {cooperative.pickupInstructions && <p className="mt-1">Instructions: {cooperative.pickupInstructions}</p>}
               {cooperative.operatingHours && <p className="mt-1">Hours: {cooperative.operatingHours}</p>}

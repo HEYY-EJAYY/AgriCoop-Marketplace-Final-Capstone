@@ -1010,7 +1010,7 @@ export default function Marketplace() {
                 <Check className="mr-1 inline text-[#4c834d]" size={14} aria-hidden /> The seller will respond with
                 pricing details before you place an order.
               </p>
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
                 <button type="button" className="agri-ghost text-sm" onClick={() => setQuoteProduct(null)}>
                   Cancel
                 </button>

@@ -153,7 +153,7 @@ export function AddAccountDialog({ open, onClose }: AddAccountDialogProps) {
                 })}
           />
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <button type="button" className="agri-ghost min-h-11" onClick={onClose}>Close</button>
           {!inviteLink && (
             <button className="agri-button min-h-11" disabled={createAccount.isPending}>Create account</button>
