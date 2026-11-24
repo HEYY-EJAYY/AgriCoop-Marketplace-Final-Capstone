@@ -169,6 +169,16 @@ button { cursor: pointer; }
   .agri-btn-row--start { justify-content: flex-start; }
 }
 
+/* Sonner toasts: enlarge the corner close button for touch and keep the
+   title/description clear of it. */
+[data-sonner-toast] [data-close-button] {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+[data-sonner-toast]:has([data-close-button]) [data-content] {
+  padding-right: 1.5rem;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   /* Transform-only motion so LCP text is never stuck at opacity:0 before paint. */
   .rise-in { animation: rise-in 600ms cubic-bezier(.23,1,.32,1) both; }

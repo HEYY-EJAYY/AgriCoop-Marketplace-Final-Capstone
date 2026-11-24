@@ -13,6 +13,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--popover)",
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
+          // Pin the sonner close button to the top-right corner (sonner
+          // defaults it to the top-left in LTR layouts).
+          "--toast-close-button-start": "unset",
+          "--toast-close-button-end": "0",
+          "--toast-close-button-transform": "translate(35%, -35%)",
         } as React.CSSProperties
       }
       {...props}

@@ -74,7 +74,7 @@ function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <RealtimeInvalidator/>
-          <Toaster richColors position="top-right"/>
+          <Toaster richColors position="top-right" closeButton toastOptions={{ closeButtonAriaLabel: "Dismiss notification" }}/>
           <Router/>
         </TooltipProvider>
       </ThemeProvider>
