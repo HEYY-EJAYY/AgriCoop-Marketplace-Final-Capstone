@@ -38,7 +38,8 @@ import {
   formatWeightKg,
   orderWeightGrams,
 } from "../../../shared/orderWeight";
-import { ArrowLeft, Copy, Flag, Loader2, QrCode, ShoppingBag, Upload } from "lucide-react";
+import { ArrowLeft, Banknote, Copy, Flag, Loader2, QrCode, ShoppingBag, Store, Truck, Upload } from "lucide-react";
+import { OptionTileGroup } from "@/components/OptionTileGroup";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation } from "wouter";
@@ -368,46 +369,25 @@ function SellerCheckoutGroup({
       )}
 
       <div className="mt-4">
-        <fieldset className="min-w-0">
-          <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Payment</legend>
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          {PAYMENT_METHODS.filter(method => compatibleMethods.includes(method)).map(method => {
+        <OptionTileGroup
+          legend="Payment"
+          name={`payment-${sellerId}`}
+          value={choice.paymentMethod}
+          onChange={value => setPaymentMethod(value as PaymentMethod)}
+          options={PAYMENT_METHODS.filter(method => compatibleMethods.includes(method)).map(method => {
             const methodAvailability = paymentMethodAvailability(method, flags, availability);
-            const reasonId = `payment-${sellerId}-${method}-reason`;
-            return (
-              <label
-                key={method}
-                className={`rounded-xl border p-3 text-sm font-bold ${
-                  methodAvailability.available ? "cursor-pointer" : "cursor-not-allowed opacity-70"
-                } ${
-                  choice.paymentMethod === method
-                    ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
-                    : "border-[#e3e9de] bg-white text-[#66766b]"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name={`payment-${sellerId}`}
-                  className="mr-2 accent-[#4e8257]"
-                  checked={choice.paymentMethod === method}
-                  disabled={!methodAvailability.available}
-                  aria-describedby={methodAvailability.reason ? reasonId : undefined}
-                  onChange={() => setPaymentMethod(method)}
-                />
-                {checkoutMethodLabel(method)}
-                {methodAvailability.reason && (
-                  <span id={reasonId} className="mt-1 block text-xs font-normal leading-5">
-                    {methodAvailability.reason}
-                  </span>
-                )}
-              </label>
-            );
+            return {
+              value: method,
+              label: checkoutMethodLabel(method),
+              sublabel: methodAvailability.reason ?? undefined,
+              icon: method === "online" ? <QrCode size={20} /> : <Banknote size={20} />,
+              disabled: !methodAvailability.available,
+            };
           })}
-        </div>
+        />
         {choice.paymentMethod && (
           <p className="mt-2 text-xs leading-5 text-[#4d6854]">{PAYMENT_METHOD_HELPERS[choice.paymentMethod]}</p>
         )}
-        </fieldset>
       </div>
 
       {showOnline && (
@@ -421,47 +401,6 @@ function SellerCheckoutGroup({
             <Loader2 className="mt-4 animate-spin text-[#4e8257]" />
           ) : (
             <>
-              {qrOptions.length > 0 && (
-                <div className="mt-3">
-                  <p className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Choose a payment QR</p>
-                  {qrNotice && <p role="alert" className="mt-2 text-xs font-semibold text-[#8c574c]">{qrNotice}</p>}
-                  <div className="mt-2 grid gap-2">
-                    {qrOptions.map(option => {
-                      const selected = selectedQrOption?.id === option.id;
-                      return (
-                        <label
-                          key={option.id}
-                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${
-                            selected ? "border-[#5d8a5e] bg-[#edf4e9] text-[#315640]" : "border-[#e3e9de] bg-white text-[#66766b]"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name={`qr-${sellerId}`}
-                            className="mt-1 accent-[#4e8257]"
-                            checked={selected}
-                            onChange={() => {
-                              setQrNotice(null);
-                              setReportOpen(false);
-                              onChoiceChange({ ...choice, paymentOptionId: option.id });
-                            }}
-                          />
-                          <span className="min-w-0">
-                            <span className="block font-bold">
-                              {qrPaymentProviderLabel(option.paymentMethod)} — {option.methodName}
-                            </span>
-                            {(option.accountName || option.accountNumber) && (
-                              <span className="mt-0.5 block text-xs font-normal text-[#6d7d70]">
-                                {[option.accountName, option.accountNumber].filter(Boolean).join(" · ")}
-                              </span>
-                            )}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
               {!qrOptionsQuery.isLoading && qrOptions.length === 0 && (
                 <p className="mt-3 rounded-lg bg-[#fdf3e7] p-3 text-xs font-semibold text-[#8c5a2b]">
                   {cooperativeName ?? "This cooperative"} has not published a QR payment code yet.
@@ -469,73 +408,102 @@ function SellerCheckoutGroup({
                   You can also choose Cash on Pickup or Cash on Delivery above.
                 </p>
               )}
-              {qrOptions.length > 0 && !selectedQrOption ? (
-                <p className="mt-3 text-xs font-semibold text-[#8c574c]">Select a payment QR code above to continue.</p>
-              ) : displayQr ? (
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start">
-                  {displayQr.qrImageUrl ? (
-                    <img
-                      src={displayQr.qrImageUrl}
-                      alt="AgriCoop payment QR"
-                      className="h-32 w-32 shrink-0 rounded-lg border border-[#e2e8de] bg-white object-contain"
-                    />
-                  ) : (
-                    <div className="grid h-32 w-32 shrink-0 place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a]">
-                      <QrCode />
+              {(qrOptions.length > 0 || Boolean(displayQr)) && (
+                <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+                  {qrOptions.length > 0 && (
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Choose a payment QR</p>
+                      {qrNotice && <p role="alert" className="mt-2 text-xs font-semibold text-[#8c574c]">{qrNotice}</p>}
+                      <div className="mt-2">
+                        <OptionTileGroup
+                          name={`qr-${sellerId}`}
+                          value={selectedQrOption ? String(selectedQrOption.id) : ""}
+                          onChange={value => {
+                            setQrNotice(null);
+                            setReportOpen(false);
+                            onChoiceChange({ ...choice, paymentOptionId: Number(value) });
+                          }}
+                          options={qrOptions.map(option => ({
+                            value: String(option.id),
+                            label: qrPaymentProviderLabel(option.paymentMethod),
+                            icon: <QrProviderMark provider={option.paymentMethod} />,
+                          }))}
+                        />
+                      </div>
+                      {!selectedQrOption && (
+                        <p className="mt-2 text-xs font-semibold text-[#8c574c]">Select a payment QR code to continue.</p>
+                      )}
+                      {displayQr && (
+                        <div className="mt-3 space-y-1">
+                          {displayQr.instructions && (
+                            <p className="text-xs leading-5 text-[#4d6854]">{displayQr.instructions}</p>
+                          )}
+                          <p className="text-sm font-bold text-[#315640]">
+                            {displayQr.label || displayQr.accountName || "Online payment"}
+                          </p>
+                          {displayQr.accountNumber && (
+                            <p className="text-xs text-[#68796d]">
+                              {displayQr.accountName ? `${displayQr.accountName} · ` : ""}
+                              {displayQr.accountNumber}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {selectedQrOption && reportSentFor === selectedQrOption.id && !reportOpen && (
+                        <p className="mt-3 rounded-lg bg-[#e6f3e5] p-3 text-xs font-semibold text-[#2f5c39]">
+                          Thank you. Your report has been sent to the cooperative administrators for review. This QR code is now hidden until it is re-enabled — another available QR code was selected automatically.
+                        </p>
+                      )}
+                      {selectedQrOption && reportOpen && (
+                        <div className="mt-3 rounded-xl border border-[#eadfd2] bg-[#fdf8f2] p-3">
+                          <label className="field-label text-xs">What is wrong with this QR code?
+                            <select className="field-control" value={reportReason} onChange={event => setReportReason(event.target.value as QrIssueReason)}>
+                              {QR_ISSUE_REASONS.map(reason => <option key={reason} value={reason}>{qrIssueReasonLabel(reason)}</option>)}
+                            </select>
+                          </label>
+                          <label className="field-label mt-3 text-xs">Additional details (optional)
+                            <textarea maxLength={1000} className="field-control" value={reportDetails} onChange={event => setReportDetails(event.target.value)} />
+                          </label>
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                            <button type="button" className="agri-ghost text-sm" onClick={() => setReportOpen(false)}>Cancel</button>
+                            <button type="button" className="agri-button text-sm" disabled={reportIssue.isPending} onClick={() => void submitQrReport()}>
+                              {reportIssue.isPending ? <Loader2 className="animate-spin" size={14} /> : <Flag size={14} />} Send report
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                  <div className="min-w-0 flex-1 space-y-1">
-                    {displayQr.instructions && (
-                      <p className="text-xs leading-5 text-[#4d6854]">{displayQr.instructions}</p>
-                    )}
-                    <p className="text-sm font-bold text-[#315640]">
-                      {displayQr.label || displayQr.accountName || "Online payment"}
-                    </p>
-                    {displayQr.accountNumber && (
-                      <p className="text-xs text-[#68796d]">
-                        {displayQr.accountName ? `${displayQr.accountName} · ` : ""}
-                        {displayQr.accountNumber}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-              {selectedQrOption && reportSentFor === selectedQrOption.id && !reportOpen && (
-                <p className="mt-3 rounded-lg bg-[#e6f3e5] p-3 text-xs font-semibold text-[#2f5c39]">
-                  Thank you. Your report has been sent to the cooperative administrators for review. This QR code is now hidden until it is re-enabled — another available QR code was selected automatically.
-                </p>
-              )}
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <span className="font-display text-lg font-bold text-[#1d5639]">{peso(groupTotal)}</span>
-                <button type="button" className="agri-ghost agri-ghost-sm" onClick={() => void copyAmount()}>
-                  <Copy size={14} /> Copy amount
-                </button>
-                {selectedQrOption && (
-                  <button
-                    type="button"
-                    className="agri-ghost agri-ghost-sm text-[#a34838]"
-                    onClick={() => { setReportOpen(value => !value); setReportSentFor(null); }}
-                  >
-                    <Flag size={13} className="mr-1 inline" /> QR Code Not Working? Report This QR
-                  </button>
-                )}
-              </div>
-              {selectedQrOption && reportOpen && (
-                <div className="mt-3 rounded-xl border border-[#eadfd2] bg-[#fdf8f2] p-3">
-                  <label className="field-label text-xs">What is wrong with this QR code?
-                    <select className="field-control" value={reportReason} onChange={event => setReportReason(event.target.value as QrIssueReason)}>
-                      {QR_ISSUE_REASONS.map(reason => <option key={reason} value={reason}>{qrIssueReasonLabel(reason)}</option>)}
-                    </select>
-                  </label>
-                  <label className="field-label mt-3 text-xs">Additional details (optional)
-                    <textarea maxLength={1000} className="field-control" value={reportDetails} onChange={event => setReportDetails(event.target.value)} />
-                  </label>
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <button type="button" className="agri-ghost text-sm" onClick={() => setReportOpen(false)}>Cancel</button>
-                    <button type="button" className="agri-button text-sm" disabled={reportIssue.isPending} onClick={() => void submitQrReport()}>
-                      {reportIssue.isPending ? <Loader2 className="animate-spin" size={14} /> : <Flag size={14} />} Send report
-                    </button>
-                  </div>
+                  {displayQr && !(qrOptions.length > 0 && !selectedQrOption) && (
+                    <div className="w-fit max-w-full rounded-xl border border-[#e2e8de] bg-white p-3">
+                      {displayQr.qrImageUrl ? (
+                        <img
+                          src={displayQr.qrImageUrl}
+                          alt="AgriCoop payment QR"
+                          className="h-36 w-36 rounded-lg object-contain"
+                        />
+                      ) : (
+                        <div className="grid h-36 w-36 place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a]">
+                          <QrCode />
+                        </div>
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <span className="font-display text-lg font-bold text-[#1d5639]">{peso(groupTotal)}</span>
+                        <button type="button" className="agri-ghost agri-ghost-sm" onClick={() => void copyAmount()}>
+                          <Copy size={14} /> Copy amount
+                        </button>
+                        {selectedQrOption && (
+                          <button
+                            type="button"
+                            className="agri-ghost agri-ghost-sm text-[#a34838]"
+                            onClick={() => { setReportOpen(value => !value); setReportSentFor(null); }}
+                          >
+                            <Flag size={13} className="mr-1 inline" /> QR Code Not Working? Report This QR
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <label className="field-label mt-4">
@@ -587,6 +555,28 @@ const FULFILLMENT_COPY: Record<FulfillmentMethod, { title: string; body: string 
   delivery: { title: "Delivery", body: "The order is delivered to your address." },
 };
 
+const QR_PROVIDER_MARKS: Record<string, { bg: string; short: string }> = {
+  gcash: { bg: "#007dfc", short: "GC" },
+  maya: { bg: "#00b14f", short: "M" },
+  maribank: { bg: "#0b4f8a", short: "MB" },
+  gotyme: { bg: "#6d28d9", short: "GT" },
+  other: { bg: "#4b5563", short: "QR" },
+};
+
+/** Brand-colored monogram shown on payment-QR provider tiles. */
+function QrProviderMark({ provider }: { provider: string }) {
+  const mark = QR_PROVIDER_MARKS[provider] ?? QR_PROVIDER_MARKS.other;
+  return (
+    <span
+      className="grid h-9 w-9 place-items-center rounded-lg text-sm font-extrabold text-white"
+      style={{ background: mark.bg }}
+      aria-hidden
+    >
+      {mark.short}
+    </span>
+  );
+}
+
 function FulfillmentPicker({
   name,
   options,
@@ -601,44 +591,28 @@ function FulfillmentPicker({
   deliveryBlockedReason?: string | null;
 }) {
   return (
-    <fieldset className="min-w-0">
-      <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Fulfillment</legend>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        {options.map(option => {
+    <div className="min-w-0">
+      <OptionTileGroup
+        legend="Fulfillment"
+        name={name}
+        value={value}
+        onChange={next => onChange(next as FulfillmentMethod)}
+        options={options.map(option => {
           const copy = FULFILLMENT_COPY[option];
-          const selected = value === option;
           const blocked = option === "delivery" && Boolean(deliveryBlockedReason);
-          return (
-            <label
-              key={option}
-              className={`flex min-h-11 items-start gap-3 rounded-xl border p-3 text-sm font-bold ${
-                blocked
-                  ? "cursor-not-allowed border-[#e3e9de] bg-[#f4f4f1] text-[#9aa49b]"
-                  : selected
-                    ? "cursor-pointer border-[#5d8a5e] bg-[#edf4e9] text-[#315640]"
-                    : "cursor-pointer border-[#e3e9de] bg-white text-[#66766b]"
-              }`}
-            >
-              <input
-                type="radio"
-                name={name}
-                className="mt-1 accent-[#4e8257]"
-                checked={selected}
-                disabled={blocked}
-                onChange={() => onChange(option)}
-              />
-              <span>
-                {copy.title}
-                <span className="mt-0.5 block text-xs font-normal leading-5 text-[#6d7d70]">{copy.body}</span>
-              </span>
-            </label>
-          );
+          return {
+            value: option,
+            label: copy.title,
+            sublabel: copy.body,
+            icon: option === "pickup" ? <Store size={20} /> : <Truck size={20} />,
+            disabled: blocked,
+          };
         })}
-      </div>
+      />
       {deliveryBlockedReason && (
         <p className="mt-2 text-xs leading-5 text-[#8c574c]" role="alert">{deliveryBlockedReason}</p>
       )}
-    </fieldset>
+    </div>
   );
 }
 
