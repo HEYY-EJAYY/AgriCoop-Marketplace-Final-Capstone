@@ -1,4 +1,5 @@
 import { PRODUCT_IMAGE_PLACEHOLDER, resolveProductImageSrc } from "@/lib/productImages";
+import { cn } from "@/lib/utils";
 import React, { useEffect, useState } from "react";
 
 type ProductImageProps = {
@@ -14,6 +15,11 @@ type ProductImageProps = {
 /**
  * Shared product media. Never falls back to the marketing hero asset —
  * broken or missing photos use the default placeholder icon.
+ *
+ * A single transient failure (aborted request, cold storage, flaky network)
+ * must not latch the placeholder forever: the image is retried once via a
+ * remount before falling back, and the neutral background keeps the card
+ * from looking empty while the real photo loads.
  */
 export function ProductImage({
   src,
@@ -26,24 +32,37 @@ export function ProductImage({
 }: ProductImageProps) {
   const resolved = resolveProductImageSrc(src, productName ?? alt);
   const [current, setCurrent] = useState(resolved);
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     setCurrent(resolved);
+    setAttempt(0);
+    setFailed(false);
   }, [resolved]);
+
+  const displaySrc = failed ? PRODUCT_IMAGE_PLACEHOLDER : current;
 
   return (
     <img
-      src={current}
+      key={attempt}
+      src={displaySrc}
       alt={alt}
       width={width}
       height={height}
       loading={eager ? "eager" : "lazy"}
+      fetchPriority={eager ? "high" : "auto"}
       decoding="async"
-      className={className}
+      className={cn("bg-[#edf2e7]", className)}
       data-testid="product-image"
-      data-image-src={current}
+      data-image-src={displaySrc}
       onError={() => {
-        if (current !== PRODUCT_IMAGE_PLACEHOLDER) setCurrent(PRODUCT_IMAGE_PLACEHOLDER);
+        if (displaySrc === PRODUCT_IMAGE_PLACEHOLDER) return;
+        if (attempt === 0) {
+          setAttempt(1);
+        } else {
+          setFailed(true);
+        }
       }}
     />
   );

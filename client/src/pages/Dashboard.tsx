@@ -406,7 +406,7 @@ function Onboarding() {
   return <>
     <WorkspaceHeader title="Complete your profile" description="Keep your contact details current for cooperative marketplace activity."/>
     <main className={`${shellContainerClass} pt-10 pb-8`}>
-      <form id="onboarding-form" onSubmit={submit} className="agri-card p-6 sm:p-8">
+      <form id="onboarding-form" onSubmit={submit} className="agri-card p-5 sm:p-6">
         <h1 className="font-display text-3xl font-bold text-[#244e36]">Your profile</h1>
         <p className="mt-3 leading-7 text-[#647568]">Your role, approval status, and cooperative assignment are managed by AgriCoop and your cooperative officer.</p>
         <label className="field-label mt-6">Display name<input value={name} onChange={e => setName(e.target.value)} className="field-control" required maxLength={120}/></label>

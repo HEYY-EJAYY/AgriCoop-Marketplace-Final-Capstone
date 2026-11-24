@@ -418,7 +418,7 @@ export default function Auth() {
       : "Create a Buyer account. You may link a cooperative during sign-up.";
 
   return <PageFrame>
-    <main className={`${shellContainerClass} py-16`}>
+    <main className={`${shellContainerClass} py-10`}>
       <div className="agri-card mx-auto max-w-lg p-7">
         <p className="text-xs font-extrabold uppercase tracking-[.13em] text-[#3f6b42]">AgriCoop account</p>
         <h1 className="mt-2 font-display text-3xl font-bold text-[#214b35]">{register ? "Join the cooperative market" : "Welcome back"}</h1>

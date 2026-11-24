@@ -22,10 +22,10 @@ export default function About() {
             </p>
           </div>
         </section>
-        <section className={`${marketingShellClass} py-20`}>
+        <section className={`${marketingShellClass} py-14`}>
           <div className="space-y-5">
             {stages.map(({ icon: Icon, tag, title, body }, idx) => (
-              <article className="agri-card grid gap-5 p-6 sm:grid-cols-[70px_1fr] sm:p-8" key={title}>
+              <article className="agri-card grid gap-5 p-5 sm:grid-cols-[70px_1fr] sm:p-6" key={title}>
                 <div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#e4f0df] text-[#2f6b42]">
                   <Icon size={26} />
                 </div>
@@ -39,8 +39,8 @@ export default function About() {
             ))}
           </div>
         </section>
-        <section className={`${marketingShellClass} pb-20`}>
-          <div className="rounded-[2rem] bg-[#e3efd8] p-8 text-center sm:p-12">
+        <section className={`${marketingShellClass} pb-14`}>
+          <div className="rounded-[2rem] bg-[#e3efd8] p-6 text-center sm:p-10">
             <h2 className="font-display text-3xl font-bold text-[#1c4b34]">Ready to discover what local farms have to offer?</h2>
             <p className="mx-auto mt-3 max-w-xl text-[#2f4f3c]">Browse available listings and connect directly with the farmers and cooperatives preparing them.</p>
             <Link href="/marketplace" className="agri-button mt-6 no-underline">

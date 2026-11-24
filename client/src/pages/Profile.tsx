@@ -159,7 +159,7 @@ export default function Profile() {
       )}
       <main className={`${shellContainerClass} w-full pb-28 pt-8`}>
         <form id="profile-form" onSubmit={onSubmit} className="grid w-full gap-6 lg:grid-cols-2">
-          <section className="agri-card w-full p-6 sm:p-8">
+          <section className="agri-card w-full p-5 sm:p-6">
             <div className="flex flex-wrap items-center gap-4">
               <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-2xl bg-[#e8f0e4] text-2xl font-bold text-[#1f5a3c]" data-testid="profile-avatar">
                 {preview ? (
@@ -205,7 +205,7 @@ export default function Profile() {
           </section>
 
           <div className="grid w-full gap-6">
-            <section className="agri-card w-full p-6 sm:p-8">
+            <section className="agri-card w-full p-5 sm:p-6">
               <h2 className="font-display text-xl font-bold text-[#264f37]">Cooperative</h2>
               <p className="mt-1 text-sm text-[#6a796e]">
                 {user.role === "seller"
@@ -271,7 +271,7 @@ export default function Profile() {
                 </div>
               )}
             </section>
-            <section className="agri-card w-full p-6 sm:p-8">
+            <section className="agri-card w-full p-5 sm:p-6">
               <h2 className="font-display text-xl font-bold text-[#264f37]">Change password</h2>
               <p className="mt-1 text-sm text-[#6a796e]">Leave blank to keep your current password.</p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">

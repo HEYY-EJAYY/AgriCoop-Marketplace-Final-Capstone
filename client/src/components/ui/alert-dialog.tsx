@@ -123,7 +123,7 @@ function AlertDialogAction({
   return (
     <AlertDialogPrimitive.Action
       className={cn(
-        "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
         "bg-[#1f5a3c] text-white hover:bg-[#174a31]",
         className
       )}
@@ -139,7 +139,7 @@ function AlertDialogCancel({
   return (
     <AlertDialogPrimitive.Cancel
       className={cn(
-        "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-[#1f5a3c] bg-white text-sm font-medium text-[#1f5a3c] transition-colors hover:bg-[#edf3e9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-[#1f5a3c] bg-white px-4 py-2 text-sm font-medium text-[#1f5a3c] transition-colors hover:bg-[#edf3e9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
         className
       )}
       {...props}

@@ -126,8 +126,8 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={`${marketingShellClass} py-20`}>
-          <div className="grid gap-12 lg:grid-cols-[.78fr_1.22fr]">
+        <section className={`${marketingShellClass} py-14`}>
+          <div className="grid gap-8 lg:grid-cols-[.78fr_1.22fr]">
             <div>
               <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#3f5f28]">Built around the cooperative</p>
               <h2 className="mt-3 font-display text-4xl font-bold tracking-tight text-[#1d4932]">
@@ -153,7 +153,7 @@ export default function Home() {
         </section>
 
         <section className="agri-full-bleed border-y border-[#dce6d6] bg-[#eff5eb]" data-full-bleed>
-          <div className={`${marketingShellClass} grid gap-12 py-16 lg:grid-cols-2`}>
+          <div className={`${marketingShellClass} grid gap-8 py-12 lg:grid-cols-2`}>
             <div>
               <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#3f5f28]">Designed for every participant</p>
               <h2 className="mt-3 font-display text-4xl font-bold text-[#1d4932]">One shared market, each role with the right tools.</h2>
@@ -178,8 +178,8 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={`${marketingShellClass} py-20`} data-testid="coop-recruitment">
-          <div className="agri-card grid gap-8 p-8 sm:p-10 lg:grid-cols-[1.2fr_.8fr] lg:items-center">
+        <section className={`${marketingShellClass} py-14`} data-testid="coop-recruitment">
+          <div className="agri-card grid gap-6 p-6 sm:p-8 lg:grid-cols-[1.2fr_.8fr] lg:items-center">
             <div>
               <p className="text-sm font-extrabold uppercase tracking-[.14em] text-[#3f5f28]">For agricultural cooperatives</p>
               <h2 className="mt-3 font-display text-4xl font-bold tracking-tight text-[#1d4932]">
