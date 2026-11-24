@@ -395,7 +395,6 @@ function SellerCheckoutGroup({
         <div className="min-w-0">
         <OptionTileGroup
           legend="Payment"
-          legendClassName="text-center"
           name={`payment-${sellerId}`}
           value={choice.paymentMethod}
           onChange={value => setPaymentMethod(value as PaymentMethod)}
@@ -672,7 +671,6 @@ function FulfillmentPicker({
     <div className="min-w-0">
       <OptionTileGroup
         legend="Fulfillment"
-        legendClassName="text-center"
         name={name}
         value={value}
         onChange={next => onChange(next as FulfillmentMethod)}
