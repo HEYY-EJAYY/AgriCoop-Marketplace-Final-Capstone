@@ -3,6 +3,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(path.resolve(import.meta.dirname, "Checkout.tsx"), "utf8");
+const tileGroupSource = readFileSync(
+  path.resolve(import.meta.dirname, "../components/OptionTileGroup.tsx"),
+  "utf8",
+);
 
 describe("Checkout delivery-address enforcement", () => {
   it("requires a complete address before submit when any group uses delivery", () => {
@@ -43,7 +47,10 @@ describe("Checkout delivery minimum weight", () => {
 
   it("disables the Delivery radio and explains why instead of hiding it", () => {
     expect(source).toContain("deliveryBlockedReason");
-    expect(source).toMatch(/disabled=\{blocked\}/);
+    // FulfillmentPicker marks the Delivery tile disabled; OptionTileGroup
+    // forwards that to the underlying radio input.
+    expect(source).toMatch(/disabled:\s*blocked/);
+    expect(tileGroupSource).toMatch(/disabled=\{option\.disabled\}/);
     expect(source).toContain('option === "delivery" && Boolean(deliveryBlockedReason)');
   });
 
