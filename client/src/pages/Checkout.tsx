@@ -38,7 +38,8 @@ import {
   formatWeightKg,
   orderWeightGrams,
 } from "../../../shared/orderWeight";
-import { ArrowLeft, Banknote, Copy, Flag, Loader2, QrCode, ShoppingBag, Store, Truck, Upload } from "lucide-react";
+import { ArrowLeft, Banknote, Copy, Flag, Loader2, QrCode, ShoppingBag, Store, Truck, Upload, ZoomIn } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { OptionTileGroup } from "@/components/OptionTileGroup";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -150,6 +151,8 @@ function SellerCheckoutGroup({
   const utils = trpc.useUtils();
   const [qrNotice, setQrNotice] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [qrLightboxOpen, setQrLightboxOpen] = useState(false);
+  const [qrImgFailed, setQrImgFailed] = useState(false);
   const [reportReason, setReportReason] = useState<QrIssueReason>("cannot_scan");
   const [reportDetails, setReportDetails] = useState("");
   const [reportSentFor, setReportSentFor] = useState<number | null>(null);
@@ -317,6 +320,24 @@ function SellerCheckoutGroup({
     }
   };
 
+  const saveQrImage = async () => {
+    if (!displayQr?.qrImageUrl) return;
+    try {
+      const response = await fetch(displayQr.qrImageUrl);
+      if (!response.ok) throw new Error("fetch failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const ext = blob.type.includes("png") ? "png" : "jpg";
+      anchor.href = url;
+      anchor.download = `agricoop-payment-qr-${selectedQrOption?.id ?? "account"}.${ext}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Could not download the QR image.");
+    }
+  };
+
   const showOnline = choice.paymentMethod === "online";
   const displayQr = selectedQrOption
     ? {
@@ -329,6 +350,10 @@ function SellerCheckoutGroup({
     : onlineDetails
       ? { ...onlineDetails, label: `AgriCoop platform payment account — ${onlineDetails.accountName || onlineDetails.label || "online payment"}` }
       : null;
+
+  useEffect(() => {
+    setQrImgFailed(false);
+  }, [displayQr?.qrImageUrl]);
 
   return (
     <section className="rounded-2xl border border-[#e1e9dd] bg-[#f7faf4] p-4">
@@ -476,14 +501,31 @@ function SellerCheckoutGroup({
                   )}
                   {displayQr && !(qrOptions.length > 0 && !selectedQrOption) && (
                     <div className="w-fit max-w-full rounded-xl border border-[#e2e8de] bg-white p-3">
-                      {displayQr.qrImageUrl ? (
-                        <img
-                          src={displayQr.qrImageUrl}
-                          alt="AgriCoop payment QR"
-                          className="h-36 w-36 rounded-lg object-contain"
-                        />
+                      {displayQr.qrImageUrl && !qrImgFailed ? (
+                        <button
+                          type="button"
+                          onClick={() => setQrLightboxOpen(true)}
+                          aria-label={`Enlarge QR code for ${displayQr.label || displayQr.accountName || "online payment"}`}
+                          className="block w-fit cursor-zoom-in rounded-lg bg-white p-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2"
+                        >
+                          <img
+                            src={displayQr.qrImageUrl}
+                            alt=""
+                            className="h-[184px] w-[184px] object-contain sm:h-56 sm:w-56"
+                            onError={() => setQrImgFailed(true)}
+                          />
+                          <span className="mt-1 flex items-center justify-center gap-1 text-[11px] font-semibold text-[#6d7d70]">
+                            <ZoomIn size={12} /> Tap to enlarge
+                          </span>
+                        </button>
+                      ) : displayQr.qrImageUrl ? (
+                        <div className="grid h-[200px] w-[200px] place-items-center rounded-lg bg-[#f0f5ed] p-3 text-center text-xs text-[#68796d] sm:h-60 sm:w-60">
+                          {displayQr.label || "QR"}
+                          <br />
+                          QR unavailable
+                        </div>
                       ) : (
-                        <div className="grid h-36 w-36 place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a]">
+                        <div className="grid h-[200px] w-[200px] place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a] sm:h-60 sm:w-60">
                           <QrCode />
                         </div>
                       )}
@@ -545,6 +587,41 @@ function SellerCheckoutGroup({
             </>
           )}
         </div>
+      )}
+      {displayQr && (
+        <Dialog open={qrLightboxOpen} onOpenChange={setQrLightboxOpen}>
+          <DialogContent className="w-fit max-w-[calc(100%-2rem)] gap-3 p-4 sm:max-w-[min(90vw,480px)]">
+            <DialogHeader className="text-center sm:text-center">
+              <DialogTitle className="text-base">
+                {displayQr.label || displayQr.accountName || "Payment QR"}
+              </DialogTitle>
+              <DialogDescription className="text-sm font-bold text-[#1d5639]">
+                {peso(groupTotal)}
+              </DialogDescription>
+            </DialogHeader>
+            {displayQr.qrImageUrl && !qrImgFailed ? (
+              <img
+                src={displayQr.qrImageUrl}
+                alt={`Enlarged payment QR for ${displayQr.label || "online payment"}`}
+                className="mx-auto max-h-[65vh] max-w-full object-contain [image-rendering:pixelated]"
+              />
+            ) : (
+              <p className="py-10 text-center text-sm text-[#68796d]">
+                {displayQr.label || "QR"} — QR unavailable
+              </p>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button type="button" className="agri-ghost text-sm" onClick={() => setQrLightboxOpen(false)}>
+                Close
+              </button>
+              {displayQr.qrImageUrl && !qrImgFailed && (
+                <button type="button" className="agri-button text-sm" onClick={() => void saveQrImage()}>
+                  Save QR
+                </button>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </section>
   );
