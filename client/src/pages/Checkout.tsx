@@ -375,27 +375,27 @@ function SellerCheckoutGroup({
         ))}
       </ul>
 
-      <div className="mt-4">
-        <FulfillmentPicker
-          name={`fulfillment-${sellerId}`}
-          options={pickerOptions}
-          value={choice.fulfillmentMethod}
-          onChange={setFulfillmentMethod}
-          deliveryBlockedReason={deliveryBlockedReason}
-        />
-      </div>
-
-      {cooperativeId !== null && (
-        <PickupLocationCard
-          cooperativeId={cooperativeId}
-          cooperativeName={cooperativeName}
-          fulfillmentMethod={choice.fulfillmentMethod}
-        />
-      )}
-
-      <div className="mt-4">
+      <div className="mt-4 grid items-start gap-5 lg:grid-cols-2">
+        <div className="min-w-0">
+          <FulfillmentPicker
+            name={`fulfillment-${sellerId}`}
+            options={pickerOptions}
+            value={choice.fulfillmentMethod}
+            onChange={setFulfillmentMethod}
+            deliveryBlockedReason={deliveryBlockedReason}
+          />
+          {cooperativeId !== null && (
+            <PickupLocationCard
+              cooperativeId={cooperativeId}
+              cooperativeName={cooperativeName}
+              fulfillmentMethod={choice.fulfillmentMethod}
+            />
+          )}
+        </div>
+        <div className="min-w-0">
         <OptionTileGroup
           legend="Payment"
+          legendClassName="text-center"
           name={`payment-${sellerId}`}
           value={choice.paymentMethod}
           onChange={value => setPaymentMethod(value as PaymentMethod)}
@@ -411,15 +411,14 @@ function SellerCheckoutGroup({
           })}
         />
         {choice.paymentMethod && (
-          <p className="mt-2 text-xs leading-5 text-[#4d6854]">{PAYMENT_METHOD_HELPERS[choice.paymentMethod]}</p>
+          <p className="mt-2 text-center text-xs leading-5 text-[#4d6854]">{PAYMENT_METHOD_HELPERS[choice.paymentMethod]}</p>
         )}
-      </div>
 
       {showOnline && (
         <div className="mt-4 rounded-xl border border-[#dfe8db] bg-white p-3 sm:p-4">
-          <h4 className="font-bold text-[#315640]">Pay via AgriCoop QR</h4>
-          <p className="mt-1 text-xs text-[#66766b]">A cooperative officer verifies the receipt before the seller fulfills the order.</p>
-          <p className="mt-1 text-xs font-semibold text-[#4d6854]">
+          <h4 className="text-center font-bold text-[#315640]">Pay via AgriCoop QR</h4>
+          <p className="mt-1 text-center text-xs text-[#66766b]">A cooperative officer verifies the receipt before the seller fulfills the order.</p>
+          <p className="mt-1 text-center text-xs font-semibold text-[#4d6854]">
             Fulfillment: {fulfillmentLabel(choice.fulfillmentMethod)} — the seller and officer see this on the order.
           </p>
           {qrOptionsQuery.isLoading || onlineLoading ? (
@@ -434,11 +433,11 @@ function SellerCheckoutGroup({
                 </p>
               )}
               {(qrOptions.length > 0 || Boolean(displayQr)) && (
-                <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="mt-3 space-y-4">
                   {qrOptions.length > 0 && (
                     <div className="min-w-0">
-                      <p className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Choose a payment QR</p>
-                      {qrNotice && <p role="alert" className="mt-2 text-xs font-semibold text-[#8c574c]">{qrNotice}</p>}
+                      <p className="text-center text-xs font-extrabold uppercase tracking-wide text-[#638947]">Choose a payment QR</p>
+                      {qrNotice && <p role="alert" className="mt-2 text-center text-xs font-semibold text-[#8c574c]">{qrNotice}</p>}
                       <div className="mt-2">
                         <OptionTileGroup
                           name={`qr-${sellerId}`}
@@ -456,10 +455,10 @@ function SellerCheckoutGroup({
                         />
                       </div>
                       {!selectedQrOption && (
-                        <p className="mt-2 text-xs font-semibold text-[#8c574c]">Select a payment QR code to continue.</p>
+                        <p className="mt-2 text-center text-xs font-semibold text-[#8c574c]">Select a payment QR code to continue.</p>
                       )}
                       {displayQr && (
-                        <div className="mt-3 space-y-1">
+                        <div className="mt-3 space-y-1 text-center">
                           {displayQr.instructions && (
                             <p className="text-xs leading-5 text-[#4d6854]">{displayQr.instructions}</p>
                           )}
@@ -500,13 +499,13 @@ function SellerCheckoutGroup({
                     </div>
                   )}
                   {displayQr && !(qrOptions.length > 0 && !selectedQrOption) && (
-                    <div className="w-fit max-w-full rounded-xl border border-[#e2e8de] bg-white p-3">
+                    <div className="mx-auto w-fit max-w-full rounded-xl border border-[#e2e8de] bg-white p-3 text-center">
                       {displayQr.qrImageUrl && !qrImgFailed ? (
                         <button
                           type="button"
                           onClick={() => setQrLightboxOpen(true)}
                           aria-label={`Enlarge QR code for ${displayQr.label || displayQr.accountName || "online payment"}`}
-                          className="block w-fit cursor-zoom-in rounded-lg bg-white p-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2"
+                          className="mx-auto block w-fit cursor-zoom-in rounded-lg bg-white p-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-2"
                         >
                           <img
                             src={displayQr.qrImageUrl}
@@ -529,7 +528,7 @@ function SellerCheckoutGroup({
                           <QrCode />
                         </div>
                       )}
-                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
                         <span className="font-display text-lg font-bold text-[#1d5639]">{peso(groupTotal)}</span>
                         <button type="button" className="agri-ghost agri-ghost-sm" onClick={() => void copyAmount()}>
                           <Copy size={14} /> Copy amount
@@ -588,6 +587,8 @@ function SellerCheckoutGroup({
           )}
         </div>
       )}
+        </div>
+      </div>
       {displayQr && (
         <Dialog open={qrLightboxOpen} onOpenChange={setQrLightboxOpen}>
           <DialogContent className="w-fit max-w-[calc(100%-2rem)] gap-3 p-4 sm:max-w-[min(90vw,480px)]">
@@ -671,6 +672,7 @@ function FulfillmentPicker({
     <div className="min-w-0">
       <OptionTileGroup
         legend="Fulfillment"
+        legendClassName="text-center"
         name={name}
         value={value}
         onChange={next => onChange(next as FulfillmentMethod)}
@@ -965,7 +967,7 @@ export default function Checkout() {
 
   return (
     <PageFrame>
-      <main className={`${shellContainerClass} py-10`}>
+      <main className={`${shellContainerClass} mx-auto w-full max-w-6xl py-10`}>
         <Link href="/marketplace" className="agri-ghost text-sm no-underline">
           <ArrowLeft size={16} /> Return to marketplace
         </Link>
@@ -993,31 +995,9 @@ export default function Checkout() {
                 />
               );
             })}
-          </div>
-          <aside className="agri-card h-fit p-5 sm:p-6">
-            <h2 className="font-display text-2xl font-bold text-[#264f37]">Order summary</h2>
-            <div className="mt-4 space-y-3">
-              {cart.items.map(item => (
-                <div key={item.productId} className="flex justify-between gap-3 border-b border-[#edf0e9] pb-3 text-sm">
-                  <span className="text-[#526858]">
-                    {item.name} × {item.quantity} {item.unit}
-                  </span>
-                  <span className="font-bold text-[#315640]">{peso(item.priceCents * item.quantity)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 flex justify-between font-bold text-[#315640]">
-              <span>Estimated total</span>
-              <span>{peso(totalCents)}</span>
-            </div>
-            {sellerMap.size > 1 && (
-              <p className="mt-3 text-xs leading-5 text-[#4d6854]">
-                You will place {sellerMap.size} separate orders—one per seller.
-              </p>
-            )}
             {needsDeliveryAddress && (
-              <div className="mt-5 rounded-xl border border-[#e2e9dd] bg-[#f7faf5] p-4">
-                <h3 className="text-sm font-bold text-[#315640]">Delivery address</h3>
+              <div className="agri-card h-fit p-5 sm:p-6">
+                <h3 className="font-display text-lg font-bold text-[#264f37]">Delivery address</h3>
                 <p className="mt-1 text-xs text-[#6c7c70]">Required before you can submit. This address is saved with the order.</p>
                 <div className="mt-3 grid gap-3">
                   <label className="field-label text-xs">Recipient name
@@ -1046,6 +1026,28 @@ export default function Checkout() {
                 </div>
                 {!deliveryAddressComplete && <p className="mt-2 text-xs text-[#8c574c]">Complete all required address fields to place a delivery order.</p>}
               </div>
+            )}
+          </div>
+          <aside className="agri-card h-fit p-5 sm:p-6">
+            <h2 className="font-display text-2xl font-bold text-[#264f37]">Order summary</h2>
+            <div className="mt-4 space-y-3">
+              {cart.items.map(item => (
+                <div key={item.productId} className="flex justify-between gap-3 border-b border-[#edf0e9] pb-3 text-sm">
+                  <span className="text-[#526858]">
+                    {item.name} × {item.quantity} {item.unit}
+                  </span>
+                  <span className="font-bold text-[#315640]">{peso(item.priceCents * item.quantity)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-between font-bold text-[#315640]">
+              <span>Estimated total</span>
+              <span>{peso(totalCents)}</span>
+            </div>
+            {sellerMap.size > 1 && (
+              <p className="mt-3 text-xs leading-5 text-[#4d6854]">
+                You will place {sellerMap.size} separate orders—one per seller.
+              </p>
             )}
             <button
               type="button"

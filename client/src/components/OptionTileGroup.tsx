@@ -19,6 +19,7 @@ export type OptionTileOption = {
  */
 export function OptionTileGroup({
   legend,
+  legendClassName,
   name,
   options,
   value,
@@ -26,6 +27,7 @@ export function OptionTileGroup({
   className,
 }: {
   legend?: string;
+  legendClassName?: string;
   name: string;
   options: OptionTileOption[];
   value: string;
@@ -35,7 +37,7 @@ export function OptionTileGroup({
   return (
     <fieldset className={className ?? "min-w-0"}>
       {legend && (
-        <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">{legend}</legend>
+        <legend className={`text-xs font-extrabold uppercase tracking-wide text-[#638947] ${legendClassName ?? ""}`}>{legend}</legend>
       )}
       <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2.5">
         {options.map(option => {
