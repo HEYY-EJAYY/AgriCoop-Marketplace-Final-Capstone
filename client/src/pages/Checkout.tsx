@@ -477,28 +477,10 @@ function SellerCheckoutGroup({
                           Thank you. Your report has been sent to the cooperative administrators for review. This QR code is now hidden until it is re-enabled — another available QR code was selected automatically.
                         </p>
                       )}
-                      {selectedQrOption && reportOpen && (
-                        <div className="mt-3 rounded-xl border border-[#eadfd2] bg-[#fdf8f2] p-3">
-                          <label className="field-label text-xs">What is wrong with this QR code?
-                            <select className="field-control" value={reportReason} onChange={event => setReportReason(event.target.value as QrIssueReason)}>
-                              {QR_ISSUE_REASONS.map(reason => <option key={reason} value={reason}>{qrIssueReasonLabel(reason)}</option>)}
-                            </select>
-                          </label>
-                          <label className="field-label mt-3 text-xs">Additional details (optional)
-                            <textarea maxLength={1000} className="field-control" value={reportDetails} onChange={event => setReportDetails(event.target.value)} />
-                          </label>
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                            <button type="button" className="agri-ghost text-sm" onClick={() => setReportOpen(false)}>Cancel</button>
-                            <button type="button" className="agri-button text-sm" disabled={reportIssue.isPending} onClick={() => void submitQrReport()}>
-                              {reportIssue.isPending ? <Loader2 className="animate-spin" size={14} /> : <Flag size={14} />} Send report
-                            </button>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                   {displayQr && !(qrOptions.length > 0 && !selectedQrOption) && (
-                    <div className="mx-auto w-fit max-w-full rounded-xl border border-[#e2e8de] bg-white p-3 text-center">
+                    <div className="mx-auto w-full max-w-md rounded-xl border border-[#e2e8de] bg-white p-3 text-center">
                       {displayQr.qrImageUrl && !qrImgFailed ? (
                         <button
                           type="button"
@@ -527,21 +509,55 @@ function SellerCheckoutGroup({
                           <QrCode />
                         </div>
                       )}
-                      <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-                        <span className="font-display text-lg font-bold text-[#1d5639]">{peso(groupTotal)}</span>
+                      <p className="mt-3 font-display text-lg font-bold text-[#1d5639]">{peso(groupTotal)}</p>
+                      <div className="mt-2 flex justify-center">
                         <button type="button" className="agri-ghost agri-ghost-sm" onClick={() => void copyAmount()}>
                           <Copy size={14} /> Copy amount
                         </button>
-                        {selectedQrOption && (
+                      </div>
+                      {selectedQrOption && (
+                        <p className="mt-3 text-sm text-[#66766b]">
+                          QR Code Not Working?{" "}
                           <button
                             type="button"
-                            className="agri-ghost agri-ghost-sm text-[#a34838]"
+                            aria-expanded={reportOpen}
                             onClick={() => { setReportOpen(value => !value); setReportSentFor(null); }}
+                            className="rounded-sm font-semibold text-[#1f5a3c] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4e8257] focus-visible:ring-offset-1"
                           >
-                            <Flag size={13} className="mr-1 inline" /> QR Code Not Working? Report This QR
+                            Report This QR
                           </button>
-                        )}
-                      </div>
+                        </p>
+                      )}
+                      {selectedQrOption && reportOpen && (
+                        <div className="mt-3 rounded-xl border border-[#eadfd2] bg-[#fdf8f2] p-3 text-left">
+                          <fieldset>
+                            <legend className="text-xs font-bold text-[#4d6854]">What is wrong with this QR code?</legend>
+                            <div className="mt-2 space-y-1.5">
+                              {QR_ISSUE_REASONS.map(reason => (
+                                <label key={reason} className="flex cursor-pointer items-center gap-2 text-sm text-[#3c5143]">
+                                  <input
+                                    type="radio"
+                                    name={`qr-report-${sellerId}`}
+                                    checked={reportReason === reason}
+                                    onChange={() => setReportReason(reason)}
+                                    className="accent-[#4e8257]"
+                                  />
+                                  {qrIssueReasonLabel(reason)}
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                          <label className="field-label mt-3 text-xs">Additional details (optional)
+                            <textarea maxLength={1000} className="field-control" value={reportDetails} onChange={event => setReportDetails(event.target.value)} />
+                          </label>
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                            <button type="button" className="agri-ghost text-sm" onClick={() => setReportOpen(false)}>Cancel</button>
+                            <button type="button" className="agri-button text-sm" disabled={reportIssue.isPending} onClick={() => void submitQrReport()}>
+                              {reportIssue.isPending ? <Loader2 className="animate-spin" size={14} /> : <Flag size={14} />} Submit Report
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
