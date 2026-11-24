@@ -232,7 +232,7 @@ export default function CoopAdminApplication() {
       <>
         <WorkspaceHeader title="OfficerAdmin application" description="Applicant access only." />
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card p-8 text-center">
+          <div className="agri-card p-5 sm:p-6 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Applicant access required</h1>
             <p className="mt-3 text-[#65766b]">Register as OfficerAdmin, verify your email, then return here.</p>
             <Link href="/dashboard" className="agri-button mt-6 inline-flex min-h-11 no-underline">Back to dashboard</Link>

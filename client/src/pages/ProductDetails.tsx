@@ -24,7 +24,7 @@ export default function ProductDetails() {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card p-8 text-center">
+          <div className="agri-card p-5 sm:p-6 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Listing not found</h1>
             <p className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error?.message, "This product is not currently available.")}</p>
             <Link href="/marketplace" className="agri-button mt-5 inline-flex min-h-11 text-sm no-underline"><ArrowLeft size={16}/> Back to marketplace</Link>
@@ -38,7 +38,7 @@ export default function ProductDetails() {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card p-8 text-center">
+          <div className="agri-card p-5 sm:p-6 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Product details are unavailable</h1>
             <p role="alert" className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error.message)}</p>
             <button type="button" className="agri-button mt-5 min-h-11" disabled={isFetching} onClick={() => void refetch()}>
@@ -97,7 +97,7 @@ export default function ProductDetails() {
             </button>)}
           </div>}
         </div>
-        <div className="p-6 sm:p-9">
+        <div className="p-5 sm:p-6">
           <span className="rounded-full bg-[#edf3e9] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-[#487249]">{product.category}</span>
           <div className="mt-2"><FulfillmentBadge type={product.fulfillmentType} prepTimeDays={product.prepTimeDays} /></div>
           <h1 className="mt-4 font-display text-4xl font-bold text-[#214b35]">{product.name}</h1>

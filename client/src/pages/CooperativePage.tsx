@@ -78,7 +78,7 @@ export default function CooperativePage() {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card mx-auto max-w-xl p-8 text-center">
+          <div className="agri-card mx-auto max-w-xl p-5 sm:p-6 text-center">
             <Leaf className="mx-auto text-[#6d9852]" />
             <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Cooperative not found</h1>
             <p className="mt-3 text-[#65766b]">
@@ -100,7 +100,7 @@ export default function CooperativePage() {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card mx-auto max-w-xl p-8 text-center">
+          <div className="agri-card mx-auto max-w-xl p-5 sm:p-6 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Cooperative page unavailable</h1>
             <p role="alert" className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error.message)}</p>
             <button type="button" className="agri-button mt-5 min-h-11" disabled={isFetching} onClick={() => void refetch()}>
@@ -211,7 +211,7 @@ export default function CooperativePage() {
               })}
             </div>
           ) : (
-            <div className="agri-card grid min-h-52 place-items-center p-8 text-center">
+            <div className="agri-card grid min-h-52 place-items-center p-5 sm:p-6 text-center">
               <div>
                 <Leaf className="mx-auto text-[#6d9852]" />
                 <h3 className="mt-3 font-display text-2xl font-bold text-[#254f37]">No listings yet</h3>

@@ -82,7 +82,7 @@ export default function AuditLogs() {
           </table>
         </div>
       ) : (
-        <p className="agri-card p-8 text-center text-sm text-[#6d7d70]">No audit events match these filters.</p>
+        <p className="agri-card p-5 sm:p-6 text-center text-sm text-[#6d7d70]">No audit events match these filters.</p>
       )}
     </div>
   </>;

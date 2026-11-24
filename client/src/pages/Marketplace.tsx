@@ -699,7 +699,7 @@ export default function Marketplace() {
                 })}
               </div>
             ) : (
-              <div className="agri-card mt-6 grid min-h-70 place-items-center p-8 text-center">
+              <div className="agri-card mt-6 grid min-h-70 place-items-center p-5 sm:p-6 text-center">
                 <div>
                   <ShoppingBasket className="mx-auto text-[#7ba15b]" size={34} aria-hidden />
                   <h2 className="mt-4 font-display text-2xl font-bold text-[#2d573d]">No listings match this view.</h2>

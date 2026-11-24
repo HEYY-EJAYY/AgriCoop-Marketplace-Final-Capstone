@@ -61,7 +61,7 @@ export default function Messages() {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card p-8 text-center">
+          <div className="agri-card p-5 sm:p-6 text-center">
             <MessageCircle className="mx-auto text-[#6d9852]" />
             <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to open messages</h1>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">

@@ -161,7 +161,7 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="dialog-footer"
       className={cn(
         // Negative/exit actions sit left, the affirmative action sits right.
-        "flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
       {...props}

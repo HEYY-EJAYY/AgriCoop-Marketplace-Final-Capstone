@@ -213,11 +213,11 @@ export default function PaymentOptions() {
     return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
   }
   if (!user || (user.role !== "admin" && user.role !== "superadmin")) {
-    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Payment management is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Only an approved OfficerAdmin or SuperAdmin can manage payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
+    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-5 sm:p-6 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Payment management is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Only an approved OfficerAdmin or SuperAdmin can manage payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
   }
   const restriction = getAccountAccessRestriction(user);
   if (restriction) {
-    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-8 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Account access is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Resolve your account approval or cooperative assignment before managing payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
+    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] p-4"><div className="agri-card max-w-md p-5 sm:p-6 text-center"><h1 className="font-display text-2xl font-bold text-[#244e36]">Account access is restricted</h1><p className="mt-3 text-sm leading-6 text-[#647568]">Resolve your account approval or cooperative assignment before managing payment options.</p><Link href="/dashboard" className="agri-button mt-6 inline-flex no-underline">Return to workspace</Link></div></main>;
   }
 
   return <>
@@ -264,7 +264,7 @@ export default function PaymentOptions() {
       </form>}
 
       {tab === "options" && (optionsError ? <div className="agri-card p-6 text-sm text-[#a34838]"><p role="alert">Payment options could not be loaded: {optionsError.message}</p><button type="button" className="agri-ghost mt-3 text-sm" disabled={isFetching} onClick={() => void refetchOptions()}>Retry</button></div> : isLoading ? <div className="grid min-h-40 place-items-center"><Loader2 className="animate-spin text-[#4e8257]"/></div> : (options?.length ?? 0) === 0
-        ? <div className="agri-card p-8 text-center"><QrCode className="mx-auto text-[#8ba17c]" size={32}/><h2 className="mt-3 font-display text-xl font-bold text-[#315640]">No payment options yet</h2><p className="mt-2 text-sm text-[#6d7d70]">Add a method and optional QR image to make it available during buyer checkout.</p></div>
+        ? <div className="agri-card p-5 sm:p-6 text-center"><QrCode className="mx-auto text-[#8ba17c]" size={32}/><h2 className="mt-3 font-display text-xl font-bold text-[#315640]">No payment options yet</h2><p className="mt-2 text-sm text-[#6d7d70]">Add a method and optional QR image to make it available during buyer checkout.</p></div>
         : <div className="space-y-4">{options?.map(option => <article key={option.id} className="agri-card p-5 sm:p-6">
           {editing?.id === option.id ? <form onSubmit={submitUpdate} className="grid gap-4 sm:grid-cols-2">
             <label className="field-label">Payment provider
@@ -289,7 +289,7 @@ export default function PaymentOptions() {
         </article>)}</div>)}
 
       {tab === "reports" && (reportsError ? <div className="agri-card p-6 text-sm text-[#a34838]"><p role="alert">QR reports could not be loaded: {reportsError.message}</p><button type="button" className="agri-ghost mt-3 text-sm" onClick={() => void refetchReports()}>Retry</button></div> : reportsLoading ? <div className="grid min-h-40 place-items-center"><Loader2 className="animate-spin text-[#4e8257]"/></div> : (reports?.length ?? 0) === 0
-        ? <div className="agri-card p-8 text-center"><QrCode className="mx-auto text-[#8ba17c]" size={32}/><h2 className="mt-3 font-display text-xl font-bold text-[#315640]">No QR reports</h2><p className="mt-2 text-sm text-[#6d7d70]">Buyer reports about QR codes that do not work will appear here.</p></div>
+        ? <div className="agri-card p-5 sm:p-6 text-center"><QrCode className="mx-auto text-[#8ba17c]" size={32}/><h2 className="mt-3 font-display text-xl font-bold text-[#315640]">No QR reports</h2><p className="mt-2 text-sm text-[#6d7d70]">Buyer reports about QR codes that do not work will appear here.</p></div>
         : <div className="space-y-4">{reports?.map(row => {
           const report = row.report;
           const edit = reportEdits[report.id] ?? { status: report.status, adminNote: report.adminNote ?? "" };

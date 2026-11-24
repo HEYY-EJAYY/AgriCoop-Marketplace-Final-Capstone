@@ -30,7 +30,7 @@ export default function Reports() {
   const refetch = isSuperAdmin ? adminOverview.refetch : officerOverview.refetch;
   const isFetching = isSuperAdmin ? adminOverview.isFetching : officerOverview.isFetching;
   if (loading || isLoading) return <div className="grid min-h-screen place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
-  if (!user || (user.role !== "admin" && user.role !== "superadmin")) return <><WorkspaceHeader title="Marketplace reports" description="Export reports for your cooperative."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-8 text-center"><h1 className="font-display text-3xl font-bold text-[#254f37]">Cooperative officer access required</h1><p className="mt-3 text-[#65766b]">Only cooperative Officers and SuperAdmins can export reports.</p></div></main></>;
+  if (!user || (user.role !== "admin" && user.role !== "superadmin")) return <><WorkspaceHeader title="Marketplace reports" description="Export reports for your cooperative."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-5 sm:p-6 text-center"><h1 className="font-display text-3xl font-bold text-[#254f37]">Cooperative officer access required</h1><p className="mt-3 text-[#65766b]">Only cooperative Officers and SuperAdmins can export reports.</p></div></main></>;
   const totalSales = overview?.transactions.reduce((sum, transaction) => sum + transaction.amountCents, 0) || 0;
   const fulfillmentByOrderId = new Map(
     (overview?.orders || []).map(order => [order.id, fulfillmentLabel(order.fulfillmentMethod)]),

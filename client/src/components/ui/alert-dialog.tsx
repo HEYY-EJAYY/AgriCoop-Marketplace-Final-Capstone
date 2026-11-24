@@ -84,7 +84,7 @@ function AlertDialogFooter({
       className={cn(
         // Negative/exit actions sit left, the affirmative action sits right.
         // Callers render [negative…, positive…]; single-child footers stay left.
-        "flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
       {...props}

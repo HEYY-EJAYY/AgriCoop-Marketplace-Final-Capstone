@@ -210,7 +210,7 @@ export default function Activity() {
       <>
         <WorkspaceHeader title="Marketplace activity" description="Your outgoing orders and quotation requests." />
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card p-8 text-center">
+          <div className="agri-card p-5 sm:p-6 text-center">
             <Leaf className="mx-auto text-[#6d9852]" />
             <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Buyer or Farmer access required</h1>
             <p className="mt-3 text-[#65766b]">Approved Buyer and Farmer accounts can review outgoing activity here.</p>

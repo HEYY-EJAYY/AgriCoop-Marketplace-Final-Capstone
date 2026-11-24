@@ -255,7 +255,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   if (!user) {
     const copy = getAuthGateCopy(authResolution);
     return <div className="grid min-h-screen place-items-center bg-[#f8f5ee] opacity-100 p-4">
-      <div className="agri-card max-w-md p-8 text-center">
+      <div className="agri-card max-w-md p-5 sm:p-6 text-center">
         <Leaf className="mx-auto text-[#68924d]"/>
         <h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">{copy.title}</h1>
         <p className="mt-3 leading-7 text-[#647568]">{copy.message}</p>
@@ -281,7 +281,7 @@ function AuthGate({ children }: { children: ReactNode }) {
         message: "This Admin account has no cooperative assignment. Contact a SuperAdmin before using cooperative operations.",
       },
     }[accessRestriction];
-    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] opacity-100 p-4"><div className="agri-card w-full max-w-xl p-8 text-center"><Leaf className="mx-auto text-[#68924d]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">{copy.title}</h1><p className="mt-3 leading-7 text-[#647568]">{copy.message}</p>{user.role === "seller" && user.cooperativeId === null && <SellerAssociationRequestPanel/>}<button className="agri-button mt-6" onClick={() => void logout().catch(() => toast.error("Could not complete sign out. Please try again."))}>Sign out</button></div></main>;
+    return <main className="grid min-h-screen place-items-center bg-[#f8f5ee] opacity-100 p-4"><div className="agri-card w-full max-w-xl p-5 sm:p-6 text-center"><Leaf className="mx-auto text-[#68924d]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#244e36]">{copy.title}</h1><p className="mt-3 leading-7 text-[#647568]">{copy.message}</p>{user.role === "seller" && user.cooperativeId === null && <SellerAssociationRequestPanel/>}<button className="agri-button mt-6" onClick={() => void logout().catch(() => toast.error("Could not complete sign out. Please try again."))}>Sign out</button></div></main>;
   }
   return <>{children}</>;
 }

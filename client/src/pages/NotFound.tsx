@@ -9,7 +9,7 @@ export default function NotFound() {
   return (
     <PageFrame>
       <main className={`${marketingShellClass} flex min-h-[60vh] items-center justify-center py-16`}>
-        <div className="agri-card w-full max-w-lg p-8 text-center">
+        <div className="agri-card w-full max-w-lg p-5 sm:p-6 text-center">
           <AlertCircle className="mx-auto h-14 w-14 text-[#a34838]" aria-hidden />
           <h1 className="mt-4 font-display text-4xl font-bold text-[#254f37]">404</h1>
           <h2 className="mt-2 text-xl font-semibold text-[#315640]">Page Not Found</h2>

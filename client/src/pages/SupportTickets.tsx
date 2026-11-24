@@ -103,7 +103,7 @@ export default function SupportTickets() {
   }, [loading, supportQueueInitialized, user]);
 
   if (loading) return <div className="grid min-h-[40vh] place-items-center bg-[#f8f5ee]"><Loader2 className="animate-spin text-[#4e8257]"/></div>;
-  if (!user) return <><WorkspaceHeader title="Support tickets" description="Sign in to open or follow a support request."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-8 text-center"><MessageSquareText className="mx-auto text-[#6d9852]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to view support tickets</h1><a href="/auth" className="agri-button mt-6 inline-flex no-underline">Sign in</a></div></main></>;
+  if (!user) return <><WorkspaceHeader title="Support tickets" description="Sign in to open or follow a support request."/><main className={`${shellContainerClass} py-10`}><div className="agri-card p-5 sm:p-6 text-center"><MessageSquareText className="mx-auto text-[#6d9852]"/><h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Sign in to view support tickets</h1><a href="/auth" className="agri-button mt-6 inline-flex no-underline">Sign in</a></div></main></>;
 
   const ticketsLoading = isStaff ? managed.isLoading : mine.isLoading;
   const ticketError = isStaff ? managed.error : mine.error;

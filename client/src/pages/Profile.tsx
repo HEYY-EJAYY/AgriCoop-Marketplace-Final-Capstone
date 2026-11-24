@@ -69,7 +69,7 @@ export default function Profile() {
     return (
       <PageFrame>
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card p-8 text-center">
+          <div className="agri-card p-5 sm:p-6 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Sign in required</h1>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <Link href="/auth" className="agri-ghost inline-flex min-h-11 items-center no-underline">Login</Link>

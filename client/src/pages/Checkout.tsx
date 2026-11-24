@@ -471,29 +471,35 @@ function SellerCheckoutGroup({
               )}
               {qrOptions.length > 0 && !selectedQrOption ? (
                 <p className="mt-3 text-xs font-semibold text-[#8c574c]">Select a payment QR code above to continue.</p>
-              ) : displayQr?.qrImageUrl ? (
-                <img
-                  src={displayQr.qrImageUrl}
-                  alt="AgriCoop payment QR"
-                  className="mt-3 h-32 w-32 rounded-lg border border-[#e2e8de] object-contain"
-                />
-              ) : (
-                <div className="mt-3 grid h-32 w-32 place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a]">
-                  <QrCode />
+              ) : displayQr ? (
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start">
+                  {displayQr.qrImageUrl ? (
+                    <img
+                      src={displayQr.qrImageUrl}
+                      alt="AgriCoop payment QR"
+                      className="h-32 w-32 shrink-0 rounded-lg border border-[#e2e8de] bg-white object-contain"
+                    />
+                  ) : (
+                    <div className="grid h-32 w-32 shrink-0 place-items-center rounded-lg bg-[#f0f5ed] text-[#82987a]">
+                      <QrCode />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {displayQr.instructions && (
+                      <p className="text-xs leading-5 text-[#4d6854]">{displayQr.instructions}</p>
+                    )}
+                    <p className="text-sm font-bold text-[#315640]">
+                      {displayQr.label || displayQr.accountName || "Online payment"}
+                    </p>
+                    {displayQr.accountNumber && (
+                      <p className="text-xs text-[#68796d]">
+                        {displayQr.accountName ? `${displayQr.accountName} · ` : ""}
+                        {displayQr.accountNumber}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              )}
-              {displayQr?.instructions && (
-                <p className="mt-3 text-xs leading-5 text-[#4d6854]">{displayQr.instructions}</p>
-              )}
-              <p className="mt-3 text-sm font-bold text-[#315640]">
-                {displayQr?.label || displayQr?.accountName || "Online payment"}
-              </p>
-              {displayQr?.accountNumber && (
-                <p className="mt-1 text-xs text-[#68796d]">
-                  {displayQr.accountName ? `${displayQr.accountName} · ` : ""}
-                  {displayQr.accountNumber}
-                </p>
-              )}
+              ) : null}
               {selectedQrOption && reportSentFor === selectedQrOption.id && !reportOpen && (
                 <p className="mt-3 rounded-lg bg-[#e6f3e5] p-3 text-xs font-semibold text-[#2f5c39]">
                   Thank you. Your report has been sent to the cooperative administrators for review. This QR code is now hidden until it is re-enabled — another available QR code was selected automatically.

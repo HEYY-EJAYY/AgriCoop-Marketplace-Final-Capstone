@@ -216,7 +216,7 @@ export default function OrderDetail() {
       <>
         <WorkspaceHeader title="Order details" description="Review who is involved, what was ordered, and how payment is progressing." />
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card mx-auto max-w-xl p-8 text-center">
+          <div className="agri-card mx-auto max-w-xl p-5 sm:p-6 text-center">
             <ClipboardList className="mx-auto text-[#6d9852]" />
             <h1 className="mt-4 font-display text-3xl font-bold text-[#254f37]">Order not found</h1>
             <p className="mt-3 text-[#65766b]">
@@ -239,7 +239,7 @@ export default function OrderDetail() {
       <>
         <WorkspaceHeader title="Order details" description="Review who is involved, what was ordered, and how payment is progressing." />
         <main className={`${shellContainerClass} py-10`}>
-          <div className="agri-card mx-auto max-w-xl p-8 text-center">
+          <div className="agri-card mx-auto max-w-xl p-5 sm:p-6 text-center">
             <h1 className="font-display text-3xl font-bold text-[#254f37]">Order details are unavailable</h1>
             <p role="alert" className="mt-3 text-[#65766b]">{toUserFacingErrorMessage(error.message)}</p>
             <button type="button" className="agri-button mt-5 min-h-11" disabled={isFetching} onClick={() => void refetch()}>
