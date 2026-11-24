@@ -2031,18 +2031,7 @@ function OfficerCooperativePanel() {
         <p className="mt-4 text-sm text-[#6d7d70]">No cooperative is assigned to your account yet.</p>
       )}
       {cooperative && (
-        <form
-          className="mt-5 grid gap-4 sm:grid-cols-2"
-          onSubmit={event => {
-            event.preventDefault();
-            updatePickup.mutate({
-              id: cooperative.id,
-              pickupContactNumber: form.pickupContactNumber.trim() || null,
-              pickupInstructions: form.pickupInstructions.trim() || null,
-              operatingHours: form.operatingHours.trim() || null,
-            });
-          }}
-        >
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="rounded-xl bg-[#f2f6ef] p-4 sm:col-span-2">
             <p className="text-xs font-bold uppercase tracking-wide text-[#718174]">Cooperative</p>
             <p className="mt-1 font-bold text-[#315640]">{cooperative.name}</p>
@@ -2085,13 +2074,26 @@ function OfficerCooperativePanel() {
               </form>
             )}
           </div>
+          <form
+            className="contents"
+            onSubmit={event => {
+              event.preventDefault();
+              updatePickup.mutate({
+                id: cooperative.id,
+                pickupContactNumber: form.pickupContactNumber.trim() || null,
+                pickupInstructions: form.pickupInstructions.trim() || null,
+                operatingHours: form.operatingHours.trim() || null,
+              });
+            }}
+          >
           <label className="field-label">Pickup contact number<input maxLength={40} className="field-control" value={form.pickupContactNumber} onChange={e => setForm({ ...form, pickupContactNumber: e.target.value })} placeholder="e.g. 0917 123 4567" /></label>
           <label className="field-label">Operating hours<input maxLength={160} className="field-control" value={form.operatingHours} onChange={e => setForm({ ...form, operatingHours: e.target.value })} placeholder="e.g. Mon–Sat, 7:00 AM – 5:00 PM" /></label>
           <label className="field-label sm:col-span-2">Pickup instructions<textarea maxLength={2000} className="field-control min-h-24" value={form.pickupInstructions} onChange={e => setForm({ ...form, pickupInstructions: e.target.value })} placeholder="e.g. Proceed to the cooperative office; bring a valid ID and your order number." /></label>
           <div className="flex justify-end sm:col-span-2">
             <button type="submit" className="agri-button text-sm" disabled={updatePickup.isPending}>{updatePickup.isPending ? <Loader2 className="animate-spin" size={15}/> : null} Save pickup details</button>
           </div>
-        </form>
+          </form>
+        </div>
       )}
     </section>
   );
