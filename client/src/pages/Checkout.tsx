@@ -330,7 +330,7 @@ function SellerCheckoutGroup({
       : null;
 
   return (
-    <section className="rounded-2xl border border-[#e1e9dd] bg-[#f7faf4] p-4 sm:p-5">
+    <section className="rounded-2xl border border-[#e1e9dd] bg-[#f7faf4] p-4">
       <h3 className="font-display text-xl font-bold text-[#264f37]">{sellerName}</h3>
       {cooperativeName && (
         <p className="mt-0.5 text-xs font-bold text-[#5f7a5f]">Sold by {cooperativeName}</p>
@@ -349,7 +349,7 @@ function SellerCheckoutGroup({
         ))}
       </ul>
 
-      <div className="mt-5">
+      <div className="mt-4">
         <FulfillmentPicker
           name={`fulfillment-${sellerId}`}
           options={pickerOptions}
@@ -367,7 +367,7 @@ function SellerCheckoutGroup({
         />
       )}
 
-      <div className="mt-5">
+      <div className="mt-4">
         <fieldset className="min-w-0">
           <legend className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Payment</legend>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -411,7 +411,7 @@ function SellerCheckoutGroup({
       </div>
 
       {showOnline && (
-        <div className="mt-5 rounded-2xl border border-[#dfe8db] bg-white p-4">
+        <div className="mt-4 rounded-xl border border-[#dfe8db] bg-white p-3 sm:p-4">
           <h4 className="font-bold text-[#315640]">Pay via AgriCoop QR</h4>
           <p className="mt-1 text-xs text-[#66766b]">A cooperative officer verifies the receipt before the seller fulfills the order.</p>
           <p className="mt-1 text-xs font-semibold text-[#4d6854]">
@@ -505,15 +505,15 @@ function SellerCheckoutGroup({
                   Thank you. Your report has been sent to the cooperative administrators for review. This QR code is now hidden until it is re-enabled — another available QR code was selected automatically.
                 </p>
               )}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-3">
                 <span className="font-display text-lg font-bold text-[#1d5639]">{peso(groupTotal)}</span>
-                <button type="button" className="agri-ghost px-2 py-1 text-xs" onClick={() => void copyAmount()}>
+                <button type="button" className="agri-ghost agri-ghost-sm" onClick={() => void copyAmount()}>
                   <Copy size={14} /> Copy amount
                 </button>
                 {selectedQrOption && (
                   <button
                     type="button"
-                    className="agri-ghost px-2 py-1 text-xs text-[#a34838]"
+                    className="agri-ghost agri-ghost-sm text-[#a34838]"
                     onClick={() => { setReportOpen(value => !value); setReportSentFor(null); }}
                   >
                     <Flag size={13} className="mr-1 inline" /> QR Code Not Working? Report This QR
@@ -660,7 +660,7 @@ function PickupLocationCard({
   const pickupAddressLine = info ? cooperativePickupAddressLine(info) : "";
   const pickupAddressComplete = info ? isPickupAddressComplete(info) : false;
   return (
-    <div className="mt-4 rounded-xl border border-[#e2e9dd] bg-white p-4">
+    <div className="mt-3 rounded-lg border border-[#e2e9dd] bg-white/70 p-3">
       <h4 className="text-xs font-extrabold uppercase tracking-wide text-[#638947]">Pickup location</h4>
       {query.isLoading ? (
         <Loader2 className="mt-3 animate-spin text-[#4e8257]" size={18} />
